@@ -1,0 +1,20 @@
+{
+  "scenario": "two-updates-same-revision",
+  "given": {
+    "memory_id": "11111111-1111-4111-8111-111111111111",
+    "current_revision": 3,
+    "current_content": "Use the custom graph engine."
+  },
+  "when": [
+    { "actor": "agent-a", "expected_revision": 3, "content": "Use engine A." },
+    { "actor": "agent-b", "expected_revision": 3, "content": "Use engine B." }
+  ],
+  "expect": {
+    "successful_updates": 1,
+    "conflicts": 1,
+    "final_revision": 4,
+    "history_entries_added": 1,
+    "losing_write_persisted": false,
+    "error_code": "REVISION_CONFLICT"
+  }
+}

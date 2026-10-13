@@ -1,0 +1,17 @@
+{
+  "scenario": "abstain-without-cross-namespace-disclosure",
+  "scope": {
+    "read_namespaces": ["project-a"],
+    "write_namespaces": ["project-a"],
+    "default_namespace": "project-a",
+    "allow_global": false
+  },
+  "when": [
+    { "operation": "memory_context", "task": "Find the project's accepted ORM choice.", "namespace": "project-a", "token_budget": 1200, "request_exact_tokens": true },
+    { "operation": "memory_get", "id": "33333333-3333-4333-8333-333333333333", "namespace": "project-b" }
+  ],
+  "expect": [
+    { "items": [], "empty_reason": "no_relevant_memories", "retrieval_mode": "lexical_only" },
+    { "error_code": "FORBIDDEN", "reveals_id_existence": false, "reveals_content": false }
+  ]
+}

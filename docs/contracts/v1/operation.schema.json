@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mnexis.invalid/contracts/v1/operation.schema.json",
+  "title": "Mnexis operation request v1",
+  "oneOf": [
+    {
+      "title": "Context request",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task", "namespace", "token_budget", "tokenizer_id", "max_items"],
+      "properties": {
+        "task": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "namespace": { "type": "string", "minLength": 1 },
+        "token_budget": { "type": "integer", "minimum": 1 },
+        "tokenizer_id": { "type": "string", "minLength": 1 },
+        "memory_types": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "max_items": { "type": "integer", "minimum": 1, "maximum": 20 }
+      }
+    },
+    {
+      "title": "Update request",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "expected_revision", "reason"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "expected_revision": { "type": "integer", "minimum": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "content": { "type": "string", "minLength": 1, "maxLength": 16384 },
+        "state": { "enum": ["proposed", "active", "disputed", "superseded", "archived"] }
+      }
+    }
+  ]
+}

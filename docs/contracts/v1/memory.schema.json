@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mnexis.invalid/contracts/v1/memory.schema.json",
+  "title": "Mnexis memory v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "namespace", "type", "content", "state", "revision", "assertion_basis", "provenance"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "namespace": { "type": "string", "minLength": 1 },
+    "topic_key": { "type": ["string", "null"], "minLength": 1 },
+    "type": { "type": "string", "minLength": 1 },
+    "content": { "type": "string", "minLength": 1, "maxLength": 16384 },
+    "state": { "enum": ["proposed", "active", "disputed", "superseded", "archived"] },
+    "revision": { "type": "integer", "minimum": 1 },
+    "assertion_basis": { "enum": ["user_stated", "observed", "inferred", "imported"] },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor", "channel", "created_at"],
+      "properties": {
+        "actor": { "type": "string", "minLength": 1 },
+        "channel": { "type": "string", "minLength": 1 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "session": { "type": ["string", "null"] },
+        "external_ref": { "type": ["string", "null"] },
+        "file": { "type": ["string", "null"] },
+        "commit": { "type": ["string", "null"] },
+        "evidence": { "type": ["string", "null"] }
+      }
+    },
+    "valid_from": { "type": ["string", "null"], "format": "date-time" },
+    "valid_until": { "type": ["string", "null"], "format": "date-time" },
+    "deleted_at": { "type": ["string", "null"], "format": "date-time" },
+    "purge_after": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

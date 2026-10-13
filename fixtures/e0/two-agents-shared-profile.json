@@ -1,0 +1,19 @@
+{
+  "scenario": "two-processes-share-profile-with-optimistic-concurrency",
+  "processes": [
+    { "name": "agent-a", "scope": { "read_namespaces": ["project-a"], "write_namespaces": ["project-a"] } },
+    { "name": "agent-b", "scope": { "read_namespaces": ["project-a"], "write_namespaces": ["project-a"] } }
+  ],
+  "steps": [
+    { "actor": "agent-a", "operation": "save", "topic_key": "architecture.graph-engine", "idempotency_key": "save-1" },
+    { "actor": "agent-b", "operation": "get", "namespace": "project-a", "expected_revision": 1 },
+    { "actor": "agent-a", "operation": "update", "expected_revision": 1 },
+    { "actor": "agent-b", "operation": "update", "expected_revision": 1 }
+  ],
+  "expect": {
+    "both_processes_observe_committed_revision": true,
+    "exactly_one_update_wins": true,
+    "losing_update_has_no_partial_history_or_fts_write": true,
+    "out_of_scope_namespace_is_not_disclosed": true
+  }
+}
