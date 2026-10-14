@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn bundled_sqlite_supports_fts5_and_reopens_profile() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in("target").unwrap();
         let path = directory.path().join("mnexis.db");
         {
             let connection = open_sqlite(&path).unwrap();
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn independent_connections_serialize_writes_without_losing_committed_data() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in("target").unwrap();
         let path = directory.path().join("shared.db");
         let first = open_sqlite(&path).unwrap();
         let second = open_sqlite(&path).unwrap();

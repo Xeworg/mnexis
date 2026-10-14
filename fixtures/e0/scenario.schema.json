@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mnexis.invalid/fixtures/e0/scenario.schema.json",
+  "title": "Mnexis E0 scenario fixture",
+  "type": "object",
+  "required": ["scenario"],
+  "oneOf": [
+    {
+      "properties": {
+        "scenario": { "const": "abstain-without-cross-namespace-disclosure" },
+        "scope": { "type": "object" },
+        "when": { "type": "array" },
+        "expect": { "type": "array" }
+      },
+      "required": ["scenario", "scope", "when", "expect"],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "scenario": { "const": "two-updates-same-revision" },
+        "given": { "type": "object" },
+        "when": { "type": "array" },
+        "expect": { "type": "object" }
+      },
+      "required": ["scenario", "given", "when", "expect"],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "scenario": { "const": "explicit-supersede-does-not-recommend-old-decision" },
+        "given": { "type": "object" },
+        "when": { "type": "object" },
+        "expect": { "type": "object" }
+      },
+      "required": ["scenario", "given", "when", "expect"],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "scenario": { "const": "two-processes-share-profile-with-optimistic-concurrency" },
+        "processes": { "type": "array" },
+        "steps": { "type": "array" },
+        "expect": { "type": "object" }
+      },
+      "required": ["scenario", "processes", "steps", "expect"],
+      "additionalProperties": false
+    }
+  ]
+}
