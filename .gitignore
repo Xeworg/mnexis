@@ -1,0 +1,4 @@
+/target/
+/mnexis-data/
+*.db-shm
+*.db-wal
