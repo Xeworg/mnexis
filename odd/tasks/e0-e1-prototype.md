@@ -10,11 +10,19 @@ Authorized source: `PRD-Mnexis.md` (v0.4). Scope: execute the first implementati
 6. **S6 — E1 decision report:** “informe reproducible del stack y versiones elegidas. Resolver incompatibilidades Arrow y capacidades de cleanup.” Report evidence, constraints, and decisions needed before E2; do not treat unverified dependency behavior as established.
 
 ## Tasks
-- T1 | S1-S2 | inline | commit: pending
-- T2 | S3-S5 | inline | commit: pending
-- T3 | S6 | inline | commit: pending
+- T1 | S1-S2 | inline | commit: `849dac1` (`docs(mnexis): define initial memory contracts and scenarios`).
+- T2 | S3-S5 | inline | commit: none; blocked because the mandatory independent verifier was cancelled without a verdict. Technical evidence and remaining gaps are in `docs/e1-spike-report.md`.
+- T3 | S6 | inline | commit: pending; report written, documentation work-unit commit in progress.
 
 ## Log
 - L1: “empieza con eso” (refers to the PRD's “Primer bloque de trabajo para el agente de implementación”: empezar con E0 y E1).
 - L2: “haz commit cuando consideres necesario solamente debes preguntarme” (authorizes commits when needed; do not ask for commit approval).
 - L3: E0 delivered `docs/contracts/v1/` and four scenario fixtures in `fixtures/e0/`. Verification: Python parsed all six JSON documents successfully. `jsonschema` package is unavailable, so meta-schema/instance validation was not run; contracts remain a draft pending executable validation.
+- L4: E1 dependency resolution succeeds after aligning Tokio, uuid, url, serde_json, and thiserror with LanceDB/DataFusion/Lindera constraints. Build reaches `lance-file 13.0.0` then fails because `protoc` is missing. No `protoc` executable was found under `/usr` or `/home/xeworg`; installing it requires authorization because it changes the system outside the repository.
+- L5: “he instalado desde dnf estamos en fedora intenta ahora a ver si ya el paquete funciona” (user reports installing `protobuf-compiler` with Fedora dnf and authorizes retrying the build).
+- L6: `protoc --version` succeeds as libprotoc 3.19.6, but `lance-file`, `lance-encoding`, and `lance-table` cannot import the standard `google/protobuf/*.proto` definitions. Fedora reports `protobuf-devel` not installed, and the standard include files are absent. Installing that system package needs a separate authorization.
+- L7: The user selected “Lo instalo yo” for `protobuf-devel`; wait until its include files are available before retrying E1.
+- L8: Verification now finds `protobuf-devel-3.19.6-20.fc44.x86_64` and `/usr/include/google/protobuf/any.proto`, `empty.proto`; `protoc --version` is `libprotoc 3.19.6`. Retrying the full Rust build.
+- L9: Source review found LanceDB 0.38.0–0.40.0 unconditionally reference feature-gated `Error::Http` from `job.rs` when `remote` is disabled. LanceDB 0.37.1 still gates `Error::Http` but its `job.rs` has no such references. `Cargo.toml` is pinned to 0.37.1 with `default-features = false`; `cargo check --all-targets` and the local-only runtime lifecycle pass for this candidate.
+- L10: `cargo fmt --all -- --check`, `git diff --check`, `cargo check --all-targets`, and `cargo test --all-targets` pass. The test suite has 3 passing tests. Local LanceDB upsert/query/delete/reopen and MCP stdio ping pass. Two concurrent CLI processes against one ignored profile both exit 0. Ollama is unavailable. Debug spike measurement: 0.15 s, 155,364 KiB max RSS, 1,542,750,048-byte debug binary, 72 KiB tiny deleted-vector profile; test-profile build took 4m52s but was not a clean build. Details and limits are recorded in `docs/e1-spike-report.md`.
+- L11: `gentle-ai-verify` was cancelled by the host before returning any independent verdict. Per policy it was not retried. User said: “creo que el agente se pego”. S5 is not independently verified; T2 remains blocked.
