@@ -12,7 +12,7 @@ Authorized source: `PRD-Mnexis.md` (v0.4). Scope: execute the first implementati
 ## Tasks
 - T1 | S1-S2 | inline | commit: `849dac1` (`docs(mnexis): define initial memory contracts and scenarios`).
 - T2 | S3-S5 | inline | commit: none; blocked because the mandatory independent verifier was cancelled without a verdict. Technical evidence and remaining gaps are in `docs/e1-spike-report.md`.
-- T3 | S6 | inline | commit: pending; report written, documentation work-unit commit in progress.
+- T3 | S6 | inline | commit: `c75a103` (`docs(mnexis): record E1 spike evidence and blockers`).
 
 ## Log
 - L1: “empieza con eso” (refers to the PRD's “Primer bloque de trabajo para el agente de implementación”: empezar con E0 y E1).
@@ -26,3 +26,4 @@ Authorized source: `PRD-Mnexis.md` (v0.4). Scope: execute the first implementati
 - L9: Source review found LanceDB 0.38.0–0.40.0 unconditionally reference feature-gated `Error::Http` from `job.rs` when `remote` is disabled. LanceDB 0.37.1 still gates `Error::Http` but its `job.rs` has no such references. `Cargo.toml` is pinned to 0.37.1 with `default-features = false`; `cargo check --all-targets` and the local-only runtime lifecycle pass for this candidate.
 - L10: `cargo fmt --all -- --check`, `git diff --check`, `cargo check --all-targets`, and `cargo test --all-targets` pass. The test suite has 3 passing tests. Local LanceDB upsert/query/delete/reopen and MCP stdio ping pass. Two concurrent CLI processes against one ignored profile both exit 0. Ollama is unavailable. Debug spike measurement: 0.15 s, 155,364 KiB max RSS, 1,542,750,048-byte debug binary, 72 KiB tiny deleted-vector profile; test-profile build took 4m52s but was not a clean build. Details and limits are recorded in `docs/e1-spike-report.md`.
 - L11: `gentle-ai-verify` was cancelled by the host before returning any independent verdict. Per policy it was not retried. User said: “creo que el agente se pego”. S5 is not independently verified; T2 remains blocked.
+- L12: T3 evidence report committed as `c75a103` (`docs(mnexis): record E1 spike evidence and blockers`).
