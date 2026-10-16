@@ -14,6 +14,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
+pub mod application;
 pub mod corpus;
 pub mod domain;
 pub mod mcp;

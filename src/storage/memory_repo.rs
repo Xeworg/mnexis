@@ -6,8 +6,12 @@
 use rusqlite::{Connection, OptionalExtension, Row, ToSql, params};
 
 use crate::domain::error::MnexisError;
-use crate::domain::memory::{Memory, MemoryState};
+use crate::domain::idempotency::IdempotencyRecord;
+use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
 use crate::domain::repository::MemoryRepository;
+// SearchHit is defined in the spike's retrieval module for T17; T18 will
+// define the production retrieval type in src/retrieval/fts5.rs.
+use crate::retrieval::SearchHit;
 
 /// SQLite-backed implementation of `MemoryRepository`.
 pub struct SqliteMemoryRepository {
@@ -140,6 +144,17 @@ impl MemoryRepository for SqliteMemoryRepository {
         self.conn
             .query_row(
                 &format!("SELECT {SELECT_COLUMNS} FROM memories WHERE uuid = ?1 AND deleted = 0"),
+                [uuid],
+                |row| Self::row_to_memory(row).map_err(to_sql_err),
+            )
+            .optional()
+            .map_err(sql_to_domain)
+    }
+
+    fn get_by_uuid_including_deleted(&self, uuid: &str) -> Result<Option<Memory>, MnexisError> {
+        self.conn
+            .query_row(
+                &format!("SELECT {SELECT_COLUMNS} FROM memories WHERE uuid = ?1"),
                 [uuid],
                 |row| Self::row_to_memory(row).map_err(to_sql_err),
             )
@@ -320,6 +335,168 @@ impl MemoryRepository for SqliteMemoryRepository {
             .query_row(&sql, &param_refs[..], |r| r.get(0))
             .map_err(sql_to_domain)?;
         Ok(count)
+    }
+
+    fn history(&self, uuid: &str) -> Result<Vec<MemoryHistory>, MnexisError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, memory_uuid, revision, memory_type, content, state, \
+                        valid_from, valid_until, assertion_basis, changed_by, change_reason, changed_at \
+                 FROM memory_history WHERE memory_uuid = ?1 ORDER BY revision DESC",
+            )
+            .map_err(sql_to_domain)?;
+        let rows = stmt
+            .query_map([uuid], |row| {
+                let state_str: String = row.get(5)?;
+                let state = MemoryState::from_db(&state_str).map_err(to_sql_err)?;
+                Ok(MemoryHistory {
+                    id: row.get(0)?,
+                    memory_uuid: row.get(1)?,
+                    revision: row.get(2)?,
+                    memory_type: row.get(3)?,
+                    content: row.get(4)?,
+                    state,
+                    valid_from: row.get(6)?,
+                    valid_until: row.get(7)?,
+                    assertion_basis: row.get(8)?,
+                    changed_by: row.get(9)?,
+                    change_reason: row.get(10)?,
+                    changed_at: row.get(11)?,
+                })
+            })
+            .map_err(sql_to_domain)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(sql_to_domain)
+    }
+
+    fn save_history(&mut self, h: &MemoryHistory) -> Result<i64, MnexisError> {
+        self.conn
+            .execute(
+                "INSERT INTO memory_history (memory_uuid, revision, memory_type, content, state, \
+                        valid_from, valid_until, assertion_basis, changed_by, change_reason, changed_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    h.memory_uuid,
+                    h.revision,
+                    h.memory_type,
+                    h.content,
+                    h.state.as_str(),
+                    h.valid_from,
+                    h.valid_until,
+                    h.assertion_basis,
+                    h.changed_by,
+                    h.change_reason,
+                    h.changed_at,
+                ],
+            )
+            .map_err(sql_to_domain)?;
+        self.conn
+            .query_row("SELECT last_insert_rowid()", [], |r| r.get(0))
+            .map_err(sql_to_domain)
+    }
+
+    fn save_link(&mut self, l: &MemoryLink) -> Result<i64, MnexisError> {
+        self.conn
+            .execute(
+                "INSERT INTO memory_links (older_uuid, newer_uuid, link_type, created_at) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![l.older_uuid, l.newer_uuid, l.link_type, l.created_at],
+            )
+            .map_err(sql_to_domain)?;
+        self.conn
+            .query_row("SELECT last_insert_rowid()", [], |r| r.get(0))
+            .map_err(sql_to_domain)
+    }
+
+    fn tags_for(&self, uuid: &str) -> Result<Vec<MemoryTag>, MnexisError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, memory_uuid, tag, created_at \
+                 FROM memory_tags WHERE memory_uuid = ?1 ORDER BY tag",
+            )
+            .map_err(sql_to_domain)?;
+        let rows = stmt
+            .query_map([uuid], |row| {
+                Ok(MemoryTag {
+                    id: row.get(0)?,
+                    memory_uuid: row.get(1)?,
+                    tag: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })
+            .map_err(sql_to_domain)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(sql_to_domain)
+    }
+
+    fn set_tags(&mut self, uuid: &str, tags: &[String]) -> Result<(), MnexisError> {
+        self.conn
+            .execute("DELETE FROM memory_tags WHERE memory_uuid = ?1", [uuid])
+            .map_err(sql_to_domain)?;
+        for tag in tags {
+            self.conn
+                .execute(
+                    "INSERT INTO memory_tags (memory_uuid, tag, created_at) \
+                     VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+                    params![uuid, tag],
+                )
+                .map_err(sql_to_domain)?;
+        }
+        Ok(())
+    }
+
+    fn get_idempotency(
+        &self,
+        key: &str,
+        namespace: &str,
+    ) -> Result<Option<IdempotencyRecord>, MnexisError> {
+        self.conn
+            .query_row(
+                "SELECT id_key, namespace, request_hash, result_uuid, created_at \
+                 FROM idempotency_records WHERE id_key = ?1 AND namespace = ?2",
+                params![key, namespace],
+                |row| {
+                    Ok(IdempotencyRecord {
+                        key: crate::domain::idempotency::IdempotencyKey(row.get(0)?),
+                        namespace: row.get(1)?,
+                        request_hash: row.get(2)?,
+                        result_uuid: row.get(3)?,
+                        created_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(sql_to_domain)
+    }
+
+    fn save_idempotency(&mut self, r: &IdempotencyRecord) -> Result<(), MnexisError> {
+        self.conn
+            .execute(
+                "INSERT INTO idempotency_records (id_key, namespace, request_hash, result_uuid, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    r.key.as_str(),
+                    r.namespace,
+                    r.request_hash,
+                    r.result_uuid,
+                    r.created_at,
+                ],
+            )
+            .map_err(sql_to_domain)?;
+        Ok(())
+    }
+
+    fn search(
+        &self,
+        query: &str,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, MnexisError> {
+        let ns_filter = match namespace {
+            Some(ns) => crate::retrieval::NamespaceFilter::Namespace(ns.to_string()),
+            None => crate::retrieval::NamespaceFilter::Any,
+        };
+        crate::retrieval::search(&self.conn, query, ns_filter, limit).map_err(sql_to_domain)
     }
 }
 
