@@ -1,40 +1,22 @@
-use clap::{Parser, Subcommand};
-
-#[derive(Debug, Parser)]
-#[command(
-    name = "mnexis",
-    version,
-    about = "Local-first memory engine for AI agents"
-)]
-struct Args {
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// Run the minimal MCP stdio server.
-    McpServe,
-}
+use clap::Parser;
+use mnexis_core::cli::{self, Cli};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    match Args::parse().command {
-        Command::McpServe => mnexis_core::mcp::serve_stdio().await?,
-    }
-    Ok(())
+async fn main() {
+    let cli = Cli::parse();
+    let code = cli::run(cli).await;
+    std::process::exit(code);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
     #[test]
-    fn active_cli_does_not_expose_the_retired_vector_spike() {
-        use clap::CommandFactory;
-
-        let help = Args::command().render_help().to_string();
-        assert!(!help.contains("spike"));
-        assert!(help.contains("mcp-serve"));
+    fn binary_help_shows_the_nested_mcp_serve_command() {
+        let help = Cli::command().render_help().to_string();
+        assert!(help.contains("mcp"), "help: {help}");
+        assert!(!help.contains("mcp-serve"), "old spelling is gone");
     }
 }

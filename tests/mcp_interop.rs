@@ -1,6 +1,6 @@
 //! Real-client MCP interoperability smoke (T10; ODD L77).
 //!
-//! Drives the actual `mnexis mcp-serve` binary with rmcp 3.3.0's official
+//! Drives the actual `mnexis mcp serve` binary with rmcp 3.3.0's official
 //! client over the child-process stdio transport. A green run proves the
 //! full session — initialize, initialized, tools/list, tools/call and
 //! shutdown — works across a real process boundary, and that the server's
@@ -19,7 +19,7 @@ async fn official_rmcp_client_completes_stdio_session_against_the_real_binary()
     let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
     let transport =
         TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
-            cmd.arg("mcp-serve");
+            cmd.arg("mcp").arg("serve");
         }))?;
 
     // `().serve(...)` runs the initialize/initialized handshake with a

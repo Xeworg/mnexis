@@ -11,6 +11,8 @@
 //! the production one from `storage::sqlite` and returns `MnexisError`.
 
 pub mod application;
+pub mod cli;
+pub mod config;
 pub mod domain;
 pub mod mcp;
 pub mod retrieval;

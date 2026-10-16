@@ -7,4 +7,4 @@
 # exceeded"). The project filesystem has no such quota. Evidence and
 # diagnosis: odd/tasks/e0-e1-recovery.md L71-L72.
 [env]
-TMPDIR = { value = "tmp", relative = true }
+TMPDIR = { value = "tmp", relative = true, force = true }
