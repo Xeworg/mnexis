@@ -6,6 +6,7 @@ use thiserror::Error;
 
 pub mod corpus;
 pub mod mcp;
+pub mod domain;
 pub mod retrieval;
 
 #[derive(Debug, Error)]

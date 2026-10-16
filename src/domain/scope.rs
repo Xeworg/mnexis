@@ -1,0 +1,238 @@
+//! Process access scope (PRD §7).
+
+use serde::{Deserialize, Serialize};
+
+use crate::domain::error::MnexisError;
+
+/// The closed set of operations (PRD §E2 use-case surface + admin).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Operation {
+    // Core use cases
+    Save,
+    Get,
+    List,
+    Update,
+    History,
+    Supersede,
+    SoftDelete,
+    Restore,
+    Purge,
+    Export,
+    Import,
+    Reindex,
+    Search,
+    Context,
+    // Admin
+    Init,
+    Doctor,
+    ConfigShow,
+    McpServe,
+    Eval,
+}
+
+impl Operation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Operation::Save => "save",
+            Operation::Get => "get",
+            Operation::List => "list",
+            Operation::Update => "update",
+            Operation::History => "history",
+            Operation::Supersede => "supersede",
+            Operation::SoftDelete => "soft_delete",
+            Operation::Restore => "restore",
+            Operation::Purge => "purge",
+            Operation::Export => "export",
+            Operation::Import => "import",
+            Operation::Reindex => "reindex",
+            Operation::Search => "search",
+            Operation::Context => "context",
+            Operation::Init => "init",
+            Operation::Doctor => "doctor",
+            Operation::ConfigShow => "config_show",
+            Operation::McpServe => "mcp_serve",
+            Operation::Eval => "eval",
+        }
+    }
+}
+
+/// How the service reports an out-of-scope access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExistenceDisclosure {
+    /// Return `NotFound` to avoid disclosing the existence of records the
+    /// caller cannot see. This is the default.
+    NotFound,
+    /// Return `Forbidden` when the operator explicitly wants the caller to
+    /// know they were denied.
+    Forbid,
+}
+
+impl Default for ExistenceDisclosure {
+    fn default() -> Self {
+        ExistenceDisclosure::NotFound
+    }
+}
+
+/// The immutable access scope for a process.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccessScope {
+    pub read_namespaces: Vec<String>,
+    pub write_namespaces: Vec<String>,
+    pub default_namespace: String,
+    pub allow_global: bool,
+    pub allowed_operations: Vec<Operation>,
+    pub existence_disclosure: ExistenceDisclosure,
+}
+
+impl AccessScope {
+    pub fn new(
+        read_namespaces: Vec<String>,
+        write_namespaces: Vec<String>,
+        default_namespace: String,
+        allow_global: bool,
+        allowed_operations: Vec<Operation>,
+    ) -> Self {
+        Self {
+            read_namespaces,
+            write_namespaces,
+            default_namespace,
+            allow_global,
+            allowed_operations,
+            existence_disclosure: ExistenceDisclosure::NotFound,
+        }
+    }
+
+    pub fn with_disclosure(mut self, disclosure: ExistenceDisclosure) -> Self {
+        self.existence_disclosure = disclosure;
+        self
+    }
+
+    pub fn can_read(&self, namespace: &str) -> bool {
+        if namespace == "global" {
+            return self.allow_global;
+        }
+        self.read_namespaces.iter().any(|n| n == namespace)
+    }
+
+    pub fn can_write(&self, namespace: &str) -> bool {
+        if namespace == "global" {
+            return self.allow_global;
+        }
+        self.write_namespaces.iter().any(|n| n == namespace)
+    }
+
+    pub fn allows(&self, op: Operation) -> bool {
+        self.allowed_operations.contains(&op)
+    }
+
+    pub fn authorize_read(&self, namespace: &str) -> Result<(), MnexisError> {
+        if self.can_read(namespace) {
+            Ok(())
+        } else {
+            Err(self.deny_error("read", namespace))
+        }
+    }
+
+    pub fn authorize_write(&self, namespace: &str) -> Result<(), MnexisError> {
+        if self.can_write(namespace) {
+            Ok(())
+        } else {
+            Err(self.deny_error("write", namespace))
+        }
+    }
+
+    pub fn authorize_operation(&self, op: Operation) -> Result<(), MnexisError> {
+        if self.allows(op) {
+            Ok(())
+        } else {
+            Err(MnexisError::forbidden(
+                op.as_str(),
+                "operation not allowed for this process",
+            ))
+        }
+    }
+
+    fn deny_error(&self, op: &str, namespace: &str) -> MnexisError {
+        match self.existence_disclosure {
+            ExistenceDisclosure::NotFound => {
+                MnexisError::not_found(format!("namespace:{namespace}"))
+            }
+            ExistenceDisclosure::Forbid => {
+                MnexisError::forbidden(op, "namespace not allowed for this process")
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scope() -> AccessScope {
+        AccessScope::new(
+            vec!["proyecto-a".into(), "proyecto-b".into()],
+            vec!["proyecto-a".into()],
+            "proyecto-a".into(),
+            false,
+            vec![Operation::Save, Operation::Search],
+        )
+    }
+
+    #[test]
+    fn read_and_write_follow_distinct_allowlists() {
+        let s = scope();
+        assert!(s.can_read("proyecto-a"));
+        assert!(s.can_read("proyecto-b"));
+        assert!(!s.can_read("proyecto-c"));
+        assert!(s.can_write("proyecto-a"));
+        assert!(!s.can_write("proyecto-b"));
+    }
+
+    #[test]
+    fn global_namespace_requires_explicit_permission() {
+        let mut s = scope();
+        assert!(!s.can_read("global"));
+        assert!(!s.can_write("global"));
+        s.allow_global = true;
+        assert!(s.can_read("global"));
+        assert!(s.can_write("global"));
+    }
+
+    #[test]
+    fn operation_allowlist_is_enforced() {
+        let s = scope();
+        assert!(s.allows(Operation::Save));
+        assert!(s.allows(Operation::Search));
+        assert!(!s.allows(Operation::Purge));
+    }
+
+    #[test]
+    fn default_disclosure_is_not_found() {
+        let s = scope();
+        let err = s.authorize_read("proyecto-c").unwrap_err();
+        assert!(matches!(err, MnexisError::NotFound { .. }));
+    }
+
+    #[test]
+    fn opt_in_forbid_disclosure() {
+        let s = scope().with_disclosure(ExistenceDisclosure::Forbid);
+        let err = s.authorize_read("proyecto-c").unwrap_err();
+        assert!(matches!(err, MnexisError::Forbidden { .. }));
+    }
+
+    #[test]
+    fn authorize_write_returns_error_for_unauthorized_namespace() {
+        let s = scope();
+        let err = s.authorize_write("proyecto-b").unwrap_err();
+        assert!(matches!(err, MnexisError::NotFound { .. }));
+    }
+
+    #[test]
+    fn authorize_operation_returns_forbidden_for_unauthorized_op() {
+        let s = scope();
+        let err = s.authorize_operation(Operation::Purge).unwrap_err();
+        assert!(matches!(err, MnexisError::Forbidden { .. }));
+    }
+}
