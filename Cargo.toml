@@ -29,6 +29,11 @@ tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "time"] 
 [dev-dependencies]
 jsonschema = { version = "=0.58.6", default-features = false }
 tempfile = "=3.23.0"
+criterion = "0.5"
+
+[[bench]]
+name = "fts5_latency"
+harness = false
 
 [profile.release]
 strip = true

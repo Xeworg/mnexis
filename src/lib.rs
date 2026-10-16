@@ -4,7 +4,9 @@ use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
 use thiserror::Error;
 
+pub mod corpus;
 pub mod mcp;
+pub mod retrieval;
 
 #[derive(Debug, Error)]
 pub enum SpikeError {
