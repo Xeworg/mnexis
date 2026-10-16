@@ -1,0 +1,475 @@
+//! SQLite adapter for the `MemoryRepository` port from `domain::repository`.
+//!
+//! Maps between the `domain::Memory` value type and the production
+//! `memories` table.
+
+use rusqlite::{Connection, OptionalExtension, Row, ToSql, params};
+
+use crate::domain::error::MnexisError;
+use crate::domain::memory::{Memory, MemoryState};
+use crate::domain::repository::MemoryRepository;
+
+/// SQLite-backed implementation of `MemoryRepository`.
+pub struct SqliteMemoryRepository {
+    conn: Connection,
+}
+
+impl SqliteMemoryRepository {
+    pub fn new(conn: Connection) -> Self {
+        Self { conn }
+    }
+
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
+    fn row_to_memory(row: &Row) -> Result<Memory, MnexisError> {
+        let id: Option<i64> = row.get(0).map_err(sql_to_domain)?;
+        let uuid: String = row.get(1).map_err(sql_to_domain)?;
+        let topic_key: String = row.get(2).map_err(sql_to_domain)?;
+        let namespace: String = row.get(3).map_err(sql_to_domain)?;
+        let memory_type: String = row.get(4).map_err(sql_to_domain)?;
+        let state_str: String = row.get(5).map_err(sql_to_domain)?;
+        let content: String = row.get(6).map_err(sql_to_domain)?;
+        let state = MemoryState::from_db(&state_str)?;
+        let revision: i32 = row.get(7).map_err(sql_to_domain)?;
+        let deleted: i32 = row.get(8).map_err(sql_to_domain)?;
+        let created_at: String = row.get(9).map_err(sql_to_domain)?;
+        let updated_at: String = row.get(10).map_err(sql_to_domain)?;
+        let deleted_at: Option<String> = row.get(11).map_err(sql_to_domain)?;
+        let purge_after: Option<String> = row.get(12).map_err(sql_to_domain)?;
+        let valid_from: Option<String> = row.get(13).map_err(sql_to_domain)?;
+        let valid_until: Option<String> = row.get(14).map_err(sql_to_domain)?;
+        let actor: String = row.get(15).map_err(sql_to_domain)?;
+        let channel: String = row.get(16).map_err(sql_to_domain)?;
+        let assertion_basis: String = row.get(17).map_err(sql_to_domain)?;
+        Ok(Memory {
+            id,
+            uuid,
+            topic_key,
+            namespace,
+            memory_type,
+            content,
+            state,
+            revision,
+            deleted: deleted != 0,
+            created_at,
+            updated_at,
+            deleted_at,
+            purge_after,
+            valid_from,
+            valid_until,
+            actor,
+            channel,
+            assertion_basis,
+        })
+    }
+}
+
+fn sql_to_domain(e: rusqlite::Error) -> MnexisError {
+    MnexisError::busy(format!("sql: {e}"))
+}
+
+/// Bridge `MnexisError` to `rusqlite::Error` for use inside `query_row` /
+/// `query_map` closures that must return `Result<_, rusqlite::Error>`.
+fn to_sql_err(e: MnexisError) -> rusqlite::Error {
+    let boxed: Box<dyn std::error::Error + Send + Sync> = Box::new(e);
+    rusqlite::Error::ToSqlConversionFailure(boxed)
+}
+
+const SELECT_COLUMNS: &str = "id, uuid, topic_key, namespace, memory_type, state, content, \
+                                revision, deleted, created_at, updated_at, deleted_at, purge_after, \
+                                valid_from, valid_until, actor, channel, assertion_basis";
+
+impl MemoryRepository for SqliteMemoryRepository {
+    fn save(&mut self, mem: &Memory) -> Result<i64, MnexisError> {
+        let state_str = mem.state.as_str();
+        let result = self.conn.execute(
+            "INSERT INTO memories (
+                uuid, topic_key, revision, namespace, memory_type, state, content,
+                actor, channel, assertion_basis,
+                valid_from, valid_until, deleted, deleted_at, purge_after,
+                created_at, updated_at
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                ?8, ?9, ?10,
+                ?11, ?12, ?13, ?14, ?15,
+                ?16, ?17
+            )",
+            params![
+                mem.uuid,
+                mem.topic_key,
+                mem.revision,
+                mem.namespace,
+                mem.memory_type,
+                state_str,
+                mem.content,
+                mem.actor,
+                mem.channel,
+                mem.assertion_basis,
+                mem.valid_from,
+                mem.valid_until,
+                mem.deleted as i32,
+                mem.deleted_at,
+                mem.purge_after,
+                mem.created_at,
+                mem.updated_at,
+            ],
+        );
+        match result {
+            Ok(_) => {
+                let row_id: i64 = self
+                    .conn
+                    .query_row("SELECT last_insert_rowid()", [], |r| r.get(0))
+                    .map_err(sql_to_domain)?;
+                Ok(row_id)
+            }
+            Err(rusqlite::Error::SqliteFailure(ref code, _))
+                if code.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                Err(MnexisError::topic_conflict(
+                    mem.topic_key.clone(),
+                    mem.namespace.clone(),
+                ))
+            }
+            Err(e) => Err(sql_to_domain(e)),
+        }
+    }
+
+    fn get_by_uuid(&self, uuid: &str) -> Result<Option<Memory>, MnexisError> {
+        self.conn
+            .query_row(
+                &format!("SELECT {SELECT_COLUMNS} FROM memories WHERE uuid = ?1 AND deleted = 0"),
+                [uuid],
+                |row| Self::row_to_memory(row).map_err(to_sql_err),
+            )
+            .optional()
+            .map_err(sql_to_domain)
+    }
+
+    fn get_by_rowid(&self, id: i64) -> Result<Option<Memory>, MnexisError> {
+        self.conn
+            .query_row(
+                &format!("SELECT {SELECT_COLUMNS} FROM memories WHERE id = ?1"),
+                [id],
+                |row| Self::row_to_memory(row).map_err(to_sql_err),
+            )
+            .optional()
+            .map_err(sql_to_domain)
+    }
+
+    fn list(
+        &self,
+        namespace: Option<&str>,
+        state: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        let namespace = namespace.map(String::from);
+        let state = state.map(String::from);
+        let mut sql = format!("SELECT {SELECT_COLUMNS} FROM memories WHERE deleted = 0");
+        let mut param_refs: Vec<&dyn ToSql> = Vec::new();
+        if let Some(ns) = namespace.as_ref() {
+            sql.push_str(" AND namespace = ?");
+            param_refs.push(ns as &dyn ToSql);
+        }
+        if let Some(st) = state.as_ref() {
+            sql.push_str(" AND state = ?");
+            param_refs.push(st as &dyn ToSql);
+        }
+        sql.push_str(" ORDER BY id LIMIT ? OFFSET ?");
+        let limit_val: i64 = limit as i64;
+        let offset_val: i64 = offset as i64;
+        param_refs.push(&limit_val);
+        param_refs.push(&offset_val);
+
+        let mut stmt = self.conn.prepare(&sql).map_err(sql_to_domain)?;
+        let rows = stmt
+            .query_map(&param_refs[..], |row| {
+                Self::row_to_memory(row).map_err(to_sql_err)
+            })
+            .map_err(sql_to_domain)?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row.map_err(sql_to_domain)?);
+        }
+        Ok(result)
+    }
+
+    fn update(&mut self, mem: &Memory, expected_revision: i32) -> Result<Memory, MnexisError> {
+        let id = mem
+            .id
+            .ok_or_else(|| MnexisError::invalid_argument("id", "memory has no rowid"))?;
+        let state_str = mem.state.as_str();
+        let new_revision = expected_revision + 1;
+        let affected = self
+            .conn
+            .execute(
+                "UPDATE memories SET
+                    content = ?1, state = ?2, topic_key = ?3, memory_type = ?4,
+                    actor = ?5, channel = ?6, assertion_basis = ?7,
+                    valid_from = ?8, valid_until = ?9,
+                    revision = ?10, updated_at = ?11
+                 WHERE id = ?12 AND revision = ?13",
+                params![
+                    mem.content,
+                    state_str,
+                    mem.topic_key,
+                    mem.memory_type,
+                    mem.actor,
+                    mem.channel,
+                    mem.assertion_basis,
+                    mem.valid_from,
+                    mem.valid_until,
+                    new_revision,
+                    mem.updated_at,
+                    id,
+                    expected_revision,
+                ],
+            )
+            .map_err(sql_to_domain)?;
+        if affected == 0 {
+            let current: Option<i64> = self
+                .conn
+                .query_row("SELECT revision FROM memories WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
+                .optional()
+                .map_err(sql_to_domain)?;
+            return Err(MnexisError::revision_conflict(current.unwrap_or(0)));
+        }
+        self.get_by_rowid(id)?
+            .ok_or_else(|| MnexisError::not_found(format!("memory:{id}")))
+    }
+
+    fn soft_delete(&mut self, uuid: &str, expected_revision: i32) -> Result<(), MnexisError> {
+        let affected = self
+            .conn
+            .execute(
+                "UPDATE memories SET deleted = 1, \
+                    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), \
+                    revision = revision + 1 \
+                 WHERE uuid = ?1 AND deleted = 0 AND revision = ?2",
+                params![uuid, expected_revision],
+            )
+            .map_err(sql_to_domain)?;
+        if affected == 0 {
+            return Err(MnexisError::not_found(format!("memory:{uuid}")));
+        }
+        Ok(())
+    }
+
+    fn restore(&mut self, uuid: &str) -> Result<(), MnexisError> {
+        let affected = self
+            .conn
+            .execute(
+                "UPDATE memories SET deleted = 0, deleted_at = NULL, \
+                    revision = revision + 1 \
+                 WHERE uuid = ?1 AND deleted = 1",
+                [uuid],
+            )
+            .map_err(sql_to_domain)?;
+        if affected == 0 {
+            return Err(MnexisError::not_found(format!(
+                "memory:{uuid} (not deleted or missing)"
+            )));
+        }
+        Ok(())
+    }
+
+    fn purge(&mut self, before: Option<&str>, all: bool) -> Result<usize, MnexisError> {
+        if all {
+            let n = self
+                .conn
+                .execute("DELETE FROM memories WHERE deleted = 1", [])
+                .map_err(sql_to_domain)?;
+            Ok(n)
+        } else if let Some(cutoff) = before {
+            let n = self
+                .conn
+                .execute(
+                    "DELETE FROM memories WHERE deleted = 1 \
+                     AND purge_after IS NOT NULL AND purge_after <= ?1",
+                    [cutoff],
+                )
+                .map_err(sql_to_domain)?;
+            Ok(n)
+        } else {
+            Err(MnexisError::invalid_argument(
+                "before",
+                "either 'before' (ISO-8601 cutoff) or 'all' must be specified",
+            ))
+        }
+    }
+
+    fn count(&self, namespace: Option<&str>, state: Option<&str>) -> Result<i64, MnexisError> {
+        let namespace = namespace.map(String::from);
+        let state = state.map(String::from);
+        let mut sql = String::from("SELECT count(*) FROM memories WHERE deleted = 0");
+        let mut param_refs: Vec<&dyn ToSql> = Vec::new();
+        if let Some(ns) = namespace.as_ref() {
+            sql.push_str(" AND namespace = ?");
+            param_refs.push(ns as &dyn ToSql);
+        }
+        if let Some(st) = state.as_ref() {
+            sql.push_str(" AND state = ?");
+            param_refs.push(st as &dyn ToSql);
+        }
+        let count: i64 = self
+            .conn
+            .query_row(&sql, &param_refs[..], |r| r.get(0))
+            .map_err(sql_to_domain)?;
+        Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::sqlite::open_sqlite;
+    use tempfile::tempdir_in;
+
+    fn make_repo(n: usize) -> (SqliteMemoryRepository, tempfile::TempDir) {
+        let dir = tempdir_in("target").unwrap();
+        let conn = open_sqlite(&dir.path().join("repo.db")).unwrap();
+        let mut repo = SqliteMemoryRepository::new(conn);
+        for i in 0..n {
+            let m = Memory::new_proposed(
+                format!("uuid-{i}"),
+                if i == 0 {
+                    "topic.shared".to_string()
+                } else {
+                    format!("topic.{i}")
+                },
+                "proyecto-a".to_string(),
+                "fact".to_string(),
+                format!("content body {i}"),
+                "user".to_string(),
+                "cli".to_string(),
+                "user_stated".to_string(),
+                "2026-01-01T00:00:00Z".to_string(),
+            );
+            repo.save(&m).unwrap();
+        }
+        (repo, dir)
+    }
+
+    #[test]
+    fn save_and_get_by_uuid_round_trip() {
+        let (repo, _dir) = make_repo(3);
+        let m = repo.get_by_uuid("uuid-0").unwrap().unwrap();
+        assert_eq!(m.uuid, "uuid-0");
+        assert_eq!(m.revision, 1);
+        assert_eq!(m.content, "content body 0");
+        assert_eq!(m.state, MemoryState::Proposed);
+    }
+
+    #[test]
+    fn get_by_rowid_returns_inserted_memory() {
+        let (mut repo, _dir) = make_repo(1);
+        let m = repo.get_by_uuid("uuid-0").unwrap().unwrap();
+        let id = m.id.unwrap();
+        let by_id = repo.get_by_rowid(id).unwrap().unwrap();
+        assert_eq!(by_id.uuid, "uuid-0");
+    }
+
+    #[test]
+    fn list_filters_by_namespace_and_state() {
+        let (repo, _dir) = make_repo(3);
+        let all = repo.list(None, None, 100, 0).unwrap();
+        assert_eq!(all.len(), 3);
+        let ns_a = repo.list(Some("proyecto-a"), None, 100, 0).unwrap();
+        assert_eq!(ns_a.len(), 3);
+        let empty = repo.list(Some("proyecto-b"), None, 100, 0).unwrap();
+        assert_eq!(empty.len(), 0);
+    }
+
+    #[test]
+    fn update_increments_revision_and_returns_new_memory() {
+        let (mut repo, _dir) = make_repo(1);
+        let m0 = repo.get_by_uuid("uuid-0").unwrap().unwrap();
+        let mut m1 = m0.clone();
+        m1.content = "updated body".to_string();
+        m1.updated_at = "2026-01-02T00:00:00Z".to_string();
+        let m2 = repo.update(&m1, 1).unwrap();
+        assert_eq!(m2.revision, 2);
+        assert_eq!(m2.content, "updated body");
+    }
+
+    #[test]
+    fn update_with_wrong_revision_returns_revision_conflict() {
+        let (mut repo, _dir) = make_repo(1);
+        let m0 = repo.get_by_uuid("uuid-0").unwrap().unwrap();
+        let mut m1 = m0.clone();
+        m1.content = "updated".to_string();
+        let err = repo.update(&m1, 99).unwrap_err();
+        assert!(matches!(
+            err,
+            MnexisError::RevisionConflict {
+                current_revision: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn soft_delete_and_restore_round_trip() {
+        let (mut repo, _dir) = make_repo(1);
+        repo.soft_delete("uuid-0", 1).unwrap();
+        // After soft delete, get_by_uuid returns None (filters deleted=0).
+        assert!(repo.get_by_uuid("uuid-0").unwrap().is_none());
+        repo.restore("uuid-0").unwrap();
+        // After restore, it's back.
+        let m = repo.get_by_uuid("uuid-0").unwrap().unwrap();
+        assert!(!m.deleted);
+        assert_eq!(m.revision, 3); // 1 → soft_delete(2) → restore(3)
+    }
+
+    #[test]
+    fn purge_removes_soft_deleted_records() {
+        let (mut repo, _dir) = make_repo(2);
+        repo.soft_delete("uuid-0", 1).unwrap();
+        let purged = repo.purge(None, true).unwrap();
+        assert_eq!(purged, 1);
+        // uuid-0 is gone, uuid-1 remains.
+        assert!(repo.get_by_uuid("uuid-0").unwrap().is_none());
+        assert!(repo.get_by_uuid("uuid-1").unwrap().is_some());
+    }
+
+    #[test]
+    fn save_duplicate_topic_key_returns_topic_conflict() {
+        let (mut repo, _dir) = make_repo(0);
+        let m1 = Memory::new_proposed(
+            "uuid-a",
+            "topic.dup",
+            "proyecto-a",
+            "fact",
+            "first",
+            "user",
+            "cli",
+            "user_stated",
+            "2026-01-01T00:00:00Z",
+        );
+        repo.save(&m1).unwrap();
+        let m2 = Memory::new_proposed(
+            "uuid-b",
+            "topic.dup",
+            "proyecto-a",
+            "fact",
+            "second",
+            "user",
+            "cli",
+            "user_stated",
+            "2026-01-01T00:00:00Z",
+        );
+        let err = repo.save(&m2).unwrap_err();
+        assert!(matches!(err, MnexisError::TopicConflict { .. }));
+    }
+
+    #[test]
+    fn count_matches_list_length() {
+        let (repo, _dir) = make_repo(5);
+        let count = repo.count(None, None).unwrap();
+        let list = repo.list(None, None, 100, 0).unwrap();
+        assert_eq!(count as usize, list.len());
+    }
+}

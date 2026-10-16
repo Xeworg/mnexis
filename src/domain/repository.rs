@@ -31,18 +31,10 @@ pub trait MemoryRepository {
     /// Update a memory. The caller passes `expected_revision`; the storage
     /// layer checks it atomically and returns `MnexisError::RevisionConflict`
     /// if it doesn't match. The returned `Memory` has the new revision number.
-    fn update(
-        &mut self,
-        mem: &Memory,
-        expected_revision: i32,
-    ) -> Result<Memory, MnexisError>;
+    fn update(&mut self, mem: &Memory, expected_revision: i32) -> Result<Memory, MnexisError>;
 
     /// Soft-delete a memory by UUID.
-    fn soft_delete(
-        &mut self,
-        uuid: &str,
-        expected_revision: i32,
-    ) -> Result<(), MnexisError>;
+    fn soft_delete(&mut self, uuid: &str, expected_revision: i32) -> Result<(), MnexisError>;
 
     /// Restore a soft-deleted memory.
     fn restore(&mut self, uuid: &str) -> Result<(), MnexisError>;
@@ -52,9 +44,5 @@ pub trait MemoryRepository {
     fn purge(&mut self, before: Option<&str>, all: bool) -> Result<usize, MnexisError>;
 
     /// Count memories matching the optional namespace/state filter.
-    fn count(
-        &self,
-        namespace: Option<&str>,
-        state: Option<&str>,
-    ) -> Result<i64, MnexisError>;
+    fn count(&self, namespace: Option<&str>, state: Option<&str>) -> Result<i64, MnexisError>;
 }

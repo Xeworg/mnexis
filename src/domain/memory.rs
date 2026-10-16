@@ -230,9 +230,7 @@ mod tests {
 
     #[test]
     fn memory_retrievability_logic() {
-        let mut m = Memory::new_proposed(
-            "u", "", "ns", "fact", "c", "a", "c", "b", "t",
-        );
+        let mut m = Memory::new_proposed("u", "", "ns", "fact", "c", "a", "c", "b", "t");
         assert!(!m.is_retrievable_now());
         m.state = MemoryState::Active;
         assert!(m.is_retrievable_now());

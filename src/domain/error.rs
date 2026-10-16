@@ -24,7 +24,10 @@ pub enum MnexisError {
     RevisionConflict { current_revision: i64 },
 
     #[error("topic conflict: {topic_key} in {namespace}")]
-    TopicConflict { topic_key: String, namespace: String },
+    TopicConflict {
+        topic_key: String,
+        namespace: String,
+    },
 
     #[error("busy: {message}")]
     Busy { message: String },
@@ -46,31 +49,51 @@ pub enum MnexisError {
 
 impl MnexisError {
     pub fn invalid_argument(field: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::InvalidArgument { field: field.into(), message: message.into() }
+        Self::InvalidArgument {
+            field: field.into(),
+            message: message.into(),
+        }
     }
     pub fn not_found(resource: impl Into<String>) -> Self {
-        Self::NotFound { resource: resource.into() }
+        Self::NotFound {
+            resource: resource.into(),
+        }
     }
     pub fn forbidden(operation: impl Into<String>, reason: impl Into<String>) -> Self {
-        Self::Forbidden { operation: operation.into(), reason: reason.into() }
+        Self::Forbidden {
+            operation: operation.into(),
+            reason: reason.into(),
+        }
     }
     pub fn revision_conflict(current_revision: i64) -> Self {
         Self::RevisionConflict { current_revision }
     }
     pub fn topic_conflict(topic_key: impl Into<String>, namespace: impl Into<String>) -> Self {
-        Self::TopicConflict { topic_key: topic_key.into(), namespace: namespace.into() }
+        Self::TopicConflict {
+            topic_key: topic_key.into(),
+            namespace: namespace.into(),
+        }
     }
     pub fn busy(message: impl Into<String>) -> Self {
-        Self::Busy { message: message.into() }
+        Self::Busy {
+            message: message.into(),
+        }
     }
     pub fn index_unavailable(reason: impl Into<String>) -> Self {
-        Self::IndexUnavailable { reason: reason.into() }
+        Self::IndexUnavailable {
+            reason: reason.into(),
+        }
     }
     pub fn budget_too_small(budget: i64, minimum_envelope: i64) -> Self {
-        Self::BudgetTooSmall { budget, minimum_envelope }
+        Self::BudgetTooSmall {
+            budget,
+            minimum_envelope,
+        }
     }
     pub fn cursor_expired(reason: impl Into<String>) -> Self {
-        Self::CursorExpired { reason: reason.into() }
+        Self::CursorExpired {
+            reason: reason.into(),
+        }
     }
     pub fn unsupported_version(version: i64) -> Self {
         Self::UnsupportedVersion { version }
@@ -92,11 +115,18 @@ mod tests {
             "not found: memory:abc"
         );
         assert_eq!(
-            MnexisError::RevisionConflict { current_revision: 5 }.to_string(),
+            MnexisError::RevisionConflict {
+                current_revision: 5
+            }
+            .to_string(),
             "revision conflict: current is 5"
         );
         assert_eq!(
-            MnexisError::BudgetTooSmall { budget: 100, minimum_envelope: 200 }.to_string(),
+            MnexisError::BudgetTooSmall {
+                budget: 100,
+                minimum_envelope: 200
+            }
+            .to_string(),
             "budget too small: 100 (minimum envelope 200)"
         );
     }
