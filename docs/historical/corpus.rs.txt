@@ -32,7 +32,7 @@
 //! pool's templates plus its unique `mnx<i>` token, FTS5 implicit AND
 //! returns zero rows by construction.
 
-pub use crate::retrieval::Memory;
+pub use crate::domain::memory::Memory;
 
 /// Number of topic pools.
 pub const NUM_POOLS: usize = 200;

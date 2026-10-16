@@ -364,9 +364,13 @@ impl<R: MemoryRepository> MemoryService<R> {
         self.repo.purge(before, all)
     }
 
-    // --- reindex (T18 provides the production rebuild) ---
-    pub fn reindex(&mut self) -> Result<(), MnexisError> {
-        Ok(())
+    // --- reindex ---
+    /// Rebuild the FTS5 index from the canonical `memories` table. Returns
+    /// the number of rows re-indexed. Requires `Operation::Reindex` on the
+    /// scope's `allowed_operations` allowlist.
+    pub fn reindex(&mut self) -> Result<usize, MnexisError> {
+        self.scope.authorize_operation(Operation::Reindex)?;
+        self.repo.reindex()
     }
 
     // --- search ---

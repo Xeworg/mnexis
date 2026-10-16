@@ -10,12 +10,7 @@
 //! The legacy `SpikeError` is removed; the public `open_sqlite` re-exports
 //! the production one from `storage::sqlite` and returns `MnexisError`.
 
-use std::path::Path;
-
-use rusqlite::Connection;
-
 pub mod application;
-pub mod corpus;
 pub mod domain;
 pub mod mcp;
 pub mod retrieval;

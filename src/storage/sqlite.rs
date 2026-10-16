@@ -148,9 +148,37 @@ BEGIN
 END;
 "#;
 
+/// Migration 002: completes the FTS5 maintenance triggers.
+///
+/// Migration 001 created the `into_active` / `out_of_active` triggers
+/// (covering state and deleted transitions) and the `after_insert_content`
+/// trigger, but left two paths uncovered:
+///
+/// - `UPDATE OF content` (a pure content change with no state/deleted
+///   toggle) leaves the FTS row out of sync.
+/// - `DELETE FROM memories` (rare in production, exercised by purge) leaves
+///   the FTS row behind.
+///
+/// Both gaps are closed here so the canonical-table ↔ FTS5 invariant holds
+/// under every operation the application service can perform.
+const MIGRATION_002: &str = r#"
+CREATE TRIGGER IF NOT EXISTS memories_after_update_content
+AFTER UPDATE OF content ON memories
+WHEN new.deleted = 0
+BEGIN
+    UPDATE memories_fts SET content = new.content WHERE rowid = new.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_after_delete
+AFTER DELETE ON memories
+BEGIN
+    DELETE FROM memories_fts WHERE rowid = old.id;
+END;
+"#;
+
 /// Applies pending migrations. Creates the `schema_migrations` ledger if
-/// absent. Applies migration 001 if not already recorded. A recorded
-/// version higher than the binary's known migrations returns
+/// absent. Applies migration 001 and 002 if not already recorded. A
+/// recorded version higher than the binary's known migrations returns
 /// `MnexisError::UnsupportedVersion` (no-downgrade rule).
 pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
     conn.execute_batch(
@@ -169,7 +197,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
         )
         .map_err(|e| MnexisError::busy(format!("read schema_migrations: {e}")))?;
 
-    if applied > 1 {
+    if applied > 2 {
         return Err(MnexisError::unsupported_version(applied));
     }
 
@@ -177,7 +205,14 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
         conn.execute_batch(MIGRATION_001)
             .map_err(|e| MnexisError::busy(format!("migration 001: {e}")))?;
         conn.execute("INSERT INTO schema_migrations (version) VALUES (1)", [])
-            .map_err(|e| MnexisError::busy(format!("record migration: {e}")))?;
+            .map_err(|e| MnexisError::busy(format!("record migration 001: {e}")))?;
+    }
+
+    if applied < 2 {
+        conn.execute_batch(MIGRATION_002)
+            .map_err(|e| MnexisError::busy(format!("migration 002: {e}")))?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (2)", [])
+            .map_err(|e| MnexisError::busy(format!("record migration 002: {e}")))?;
     }
 
     Ok(())
@@ -199,7 +234,95 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2, "both migrations 001 and 002 should be recorded");
+
+        // Calling run_migrations again on the same DB must be a no-op.
+        run_migrations(&conn).unwrap();
+        let version_again: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(version_again, 2, "002 must not double-record on a re-run");
+    }
+
+    #[test]
+    fn migration_002_adds_update_of_content_and_after_delete_triggers() {
+        let dir = tempdir_in("target").unwrap();
+        let path = dir.path().join("trig002.db");
+        let conn = open_sqlite(&path).unwrap();
+
+        for name in &["memories_after_update_content", "memories_after_delete"] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name=?1",
+                    [name],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "trigger {name} should exist after migration 002");
+        }
+
+        // Regression: a content-only UPDATE (no state/deleted change) must
+        // refresh the FTS row via the new trigger.
+        conn.execute(
+            "INSERT INTO memories (uuid, topic_key, namespace, content, state, actor, channel, assertion_basis) \
+             VALUES ('uuid-1', '', 'ns', 'graph algorithms', 'active', 'user', 'cli', 'user_stated')",
+            [],
+        )
+        .unwrap();
+        let before: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories_fts WHERE memories_fts MATCH 'graph'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, 1);
+
+        conn.execute(
+            "UPDATE memories SET content = ?1, revision = revision + 1 WHERE uuid = 'uuid-1'",
+            ["forest algorithms"],
+        )
+        .unwrap();
+
+        let hits_graph: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories_fts WHERE memories_fts MATCH 'graph'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            hits_graph, 0,
+            "after UPDATE of content, the old term must disappear from FTS5 (trigger 002)"
+        );
+        let hits_forest: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories_fts WHERE memories_fts MATCH 'forest'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            hits_forest, 1,
+            "the new content must be in FTS5 after UPDATE OF content (trigger 002)"
+        );
+
+        // DELETE must also clear the FTS row.
+        conn.execute("DELETE FROM memories WHERE uuid = 'uuid-1'", [])
+            .unwrap();
+        let hits_after_delete: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories_fts WHERE memories_fts MATCH 'forest'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            hits_after_delete, 0,
+            "after DELETE, the FTS row must be removed (trigger 002)"
+        );
     }
 
     #[test]

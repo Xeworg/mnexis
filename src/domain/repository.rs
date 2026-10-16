@@ -5,7 +5,7 @@
 
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyRecord;
-use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
+use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryTag};
 // SearchHit is defined in the spike's retrieval module for T17; T18 will
 // define the production retrieval type in src/retrieval/fts5.rs.
 use crate::retrieval::SearchHit;
@@ -48,6 +48,11 @@ pub trait MemoryRepository {
     /// Purge memories. `before` is an optional ISO-8601 cutoff; `all` purges
     /// all soft-deleted regardless of date.
     fn purge(&mut self, before: Option<&str>, all: bool) -> Result<usize, MnexisError>;
+
+    /// Rebuild the FTS5 index from the canonical `memories` table. Returns
+    /// the number of rows re-indexed. Used by `MemoryService::reindex`
+    /// (admin command) and by `doctor --repair`.
+    fn reindex(&mut self) -> Result<usize, MnexisError>;
 
     /// Count memories matching the optional namespace/state filter.
     fn count(&self, namespace: Option<&str>, state: Option<&str>) -> Result<i64, MnexisError>;

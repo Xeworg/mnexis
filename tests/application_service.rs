@@ -5,7 +5,7 @@ use mnexis_core::application::{
 };
 use mnexis_core::domain::error::MnexisError;
 use mnexis_core::domain::idempotency::IdempotencyKey;
-use mnexis_core::domain::memory::{Memory, MemoryState};
+use mnexis_core::domain::memory::MemoryState;
 use mnexis_core::domain::scope::{AccessScope, Operation};
 use mnexis_core::storage::memory_repo::SqliteMemoryRepository;
 use mnexis_core::storage::sqlite::open_sqlite;
@@ -29,6 +29,7 @@ fn make_service() -> (MemoryService<SqliteMemoryRepository>, tempfile::TempDir) 
             Operation::History,
             Operation::Supersede,
             Operation::Search,
+            Operation::Reindex,
         ],
     );
     let svc = MemoryService::new(repo, scope, ServiceConfig::default());
@@ -215,4 +216,39 @@ fn unauthorized_namespace_is_denied() {
     let err = svc.save(save_req("uuid-1", "x")).unwrap_err();
     // Default existence_disclosure: NotFound (avoids existence leak).
     assert!(matches!(err, MnexisError::NotFound { .. }));
+}
+
+#[test]
+fn reindex_returns_count_of_active_non_deleted_memories() {
+    let (mut svc, _dir) = make_service();
+    // Two active memories — both must end up in FTS5 after reindex.
+    svc.save(save_req("uuid-1", "first memory")).unwrap();
+    svc.save(save_req("uuid-2", "second memory")).unwrap();
+
+    let count = svc.reindex().expect("reindex must succeed");
+    assert_eq!(
+        count, 2,
+        "both active memories must be reported as re-indexed"
+    );
+}
+
+#[test]
+fn reindex_is_denied_when_operation_not_in_scope() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&dir.path().join("svc.db")).unwrap();
+    let repo = SqliteMemoryRepository::new(conn);
+    // Scope omits `Operation::Reindex`.
+    let scope = AccessScope::new(
+        vec!["proyecto-a".into()],
+        vec!["proyecto-a".into()],
+        "proyecto-a".into(),
+        false,
+        vec![Operation::Save],
+    );
+    let mut svc = MemoryService::new(repo, scope, ServiceConfig::default());
+    let err = svc.reindex().unwrap_err();
+    assert!(
+        matches!(err, MnexisError::Forbidden { .. }),
+        "reindex without Operation::Reindex in scope must return Forbidden"
+    );
 }

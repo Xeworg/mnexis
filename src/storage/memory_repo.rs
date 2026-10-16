@@ -317,6 +317,10 @@ impl MemoryRepository for SqliteMemoryRepository {
         }
     }
 
+    fn reindex(&mut self) -> Result<usize, MnexisError> {
+        crate::retrieval::reindex::reindex_all(&self.conn)
+    }
+
     fn count(&self, namespace: Option<&str>, state: Option<&str>) -> Result<i64, MnexisError> {
         let namespace = namespace.map(String::from);
         let state = state.map(String::from);
@@ -496,7 +500,15 @@ impl MemoryRepository for SqliteMemoryRepository {
             Some(ns) => crate::retrieval::NamespaceFilter::Namespace(ns.to_string()),
             None => crate::retrieval::NamespaceFilter::Any,
         };
-        crate::retrieval::search(&self.conn, query, ns_filter, limit).map_err(sql_to_domain)
+        crate::retrieval::search(
+            &self.conn,
+            query,
+            ns_filter,
+            crate::retrieval::StateFilter::default(),
+            crate::retrieval::DeletedFilter::default(),
+            None,
+            limit,
+        )
     }
 }
 
@@ -543,7 +555,7 @@ mod tests {
 
     #[test]
     fn get_by_rowid_returns_inserted_memory() {
-        let (mut repo, _dir) = make_repo(1);
+        let (repo, _dir) = make_repo(1);
         let m = repo.get_by_uuid("uuid-0").unwrap().unwrap();
         let id = m.id.unwrap();
         let by_id = repo.get_by_rowid(id).unwrap().unwrap();
@@ -648,5 +660,46 @@ mod tests {
         let count = repo.count(None, None).unwrap();
         let list = repo.list(None, None, 100, 0).unwrap();
         assert_eq!(count as usize, list.len());
+    }
+
+    #[test]
+    fn reindex_rebuilds_fts5_and_reports_active_non_deleted_count() {
+        let dir = tempdir_in("target").unwrap();
+        let conn = open_sqlite(&dir.path().join("reindex.db")).unwrap();
+        let mut repo = SqliteMemoryRepository::new(conn);
+
+        // Save two active memories (the trigger inserts them into FTS5
+        // on save because state='active' AND deleted=0).
+        for i in 0..2 {
+            let m = Memory {
+                state: MemoryState::Active,
+                ..Memory::new_proposed(
+                    format!("uuid-{i}"),
+                    format!("topic.{i}"),
+                    "proyecto-a".to_string(),
+                    "fact".to_string(),
+                    format!("content body {i}"),
+                    "user".to_string(),
+                    "cli".to_string(),
+                    "user_stated".to_string(),
+                    "2026-01-01T00:00:00Z".to_string(),
+                )
+            };
+            repo.save(&m).unwrap();
+        }
+
+        let count = repo.reindex().unwrap();
+        assert_eq!(
+            count, 2,
+            "two active + non-deleted memories must be re-indexed"
+        );
+
+        // After reindex, search must surface the active content via FTS5.
+        let hits = repo.search("content", Some("proyecto-a"), 10).unwrap();
+        assert_eq!(
+            hits.len(),
+            2,
+            "search must return both rows after a reindex"
+        );
     }
 }
