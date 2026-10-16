@@ -2,3 +2,10 @@
 /mnexis-data/
 *.db-shm
 *.db-wal
+
+# Cargo local cache (machine-specific, regenerated on `cargo build`).
+# These can grow to hundreds of MB and must never be committed.
+/.cargo/registry/
+/.cargo/.global-cache
+/.cargo/.package-cache
+/.cargo/.package-cache-mutate
