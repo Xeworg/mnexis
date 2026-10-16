@@ -30,6 +30,8 @@ tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "time"] 
 jsonschema = { version = "=0.58.6", default-features = false }
 tempfile = "=3.23.0"
 criterion = "0.5"
+# Test-only client features: the release binary stays server-only.
+rmcp = { version = "=3.3.0", features = ["client", "transport-child-process"] }
 
 [[bench]]
 name = "fts5_latency"
