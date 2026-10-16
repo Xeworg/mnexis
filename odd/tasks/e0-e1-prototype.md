@@ -1,5 +1,5 @@
 # Mnexis E0/E1 prototype plan
-Authorized source: `PRD-Mnexis.md` (v0.4). Scope: execute the first implementation block, E0 contracts and E1 technical integration spike.
+Authorized source: historical `PRD-Mnexis.md` v0.4. Scope at the time: E0 contracts and E1 technical integration spike. Current `PRD-Mnexis.md` v0.5 replaces the LanceDB/Ollama scope with SQLite FTS5 only; this file preserves original requests and evidence, not current acceptance gates. See `odd/tasks/e0-e1-recovery.md` T12-T14 for the remaining E0/E1 scope.
 
 ## Specs
 1. **S1 — E0 contracts:** “Cerrar esquemas, scopes, presupuesto y fixture.” Define versioned data contracts, memory states/provenance, authorization scopes, context-budget behavior, stable errors, and reproducible acceptance fixtures strictly from PRD sections 5–10 and 15.
@@ -29,3 +29,4 @@ Authorized source: `PRD-Mnexis.md` (v0.4). Scope: execute the first implementati
 - L12: Repeated after the user started Ollama and installed `qwen3.5:2b`. `ollama list` succeeds; `ollama --version` reports 0.40.3; `ollama show qwen3.5:2b` lists completion, vision, tools, and thinking (not embedding) capabilities despite an embedding length. The isolated spike again passed SQLite/LanceDB, but `/api/embed` returned HTTP 501 Not Implemented. The report records that this model/server combination does not establish embedding integration.
 - L13: Pulled `nomic-embed-text`. The first isolated spike hit its 3-second request limit while the model was cold. A direct `/api/embed` probe returned HTTP 200 with a vector (1.75 s server-reported duration); rerunning the isolated spike passed and reported 768 dimensions. Updated the report; cold-start timeout remains a limitation.
 - L14: “cierra el odd” — the user explicitly stopped ODD execution while T2 remains blocked for lack of independent verification. Preserve the blocker; do not claim T2 complete.
+- L15: “luego de leer la documentacion he decido que no usaremos los embending y la base de datos vectorial actualiza el prd y la documentacion no usaremos la busqueda semantica con base vectorial”; subsequent reevaluation was accepted with “dale”. T2's historical mixed-stack verification blocker is not silently resolved; only the new SQLite/FTS5-only E1 scope can be evaluated separately. Original specs and evidence above remain unchanged.
