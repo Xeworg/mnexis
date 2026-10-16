@@ -1,10 +1,10 @@
 # Mnexis contracts v1
 
-These JSON Schemas define the first wire-format draft from PRD v0.4. They are closed (`additionalProperties: false`) where an operation shape is defined. `v1` is a prototype contract, not a compatibility promise; freeze only after E0 scenario review.
+These JSON Schemas define the first wire-format draft, reconciled with PRD v0.5's SQLite FTS5-only scope. Embeddings and vector storage are not planned. `memory.schema.json` defines memory records, `operation.schema.json` defines the currently modeled context/update requests, and `scope.schema.json` defines the process access scope. They are closed (`additionalProperties: false`) where an operation shape is defined. `v1` is a prototype contract, not a compatibility promise; freeze only after E0 scenario review.
 
 ## Scope and authorization
 
-A server process receives an immutable `AccessScope` from trusted configuration, never from a tool argument:
+A server process receives an immutable `AccessScope` from trusted configuration, never from a tool argument. Its required fields are specified in `scope.schema.json`: read/write namespace allowlists, default namespace, separate `allow_global` permission, and allowed operations:
 
 - `read_namespaces`: exact namespace allowlist; `write_namespaces`: exact namespace allowlist.
 - `default_namespace`: required and must be in the relevant allowlist.
@@ -30,8 +30,8 @@ Authorize every read and write route, including IDs, history and cursors; resolv
 
 `INVALID_ARGUMENT`, `NOT_FOUND`, `FORBIDDEN`, `REVISION_CONFLICT`, `TOPIC_CONFLICT`, `BUSY`, `INDEX_UNAVAILABLE`, `BUDGET_TOO_SMALL`, `CURSOR_EXPIRED`, `UNSUPPORTED_VERSION`.
 
-Error responses and default logs never contain memory content. Limits from PRD v0.4: memory 16 KiB UTF-8, task/query 8 KiB, 32 tags, 20 default / 100 maximum results, 20 context items, import 50 MiB / 100,000 records, plus a response byte cap to be fixed in E0.
+Error responses and default logs never contain memory content. Draft limits carried forward from PRD v0.4: memory 16 KiB UTF-8, task/query 8 KiB, 32 tags, 20 default / 100 maximum results, 20 context items, import 50 MiB / 100,000 records, plus a response byte cap to be fixed in E0.
 
 ## Scenarios
 
-See `../../../../fixtures/e0/` for representative input/expected-outcome cases. These are contract examples, not proof of a running implementation. Outbox crash/replay and two-process behavior remain E1 experiments.
+See `../../../fixtures/e0/` for representative input/expected-outcome cases. These are contract examples, not proof of a running implementation. The old vector outbox crash/replay experiment is historical only; two-process SQLite behavior still needs validation.

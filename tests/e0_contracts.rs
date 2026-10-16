@@ -1,7 +1,7 @@
 use jsonschema::draft202012::{meta, options};
 use serde_json::{Value, json};
 
-const CONTRACT_SCHEMAS: [(&str, &str); 2] = [
+const CONTRACT_SCHEMAS: [(&str, &str); 3] = [
     (
         "memory.schema.json",
         include_str!("../docs/contracts/v1/memory.schema.json"),
@@ -10,9 +10,14 @@ const CONTRACT_SCHEMAS: [(&str, &str); 2] = [
         "operation.schema.json",
         include_str!("../docs/contracts/v1/operation.schema.json"),
     ),
+    (
+        "scope.schema.json",
+        include_str!("../docs/contracts/v1/scope.schema.json"),
+    ),
 ];
 
 const SCENARIO_SCHEMA: &str = include_str!("../fixtures/e0/scenario.schema.json");
+const SCOPE_SCHEMA: &str = include_str!("../docs/contracts/v1/scope.schema.json");
 
 const E0_FIXTURES: [(&str, &str); 4] = [
     (
@@ -86,7 +91,8 @@ fn e0_contract_schemas_accept_valid_instances_and_reject_invalid_formats() {
             "namespace": "project-a",
             "token_budget": 1200,
             "tokenizer_id": "test-tokenizer",
-            "max_items": 10
+            "max_items": 10,
+            "budget_enforcement": "estimated"
         }),
         json!({
             "id": "11111111-1111-4111-8111-111111111111",
@@ -106,6 +112,35 @@ fn e0_contract_schemas_accept_valid_instances_and_reject_invalid_formats() {
         "max_items": 10
     });
     assert!(!operation_validator.is_valid(&invalid_operation));
+    let invalid_budget_mode = json!({
+        "task": "Find the accepted graph engine.",
+        "namespace": "project-a",
+        "token_budget": 1200,
+        "tokenizer_id": "unsupported-tokenizer",
+        "max_items": 10,
+        "budget_enforcement": "approximate"
+    });
+    assert!(!operation_validator.is_valid(&invalid_budget_mode));
+}
+
+#[test]
+fn e0_scope_contract_requires_prd_process_scope_fields() {
+    let schema: Value = serde_json::from_str(SCOPE_SCHEMA).expect("scope.schema.json");
+    meta::validate(&schema).expect("scope.schema.json must follow Draft 2020-12");
+    let validator = options()
+        .build(&schema)
+        .expect("scope.schema.json must compile");
+    assert!(validator.is_valid(&json!({
+        "read_namespaces": ["project-a"],
+        "write_namespaces": ["project-a"],
+        "default_namespace": "project-a",
+        "allow_global": false,
+        "allowed_operations": ["memory_search"]
+    })));
+    assert!(!validator.is_valid(&json!({
+        "read_namespaces": ["project-a"],
+        "write_namespaces": ["project-a"]
+    })));
 }
 
 #[test]
@@ -116,13 +151,61 @@ fn all_e0_scenario_fixtures_match_their_scenario_schema() {
         .should_validate_formats(true)
         .build(&schema)
         .expect("scenario.schema.json must compile");
+    let scope_schema: Value = serde_json::from_str(SCOPE_SCHEMA).expect("scope.schema.json");
+    let scope_validator = options()
+        .build(&scope_schema)
+        .expect("scope.schema.json must compile");
 
+    let mut operations: Vec<String> = Vec::new();
     for (name, source) in E0_FIXTURES {
         let fixture: Value = serde_json::from_str(source).expect(name);
         assert!(
             validator.is_valid(&fixture),
             "fixture does not match: {name}"
         );
+        if let Some(scope) = fixture.get("scope") {
+            assert!(scope_validator.is_valid(scope), "invalid scope in {name}");
+        }
+        if let Some(processes) = fixture.get("processes").and_then(Value::as_array) {
+            for process in processes {
+                assert!(
+                    scope_validator.is_valid(&process["scope"]),
+                    "invalid process scope in {name}"
+                );
+            }
+        }
+        collect_operations(&fixture, &mut operations);
     }
+    assert!(
+        operations
+            .iter()
+            .any(|operation| operation == "memory_search"),
+        "missing search example"
+    );
+    assert!(
+        operations
+            .iter()
+            .any(|operation| operation == "memory_delete"),
+        "missing delete example"
+    );
     assert!(!validator.is_valid(&json!({ "scenario": "unknown" })));
+}
+
+fn collect_operations(value: &Value, operations: &mut Vec<String>) {
+    match value {
+        Value::Object(object) => {
+            if let Some(operation) = object.get("operation").and_then(Value::as_str) {
+                operations.push(operation.to_owned());
+            }
+            for child in object.values() {
+                collect_operations(child, operations);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_operations(item, operations);
+            }
+        }
+        _ => {}
+    }
 }

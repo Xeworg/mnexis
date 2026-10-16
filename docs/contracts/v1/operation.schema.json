@@ -14,7 +14,8 @@
         "token_budget": { "type": "integer", "minimum": 1 },
         "tokenizer_id": { "type": "string", "minLength": 1 },
         "memory_types": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-        "max_items": { "type": "integer", "minimum": 1, "maximum": 20 }
+        "max_items": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "budget_enforcement": { "enum": ["exact", "estimated"] }
       }
     },
     {

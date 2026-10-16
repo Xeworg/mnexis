@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mnexis.invalid/contracts/v1/scope.schema.json",
+  "title": "Mnexis process access scope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "read_namespaces",
+    "write_namespaces",
+    "default_namespace",
+    "allow_global",
+    "allowed_operations"
+  ],
+  "properties": {
+    "read_namespaces": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "write_namespaces": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "default_namespace": { "type": "string", "minLength": 1 },
+    "allow_global": { "type": "boolean" },
+    "allowed_operations": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  }
+}
