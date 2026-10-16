@@ -1,0 +1,10 @@
+# Redirect TMPDIR for every cargo-spawned process (rustc, cc via build
+# scripts, test binaries) into the repository's tmp/ directory.
+#
+# The development host's /tmp is a tmpfs mounted with a hard per-user
+# quota; parallel build temporaries exhausted it twice (SQLite extended
+# error 778 "disk I/O error" and libsqlite3-sys cc "Disk quota
+# exceeded"). The project filesystem has no such quota. Evidence and
+# diagnosis: odd/tasks/e0-e1-recovery.md L71-L72.
+[env]
+TMPDIR = { value = "tmp", relative = true }
