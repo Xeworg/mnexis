@@ -6,6 +6,8 @@ rust-version = "1.95"
 description = "Local-first memory engine for AI agents"
 license = "MIT"
 authors = ["xeworg"]
+homepage = "https://github.com/Xeworg/mnexis"
+repository = "https://github.com/Xeworg/mnexis"
 publish = false
 
 [lib]
