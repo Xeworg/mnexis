@@ -58,12 +58,12 @@ fn save_req(uuid: &str, content: &str) -> SaveRequest {
 #[test]
 fn save_and_get_round_trip() {
     let (mut svc, _dir) = make_service();
-    let id = svc.save(save_req("uuid-1", "hello")).unwrap();
-    assert!(id > 0);
-    let mem = svc.get("uuid-1").unwrap().unwrap();
-    assert_eq!(mem.content, "hello");
-    assert_eq!(mem.state, MemoryState::Active);
-    assert_eq!(mem.revision, 1);
+    let mem = svc.save(save_req("uuid-1", "hello")).unwrap();
+    assert!(mem.id.unwrap_or(0) > 0);
+    let fetched = svc.get("uuid-1").unwrap().unwrap();
+    assert_eq!(fetched.content, "hello");
+    assert_eq!(fetched.state, MemoryState::Active);
+    assert_eq!(fetched.revision, 1);
 }
 
 #[test]

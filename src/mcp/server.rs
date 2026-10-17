@@ -105,10 +105,17 @@ impl McpServer {
             .service
             .lock()
             .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
-        let row_id = svc.save(req)?;
+        // The service honours the idempotency-key contract: if the
+        // call is a replay, the returned Memory is the *original*
+        // record (canonical uuid + rowid), not a fresh one. We use
+        // the returned values so the JSON envelope matches what a
+        // real client expects to see.
+        let stored = svc.save(req)?;
+        let returned_uuid = stored.uuid.clone();
+        let returned_row_id = stored.id.unwrap_or(0);
         let json = serde_json::json!({
-            "uuid": uuid,
-            "row_id": row_id,
+            "uuid": returned_uuid,
+            "row_id": returned_row_id,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }

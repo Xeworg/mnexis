@@ -113,7 +113,12 @@ impl<R: MemoryRepository> MemoryService<R> {
     }
 
     // --- save ---
-    pub fn save(&mut self, req: SaveRequest) -> Result<i64, MnexisError> {
+    /// Save a new memory. Returns the saved [`Memory`] so callers can
+    /// see the assigned rowid, the canonical uuid, and the persisted
+    /// timestamps. The idempotency replay path returns the *original*
+    /// record (not the fresh uuid the client minted), which is the
+    /// whole point of an idempotency key.
+    pub fn save(&mut self, req: SaveRequest) -> Result<Memory, MnexisError> {
         self.scope.authorize_write(&req.namespace)?;
         self.scope.authorize_operation(Operation::Save)?;
 
@@ -137,7 +142,7 @@ impl<R: MemoryRepository> MemoryService<R> {
             {
                 if existing.request_hash == *hash {
                     if let Some(m) = self.repo.get_by_uuid(&existing.result_uuid)? {
-                        return Ok(m.id.unwrap_or(0));
+                        return Ok(m);
                     }
                     return Err(MnexisError::not_found(format!(
                         "idempotency result uuid:{}",
@@ -191,7 +196,16 @@ impl<R: MemoryRepository> MemoryService<R> {
             self.repo.save_idempotency(&record)?;
         }
 
-        Ok(row_id)
+        // Re-read so the caller sees the canonical assigned rowid and
+        // the persisted timestamps (the timestamps defaulted to
+        // `req.now` in the in-memory `mem`; the DB may have applied
+        // its own defaults via the schema's `DEFAULT (strftime(...))`).
+        let stored = self
+            .repo
+            .get_by_uuid(&req.uuid)?
+            .ok_or_else(|| MnexisError::not_found(format!("memory:{}", req.uuid)))?;
+        let _ = row_id; // already reflected in `stored.id`
+        Ok(stored)
     }
 
     // --- get ---
@@ -651,9 +665,13 @@ fn validate_query(query: &str, max_bytes: usize) -> Result<(), MnexisError> {
     }
 }
 
+/// Hash the *logical* parts of a save request. The uuid is excluded
+/// so two calls with the same `idempotency_key` and the same logical
+/// payload (but client-minted uuids that differ) match — the whole
+/// point of idempotency (PRD §10). The "idempotency key" itself is
+/// the lookup, so it doesn't enter the hash either.
 fn hash_save_request(req: &SaveRequest) -> String {
     let mut h = DefaultHasher::new();
-    req.uuid.hash(&mut h);
     req.topic_key.hash(&mut h);
     req.namespace.hash(&mut h);
     req.memory_type.hash(&mut h);

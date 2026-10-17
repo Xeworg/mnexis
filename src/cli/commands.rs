@@ -77,8 +77,9 @@ pub fn save(
         state,
         now,
     };
-    let uuid_out = req.uuid.clone();
-    let row_id = profile.service_mut().save(req)?;
+    let mem = profile.service_mut().save(req)?;
+    let uuid_out = mem.uuid.clone();
+    let row_id = mem.id.unwrap_or(0);
     Ok(CommandOutcome::new(
         json!({ "uuid": uuid_out, "row_id": row_id }),
         format!("saved {uuid_out} (row {row_id})"),
