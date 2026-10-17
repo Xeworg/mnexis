@@ -181,6 +181,14 @@ pub enum Command {
     /// Rebuild the FTS5 index from canonical data
     Reindex,
 
+    /// Check SQLite and FTS5 health; optionally repair the FTS index
+    Doctor {
+        /// Drop and rebuild memories_fts, re-create all FTS5 triggers,
+        /// then reindex every active+non-deleted row.
+        #[arg(long)]
+        repair: bool,
+    },
+
     /// Show effective configuration and scope
     Config {
         #[command(subcommand)]
@@ -233,7 +241,7 @@ pub async fn run(cli: Cli) -> i32 {
     match execute(&cli).await {
         Ok(outcome) => {
             println!("{}", outcome.render(mode));
-            0
+            outcome.exit_code
         }
         Err(err) => {
             eprintln!("{}", output::render_error(&err, mode));
@@ -376,6 +384,10 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Reindex => {
             let mut profile = Profile::open(data_dir)?;
             commands::reindex(&mut profile)
+        }
+        Command::Doctor { repair } => {
+            let profile = Profile::open(data_dir)?;
+            commands::doctor(&profile, *repair)
         }
         Command::Config {
             action: ConfigAction::Show,

@@ -33,6 +33,8 @@ impl OutputMode {
 pub struct CommandOutcome {
     pub json: Value,
     pub text: String,
+    /// Process exit code. Defaults to 0.
+    pub exit_code: i32,
 }
 
 impl CommandOutcome {
@@ -40,7 +42,14 @@ impl CommandOutcome {
         Self {
             json,
             text: text.into(),
+            exit_code: 0,
         }
+    }
+
+    /// Set a non-zero exit code (e.g. from a diagnostics failure).
+    pub fn with_exit_code(mut self, code: i32) -> Self {
+        self.exit_code = code;
+        self
     }
 
     pub fn render(&self, mode: OutputMode) -> String {

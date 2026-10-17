@@ -12,6 +12,7 @@ use serde_json::json;
 use crate::application::{ListFilter, SaveRequest, SupersedeRequest, UpdateRequest};
 use crate::cli::output::CommandOutcome;
 use crate::cli::profile::Profile;
+use crate::diagnostics::doctor::{failure_exit_code, purge_eligible_count, run_checks};
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyKey;
 use crate::domain::memory::MemoryState;
@@ -471,13 +472,20 @@ pub fn purge(
             format!("purged {purged} memories"),
         ))
     } else {
-        // Dry-run (the default): report the scope, touch nothing. The
-        // affected-record count needs a service-level eligibility query
-        // that arrives with the diagnostics task (T21).
+        // Dry-run (the default): count eligible records without purging.
+        let conn = profile.explain_connection()?;
+        let eligible = purge_eligible_count(&conn, before.as_deref(), all)?;
         Ok(CommandOutcome::new(
-            json!({ "dry_run": true, "purged": 0, "before": before, "all": all }),
+            json!({
+                "dry_run": true,
+                "purged": 0,
+                "eligible": eligible,
+                "before": before,
+                "all": all
+            }),
             format!(
-                "dry-run: no records purged (before={}, all={}); pass --apply to purge",
+                "dry-run: {} eligible, 0 purged (before={}, all={}); pass --apply to purge",
+                eligible,
                 before.as_deref().unwrap_or("-"),
                 all
             ),
@@ -540,4 +548,63 @@ pub fn version() -> CommandOutcome {
         json!({ "name": "mnexis", "version": v }),
         format!("mnexis {v}"),
     )
+}
+
+// --- doctor ---
+
+use crate::diagnostics::doctor::{self, Check, RepairReport};
+
+/// Run every diagnostic check against the profile's database, optionally
+/// dropping and rebuilding the FTS5 index. Exit codes follow e2-core §8:
+/// 0 = healthy, 6 = INDEX_UNAVAILABLE, 9 = UNSUPPORTED_VERSION, 1 = other.
+pub fn doctor(profile: &Profile, repair: bool) -> Result<CommandOutcome, MnexisError> {
+    // Doctor reads the on-disk schema state through its own connection.
+    // We use the regular `open_sqlite` rather than the profile's service
+    // connection so a dropped-and-unrepaired FTS table is correctly
+    // reported (the migrations are gated by `applied < N` and never
+    // recreate tables that were dropped out from under us).
+    let conn = crate::storage::sqlite::open_sqlite(&profile.db_path())?;
+
+    if repair {
+        let (repair_report, after_report) = doctor::repair_and_rerun(&conn)?;
+        let json = serde_json::json!({
+            "checks": after_report.checks,
+            "healthy": after_report.healthy,
+            "repaired": repair_report,
+        });
+        let text = render_doctor_text(&after_report.checks, Some(&repair_report));
+        let exit_code = doctor::failure_exit_code(&after_report)
+            .map(|(c, _)| c)
+            .unwrap_or(0);
+        Ok(CommandOutcome::new(json, text).with_exit_code(exit_code))
+    } else {
+        let report = doctor::run_checks(&conn);
+        let json = serde_json::json!({
+            "checks": report.checks,
+            "healthy": report.healthy,
+        });
+        let text = render_doctor_text(&report.checks, None);
+        let exit_code = doctor::failure_exit_code(&report)
+            .map(|(c, _)| c)
+            .unwrap_or(0);
+        Ok(CommandOutcome::new(json, text).with_exit_code(exit_code))
+    }
+}
+
+/// Human-readable rendering of the doctor report (text mode).
+fn render_doctor_text(checks: &[Check], repaired: Option<&RepairReport>) -> String {
+    let mut lines: Vec<String> = checks.iter().map(doctor::check_line).collect();
+    if let Some(r) = repaired {
+        lines.push(format!(
+            "  repaired: fts={}, triggers={}, reindexed={}, healthy_after={}",
+            r.fts_recreated, r.triggers_recreated, r.reindexed, r.healthy_after
+        ));
+    }
+    let all_ok = checks.iter().all(|c| c.ok);
+    lines.push(if all_ok {
+        "all checks passed".into()
+    } else {
+        "one or more checks failed".into()
+    });
+    lines.join("\n")
 }

@@ -13,6 +13,7 @@
 pub mod application;
 pub mod cli;
 pub mod config;
+pub mod diagnostics;
 pub mod domain;
 pub mod mcp;
 pub mod retrieval;

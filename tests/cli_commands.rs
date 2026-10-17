@@ -517,3 +517,172 @@ fn mcp_serve_is_nested_and_old_spelling_rejected() {
         .expect("spawn");
     assert!(!old.status.success(), "old spelling must be rejected");
 }
+
+// --- T21: doctor diagnostics ---
+
+#[test]
+fn doctor_on_healthy_profile_exits_0() {
+    let p = Profile::new();
+    // A profile with at least one memory so FTS has content to verify.
+    save(&p, "doctor healthy check", &[]);
+
+    let out = p
+        .run_silent(&["doctor"])
+        .unwrap_status("doctor on healthy profile");
+    let json = stdout_json(&out);
+
+    // healthy must be true
+    assert_eq!(
+        json["healthy"], true,
+        "healthy should be true on a clean profile: {json}"
+    );
+    // checks array must be present with at least the expected fields
+    let checks = json["checks"].as_array().expect("checks array");
+    assert!(!checks.is_empty(), "checks array must not be empty: {json}");
+    for check in checks {
+        assert!(
+            check["name"].is_string(),
+            "each check must have a name: {check}"
+        );
+        assert!(
+            check["ok"].is_boolean(),
+            "each check must have an ok field: {check}"
+        );
+    }
+}
+
+#[test]
+fn doctor_detects_missing_fts_and_exits_6() {
+    let p = Profile::new();
+    save(&p, "searchable memory", &[]);
+
+    // Break FTS: open the DB and drop memories_fts.
+    // A checkpoint is required so the DROP is visible to the second connection
+    // that `doctor` opens (WAL pages are not immediately applied to the main db).
+    let db_path = p.data_dir.join("mnexis.db");
+    {
+        let conn = mnexis_core::open_sqlite(&db_path).expect("open for break");
+        conn.execute("DROP TABLE memories_fts", [])
+            .expect("drop memories_fts");
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .expect("checkpoint after drop");
+    }
+
+    let out = p.run_silent(&["doctor"]);
+    // Missing FTS is INDEX_UNAVAILABLE → exit 6
+    assert_eq!(
+        out.status.code(),
+        Some(6),
+        "doctor must exit 6 when FTS is missing: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["healthy"], false,
+        "healthy must be false after FTS drop: {json}"
+    );
+    // In JSON mode the check detail is in stdout.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("INDEX_UNAVAILABLE"),
+        "stdout must mention INDEX_UNAVAILABLE: {stdout}"
+    );
+}
+
+#[test]
+fn doctor_repair_rebuilds_fts_and_search_works() {
+    let p = Profile::new();
+    let uuid = save(&p, "repaired memory content", &[]);
+
+    // Break FTS.
+    let db_path = p.data_dir.join("mnexis.db");
+    {
+        let conn = mnexis_core::open_sqlite(&db_path).expect("open for break");
+        conn.execute("DROP TABLE memories_fts", [])
+            .expect("drop memories_fts");
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .expect("checkpoint after drop");
+    }
+
+    // Repair: re-creates FTS, triggers, and re-indexes.
+    let repair_out = p.run_silent(&["doctor", "--repair"]);
+    assert_eq!(
+        repair_out.status.code(),
+        Some(0),
+        "doctor --repair should exit 0: {:?}",
+        String::from_utf8_lossy(&repair_out.stderr)
+    );
+    let repair_json = stdout_json(&repair_out);
+    assert_eq!(
+        repair_json["healthy"], true,
+        "healthy_after must be true after repair: {repair_json}"
+    );
+    // The repaired block must be present.
+    assert!(
+        repair_json["repaired"].is_object(),
+        "repaired block must be present after --repair: {repair_json}"
+    );
+
+    // Search must find the saved memory after repair (proves reindex).
+    let after = p
+        .run_silent(&["search", "repaired"])
+        .unwrap_status("search after repair");
+    let hits = stdout_json(&after);
+    assert_eq!(hits["count"], 1, "search must find repaired memory: {hits}");
+    // Verify it's the correct uuid.
+    assert_eq!(
+        hits["items"][0]["uuid"].as_str().unwrap(),
+        uuid,
+        "found uuid must match the saved memory"
+    );
+}
+
+#[test]
+fn doctor_flags_newer_schema_as_unsupported_version() {
+    let p = Profile::new();
+
+    // Advance schema_migrations.version beyond what this binary knows (2).
+    let db_path = p.data_dir.join("mnexis.db");
+    {
+        let conn = mnexis_core::open_sqlite(&db_path).expect("open for schema bump");
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_migrations (version) VALUES (99)",
+            [],
+        )
+        .expect("bump schema version to 99");
+    }
+
+    let out = p.run_silent(&["doctor"]);
+    assert_eq!(
+        out.status.code(),
+        Some(9),
+        "doctor must exit 9 on newer schema: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("UNSUPPORTED_VERSION"),
+        "stderr must mention UNSUPPORTED_VERSION: {stderr}"
+    );
+}
+
+#[test]
+fn purge_dry_run_reports_eligible_count() {
+    let p = Profile::new();
+    // Save one memory and soft-delete it.
+    let uuid = save(&p, "purge eligible memory", &[]);
+    p.run_silent(&["delete", "--force", &uuid])
+        .unwrap_status("delete for purge");
+
+    // Dry-run must report eligible count (1) alongside dry_run=true and purged=0.
+    let out = p
+        .run_silent(&["purge", "--all"])
+        .unwrap_status("purge dry-run");
+    let json = stdout_json(&out);
+    assert_eq!(json["dry_run"], true, "dry_run must be true: {json}");
+    assert_eq!(json["purged"], 0, "purged must be 0 in dry-run: {json}");
+    assert_eq!(
+        json["eligible"], 1,
+        "eligible must be 1 (one soft-deleted record): {json}"
+    );
+}
