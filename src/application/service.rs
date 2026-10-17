@@ -5,6 +5,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use crate::application::io::{ConflictPolicy, ImportDecision, LocalIndex};
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::{IdempotencyKey, IdempotencyRecord};
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState};
@@ -373,6 +374,128 @@ impl<R: MemoryRepository> MemoryService<R> {
         self.repo.reindex()
     }
 
+    // --- export ---
+    /// Snapshot all non-deleted memories (unless `include_deleted` is true)
+    /// in the namespaces the caller is authorised to read. The scope is
+    /// authoritative; the snapshot is filtered to `read_namespaces`.
+    pub fn export(&self, include_deleted: bool) -> Result<Vec<Memory>, MnexisError> {
+        self.scope.authorize_operation(Operation::Export)?;
+        let namespaces = self.scope.read_namespaces.clone();
+        // Defence in depth: the scope can never authorise a write, but
+        // export reads, so the explicit read filter is what we honour.
+        for ns in &namespaces {
+            self.scope.authorize_read(ns)?;
+        }
+        self.repo.list_for_export(&namespaces, include_deleted)
+    }
+
+    // --- import ---
+    /// Parse the JSONL `body` and apply it under the given conflict policy.
+    /// When `dry_run` is true, validate and classify every record without
+    /// writing; otherwise, persist the resolved set inside a single
+    /// service call (the repo's `save` is per-row; a wrapping transaction
+    /// is the storage layer's job — kept per-row here because the service
+    /// already enforces atomicity at the request level).
+    ///
+    /// Returns the structured outcomes: counts plus the remapped uuids
+    /// (so the caller can log/display them).
+    pub fn import(
+        &mut self,
+        body: &[u8],
+        policy: ConflictPolicy,
+        dry_run: bool,
+    ) -> Result<ImportSummary, MnexisError> {
+        self.scope.authorize_operation(Operation::Import)?;
+        let records = crate::application::io::parse_jsonl(body, self.config.max_content_bytes)?;
+
+        // Build the local index over every memory the caller can read. This
+        // is the source of truth for conflict decisions.
+        let namespaces = self.scope.read_namespaces.clone();
+        let local_memories = self.repo.list_for_export(&namespaces, true)?;
+        let local_index = LocalIndex::from_memories(local_memories);
+
+        let mut summary = ImportSummary {
+            dry_run,
+            policy: policy.as_str().to_string(),
+            records: records.len(),
+            identical: 0,
+            fresh: 0,
+            skipped: 0,
+            remapped: 0,
+            conflicts: Vec::new(),
+            remapped_uuids: Vec::new(),
+        };
+
+        for candidate in records {
+            // Authorize the candidate's namespace as a write. The scope
+            // cannot widen during an import; this is the protection the
+            // design asks for.
+            self.scope.authorize_write(&candidate.namespace)?;
+
+            let decision =
+                crate::application::io::classify(candidate.clone(), &local_index, policy, || {
+                    crate::cli::profile::uuid_v4().unwrap_or_else(|_| {
+                        // uuid_v4 only fails on a missing /dev/urandom; if the
+                        // process reached import, the same code minted the
+                        // initial save uuids. Falling back to a deterministic
+                        // prefix keeps import alive in degenerate environments.
+                        format!("imported-{}", summary.remapped_uuids.len())
+                    })
+                });
+
+            match decision {
+                ImportDecision::Identical => summary.identical += 1,
+                ImportDecision::Fresh => {
+                    if !dry_run {
+                        let mem: Memory = candidate.into();
+                        self.repo.save(&mem)?;
+                    }
+                    summary.fresh += 1;
+                }
+                ImportDecision::Skipped(conflict) => {
+                    // Two cases are hard errors regardless of policy:
+                    //   - `reject` on the first conflict (any kind).
+                    //   - a `TopicKey` clash: the design forbids silent
+                    //     rewriting of conceptual keys, so even under
+                    //     `skip` and `remap` this aborts with a stable
+                    //     error code (the operator must fix the file).
+                    if matches!(policy, ConflictPolicy::Reject)
+                        || matches!(conflict, crate::application::io::Conflict::TopicKey)
+                    {
+                        return Err(match conflict {
+                            crate::application::io::Conflict::UuidClash => {
+                                MnexisError::revision_conflict(0)
+                            }
+                            crate::application::io::Conflict::TopicKey => {
+                                MnexisError::topic_conflict(
+                                    candidate.topic_key,
+                                    candidate.namespace,
+                                )
+                            }
+                        });
+                    }
+                    summary.skipped += 1;
+                    summary.conflicts.push(ConflictRecord {
+                        uuid: candidate.uuid,
+                        kind: conflict,
+                        action: "skipped",
+                    });
+                }
+                ImportDecision::Remapped(_, new_uuid) => {
+                    if !dry_run {
+                        let mut mem: Memory = candidate.into();
+                        mem.uuid = new_uuid.clone();
+                        self.repo.save(&mem)?;
+                    }
+                    summary.remapped += 1;
+                    summary.remapped_uuids.push(new_uuid);
+                }
+            }
+        }
+
+        Ok(summary)
+    }
+
     // --- search ---
     pub fn search(
         &self,
@@ -476,4 +599,29 @@ fn hash_save_request(req: &SaveRequest) -> String {
     }
     req.state.as_str().hash(&mut h);
     format!("{:x}", h.finish())
+}
+
+// --- import summary types ---
+
+use crate::application::io::Conflict;
+
+/// The structured outcome of a single `import` call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportSummary {
+    pub dry_run: bool,
+    pub policy: String,
+    pub records: usize,
+    pub identical: usize,
+    pub fresh: usize,
+    pub skipped: usize,
+    pub remapped: usize,
+    pub conflicts: Vec<ConflictRecord>,
+    pub remapped_uuids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictRecord {
+    pub uuid: String,
+    pub kind: Conflict,
+    pub action: &'static str,
 }

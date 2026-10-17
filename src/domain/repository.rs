@@ -82,6 +82,25 @@ pub trait MemoryRepository {
     /// Persist an idempotency record.
     fn save_idempotency(&mut self, r: &IdempotencyRecord) -> Result<(), MnexisError>;
 
+    /// Find a memory that occupies the given `(namespace, topic_key)` pair
+    /// (any state, any deletion status). Returns the uuid of the occupier,
+    /// or None if the topic_key is free.
+    fn topic_key_occupier(
+        &self,
+        namespace: &str,
+        topic_key: &str,
+    ) -> Result<Option<String>, MnexisError>;
+
+    /// Snapshot all memories in the given namespaces, optionally including
+    /// soft-deleted ones. Used by `MemoryService::export`; the result is
+    /// already filtered to the caller's authorised namespaces and the
+    /// `deleted` policy. Returns a consistent row-by-row vec.
+    fn list_for_export(
+        &self,
+        namespaces: &[String],
+        include_deleted: bool,
+    ) -> Result<Vec<Memory>, MnexisError>;
+
     /// Full-text search over active, non-deleted memories. Delegates to
     /// the retrieval module (T18 will formalize the production search).
     fn search(

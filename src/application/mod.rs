@@ -3,6 +3,7 @@
 //! server; all business rules, validation, and authorization live here.
 
 pub mod budget;
+pub mod io;
 pub mod service;
 
 /// Convenient alias for the concrete service used by both CLI and MCP.

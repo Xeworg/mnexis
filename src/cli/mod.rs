@@ -194,6 +194,29 @@ pub enum Command {
         #[command(subcommand)]
         action: ConfigAction,
     },
+
+    /// Export memories as JSONL (excludes deleted by default)
+    Export {
+        /// Also include soft-deleted records
+        #[arg(long)]
+        include_deleted: bool,
+        /// Output file (default: stdout)
+        #[arg(long, value_name = "FILE")]
+        output: Option<std::path::PathBuf>,
+    },
+
+    /// Import memories from JSONL (default policy: reject on conflict)
+    Import {
+        /// Validate and report, do not write
+        #[arg(long)]
+        dry_run: bool,
+        /// Conflict policy: reject | skip | remap (default: reject)
+        #[arg(long, default_value = "reject")]
+        policy: String,
+        /// Input file (default: stdin)
+        #[arg(long, value_name = "FILE")]
+        input: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -388,6 +411,21 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Doctor { repair } => {
             let profile = Profile::open(data_dir)?;
             commands::doctor(&profile, *repair)
+        }
+        Command::Export {
+            include_deleted,
+            output,
+        } => {
+            let profile = Profile::open(data_dir)?;
+            commands::export(&profile, *include_deleted, output.clone())
+        }
+        Command::Import {
+            dry_run,
+            policy,
+            input,
+        } => {
+            let mut profile = Profile::open(data_dir)?;
+            commands::import(&mut profile, *dry_run, policy, input.clone())
         }
         Command::Config {
             action: ConfigAction::Show,

@@ -12,7 +12,7 @@ use serde_json::json;
 use crate::application::{ListFilter, SaveRequest, SupersedeRequest, UpdateRequest};
 use crate::cli::output::CommandOutcome;
 use crate::cli::profile::Profile;
-use crate::diagnostics::doctor::{failure_exit_code, purge_eligible_count, run_checks};
+use crate::diagnostics::doctor::purge_eligible_count;
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyKey;
 use crate::domain::memory::MemoryState;
@@ -607,4 +607,134 @@ fn render_doctor_text(checks: &[Check], repaired: Option<&RepairReport>) -> Stri
         "one or more checks failed".into()
     });
     lines.join("\n")
+}
+
+// --- export / import ---
+
+use crate::application::io::ConflictPolicy;
+
+/// Read all bytes from `--input FILE` (or stdin if absent) into a Vec.
+/// 50 MiB cap mirrors the import side; export doesn't enforce the limit
+/// (a single profile's snapshot rarely exceeds 50 MiB anyway, and a
+/// bounded output is a UX downgrade).
+fn read_input(path: Option<&std::path::Path>) -> Result<Vec<u8>, MnexisError> {
+    use std::io::Read;
+    match path {
+        Some(p) => std::fs::read(p).map_err(|e| {
+            MnexisError::invalid_argument("input", format!("cannot read {}: {e}", p.display()))
+        }),
+        None => {
+            let mut buf = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut buf)
+                .map_err(|e| MnexisError::invalid_argument("input", format!("stdin: {e}")))?;
+            Ok(buf)
+        }
+    }
+}
+
+fn write_output(path: Option<&std::path::Path>, body: &str) -> Result<(), MnexisError> {
+    match path {
+        Some(p) => std::fs::write(p, body).map_err(|e| {
+            MnexisError::invalid_argument("output", format!("cannot write {}: {e}", p.display()))
+        }),
+        None => {
+            print!("{body}");
+            Ok(())
+        }
+    }
+}
+
+pub fn export(
+    profile: &Profile,
+    include_deleted: bool,
+    output: Option<std::path::PathBuf>,
+) -> Result<CommandOutcome, MnexisError> {
+    let memories = profile.service_ref().export(include_deleted)?;
+    let mut lines: Vec<String> = Vec::with_capacity(memories.len());
+    for m in &memories {
+        let record = crate::application::io::ImportRecord::from(m);
+        let line = serde_json::to_string(&record)
+            .map_err(|e| MnexisError::invalid_argument("export", format!("serialise: {e}")))?;
+        lines.push(line);
+    }
+    let body = if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    };
+    write_output(output.as_deref(), &body)?;
+    Ok(CommandOutcome::new(
+        json!({
+            "count": memories.len(),
+            "include_deleted": include_deleted,
+            "output": output.as_ref().map(|p| p.display().to_string()),
+        }),
+        if memories.is_empty() {
+            "no memories to export".to_string()
+        } else {
+            format!("exported {} memories", memories.len())
+        },
+    ))
+}
+
+pub fn import(
+    profile: &mut Profile,
+    dry_run: bool,
+    policy: &str,
+    input: Option<std::path::PathBuf>,
+) -> Result<CommandOutcome, MnexisError> {
+    let policy = ConflictPolicy::from_str(policy)?;
+    let body = read_input(input.as_deref())?;
+    let summary = profile.service_mut().import(&body, policy, dry_run)?;
+    let conflicts: Vec<serde_json::Value> = summary
+        .conflicts
+        .iter()
+        .map(|c| {
+            let kind = match c.kind {
+                crate::application::io::Conflict::UuidClash => "uuid_clash",
+                crate::application::io::Conflict::TopicKey => "topic_key",
+            };
+            json!({ "uuid": c.uuid, "kind": kind, "action": c.action })
+        })
+        .collect();
+    let written = if dry_run {
+        0
+    } else {
+        summary.fresh + summary.remapped
+    };
+    Ok(CommandOutcome::new(
+        json!({
+            "dry_run": dry_run,
+            "policy": summary.policy,
+            "records": summary.records,
+            "identical": summary.identical,
+            "fresh": summary.fresh,
+            "skipped": summary.skipped,
+            "remapped": summary.remapped,
+            "imported": written,
+            "would_import": summary.fresh + summary.remapped,
+            "conflicts": conflicts,
+            "remapped_uuids": summary.remapped_uuids,
+        }),
+        if dry_run {
+            format!(
+                "dry-run: would import {} ({} fresh, {} remapped); {} identical, {} skipped",
+                summary.fresh + summary.remapped,
+                summary.fresh,
+                summary.remapped,
+                summary.identical,
+                summary.skipped
+            )
+        } else {
+            format!(
+                "imported {} ({identical} identical, {skipped} skipped, {remapped} remapped) from {records} records",
+                written,
+                identical = summary.identical,
+                skipped = summary.skipped,
+                remapped = summary.remapped,
+                records = summary.records
+            )
+        },
+    ))
 }

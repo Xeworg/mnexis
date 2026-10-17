@@ -686,3 +686,329 @@ fn purge_dry_run_reports_eligible_count() {
         "eligible must be 1 (one soft-deleted record): {json}"
     );
 }
+
+// --- export / import (T22, PRD §13, e2-core §5/§7) ---
+
+/// Helper: write text to a path and return the path.
+fn write_tmp(label: &str, body: &str) -> std::path::PathBuf {
+    let dir = tempfile::tempdir_in("target").expect("tmpdir");
+    let path = dir.path().join(label);
+    std::fs::write(&path, body).expect("write tmp file");
+    // Leak the guard so the path outlives the call (it's inside target/).
+    std::mem::forget(dir);
+    path
+}
+
+#[test]
+fn export_writes_one_jsonl_line_per_memory() {
+    let p = namespaced_profile(&["ns-a"]);
+    save(&p, "first content", &[]);
+    save(&p, "second content", &[]);
+    let path = write_tmp("export.jsonl", "");
+    let out = p
+        .run_silent(&["export", "--output", path.to_str().expect("utf8")])
+        .unwrap_status("export");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 2);
+    let body = std::fs::read_to_string(&path).expect("read export");
+    let lines: Vec<&str> = body.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2);
+    for line in &lines {
+        let parsed: serde_json::Value = serde_json::from_str(line).expect("line JSON");
+        assert!(parsed["uuid"].is_string());
+        assert!(parsed["namespace"].is_string());
+        assert!(parsed["content"].is_string());
+        assert!(parsed["revision"].is_i64());
+    }
+}
+
+#[test]
+fn export_excludes_deleted_by_default() {
+    let p = namespaced_profile(&["ns-a"]);
+    let uuid = save(&p, "to be deleted", &[]);
+    p.run_silent(&["delete", "--force", &uuid])
+        .unwrap_status("delete");
+    let path = write_tmp("export.jsonl", "");
+    let out = p
+        .run_silent(&["export", "--output", path.to_str().expect("utf8")])
+        .unwrap_status("export");
+    let body = std::fs::read_to_string(&path).expect("read");
+    assert!(body.is_empty(), "no live memories to export: {body:?}");
+    assert_eq!(stdout_json(&out)["count"], 0);
+}
+
+#[test]
+fn export_include_deleted_carries_the_record() {
+    let p = namespaced_profile(&["ns-a"]);
+    let uuid = save(&p, "kept for the record", &[]);
+    p.run_silent(&["delete", "--force", &uuid])
+        .unwrap_status("delete");
+    let path = write_tmp("export.jsonl", "");
+    let out = p
+        .run_silent(&[
+            "export",
+            "--include-deleted",
+            "--output",
+            path.to_str().expect("utf8"),
+        ])
+        .unwrap_status("export");
+    assert_eq!(stdout_json(&out)["count"], 1);
+    let body = std::fs::read_to_string(&path).expect("read");
+    assert!(body.contains(&uuid));
+}
+
+#[test]
+fn import_round_trip_preserves_ids_and_content() {
+    let a = namespaced_profile(&["ns-a"]);
+    save(&a, "alpha", &[]);
+    let b_uuid = save(&a, "bravo", &["--topic-key", "topic.bravo"]);
+
+    let export_path = write_tmp("export.jsonl", "");
+    a.run_silent(&["export", "--output", export_path.to_str().expect("utf8")])
+        .unwrap_status("export");
+
+    let b = namespaced_profile(&["ns-a"]);
+    let out = b
+        .run_silent(&[
+            "import",
+            "--policy",
+            "skip",
+            "--input",
+            export_path.to_str().expect("utf8"),
+        ])
+        .unwrap_status("import");
+    let json = stdout_json(&out);
+    assert_eq!(json["imported"], 2, "json: {json}");
+    let show = b.run_silent(&["show", &b_uuid]).unwrap_status("show");
+    assert_eq!(stdout_json(&show)["content"], "bravo");
+}
+
+#[test]
+fn import_dry_run_reports_writes_nothing() {
+    let a = namespaced_profile(&["ns-a"]);
+    save(&a, "one", &[]);
+    save(&a, "two", &[]);
+
+    let export_path = write_tmp("export.jsonl", "");
+    a.run_silent(&["export", "--output", export_path.to_str().expect("utf8")])
+        .unwrap_status("export");
+
+    let b = namespaced_profile(&["ns-a"]);
+    let out = b
+        .run_silent(&[
+            "import",
+            "--dry-run",
+            "--input",
+            export_path.to_str().expect("utf8"),
+        ])
+        .unwrap_status("import dry-run");
+    let json = stdout_json(&out);
+    assert_eq!(json["dry_run"], true);
+    assert_eq!(json["would_import"], 2);
+    assert_eq!(json["imported"], 0);
+
+    let list = b.run_silent(&["list"]).unwrap_status("list");
+    assert_eq!(stdout_json(&list)["count"], 0);
+}
+
+#[test]
+fn import_reject_rejects_identical_uuid_with_different_payload() {
+    let a = namespaced_profile(&["ns-a"]);
+    let uuid = save(&a, "original", &[]);
+    // Pre-populate profile B with the same uuid (identical content), so the
+    // tampered import is a real uuid clash on B's side.
+    let clean = format!(
+        "{{\"uuid\":\"{uuid}\",\"topic_key\":\"\",\"namespace\":\"ns-a\",\"memory_type\":\"fact\",\
+         \"content\":\"original\",\"state\":\"active\",\"revision\":1,\"deleted\":false,\
+         \"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\
+         \"deleted_at\":null,\"purge_after\":null,\"valid_from\":null,\"valid_until\":null,\
+         \"actor\":\"user\",\"channel\":\"cli\",\"assertion_basis\":\"user_stated\"}}\n"
+    );
+    let path_clean = write_tmp("clean.jsonl", &clean);
+    let tampered = format!(
+        "{{\"uuid\":\"{uuid}\",\"topic_key\":\"\",\"namespace\":\"ns-a\",\"memory_type\":\"fact\",\
+         \"content\":\"tampered\",\"state\":\"active\",\"revision\":1,\"deleted\":false,\
+         \"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\
+         \"deleted_at\":null,\"purge_after\":null,\"valid_from\":null,\"valid_until\":null,\
+         \"actor\":\"user\",\"channel\":\"cli\",\"assertion_basis\":\"user_stated\"}}\n"
+    );
+    let path = write_tmp("tampered.jsonl", &tampered);
+
+    let b = namespaced_profile(&["ns-a"]);
+    b.run_silent(&["import", "--input", path_clean.to_str().expect("utf8")])
+        .unwrap_status("import baseline");
+    let out = b.run_silent(&[
+        "import",
+        "--policy",
+        "reject",
+        "--input",
+        path.to_str().expect("utf8"),
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(5),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("CONFLICT") || stderr.contains("conflict"),
+        "stderr: {stderr}"
+    );
+    let show = b.run_silent(&["show", &uuid]).unwrap_status("show missing");
+    assert_eq!(stdout_json(&show)["content"], "original");
+}
+
+#[test]
+fn import_skip_leaves_unchanged_records_untouched() {
+    let a = namespaced_profile(&["ns-a"]);
+    let uuid = save(&a, "original", &[]);
+    let clean = format!(
+        "{{\"uuid\":\"{uuid}\",\"topic_key\":\"\",\"namespace\":\"ns-a\",\"memory_type\":\"fact\",\
+         \"content\":\"original\",\"state\":\"active\",\"revision\":1,\"deleted\":false,\
+         \"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\
+         \"deleted_at\":null,\"purge_after\":null,\"valid_from\":null,\"valid_until\":null,\
+         \"actor\":\"user\",\"channel\":\"cli\",\"assertion_basis\":\"user_stated\"}}\n"
+    );
+    let path_clean = write_tmp("clean.jsonl", &clean);
+    let tampered = format!(
+        "{{\"uuid\":\"{uuid}\",\"topic_key\":\"\",\"namespace\":\"ns-a\",\"memory_type\":\"fact\",\
+         \"content\":\"tampered\",\"state\":\"active\",\"revision\":1,\"deleted\":false,\
+         \"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\
+         \"deleted_at\":null,\"purge_after\":null,\"valid_from\":null,\"valid_until\":null,\
+         \"actor\":\"user\",\"channel\":\"cli\",\"assertion_basis\":\"user_stated\"}}\n"
+    );
+    let path = write_tmp("tampered.jsonl", &tampered);
+
+    let b = namespaced_profile(&["ns-a"]);
+    b.run_silent(&["import", "--input", path_clean.to_str().expect("utf8")])
+        .unwrap_status("import baseline");
+    let out = b
+        .run_silent(&[
+            "import",
+            "--policy",
+            "skip",
+            "--input",
+            path.to_str().expect("utf8"),
+        ])
+        .unwrap_status("import skip");
+    let json = stdout_json(&out);
+    assert_eq!(json["imported"], 0);
+    assert!(json["skipped"].as_i64().expect("skipped count") >= 1);
+    let show = b.run_silent(&["show", &uuid]).unwrap_status("show");
+    assert_eq!(stdout_json(&show)["content"], "original");
+}
+
+#[test]
+fn import_remap_creates_a_new_uuid_for_the_conflicting_record() {
+    let a = namespaced_profile(&["ns-a"]);
+    let uuid = save(&a, "original", &[]);
+    let clean = format!(
+        "{{\"uuid\":\"{uuid}\",\"topic_key\":\"\",\"namespace\":\"ns-a\",\"memory_type\":\"fact\",\
+         \"content\":\"original\",\"state\":\"active\",\"revision\":1,\"deleted\":false,\
+         \"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\
+         \"deleted_at\":null,\"purge_after\":null,\"valid_from\":null,\"valid_until\":null,\
+         \"actor\":\"user\",\"channel\":\"cli\",\"assertion_basis\":\"user_stated\"}}\n"
+    );
+    let path_clean = write_tmp("clean.jsonl", &clean);
+    let tampered = format!(
+        "{{\"uuid\":\"{uuid}\",\"topic_key\":\"\",\"namespace\":\"ns-a\",\"memory_type\":\"fact\",\
+         \"content\":\"remap-target\",\"state\":\"active\",\"revision\":1,\"deleted\":false,\
+         \"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\
+         \"deleted_at\":null,\"purge_after\":null,\"valid_from\":null,\"valid_until\":null,\
+         \"actor\":\"user\",\"channel\":\"cli\",\"assertion_basis\":\"user_stated\"}}\n"
+    );
+    let path = write_tmp("tampered.jsonl", &tampered);
+
+    let b = namespaced_profile(&["ns-a"]);
+    b.run_silent(&["import", "--input", path_clean.to_str().expect("utf8")])
+        .unwrap_status("import baseline");
+    let out = b
+        .run_silent(&[
+            "import",
+            "--policy",
+            "remap",
+            "--input",
+            path.to_str().expect("utf8"),
+        ])
+        .unwrap_status("import remap");
+    let json = stdout_json(&out);
+    assert_eq!(json["imported"], 1, "remap must produce a new uuid: {json}");
+    assert!(json["remapped"].as_i64().expect("remapped count") >= 1);
+    let show = b
+        .run_silent(&["show", &uuid])
+        .unwrap_status("show original");
+    assert_eq!(stdout_json(&show)["content"], "original");
+    let list = b
+        .run_silent(&["list", "--namespace", "ns-a"])
+        .unwrap_status("list");
+    assert_eq!(stdout_json(&list)["count"], 2);
+}
+
+#[test]
+fn import_rejects_topic_key_already_occupied_by_another_record() {
+    let a = namespaced_profile(&["ns-a"]);
+    let _uuid_a = save(&a, "occupier", &["--topic-key", "shared"]);
+    let export_path = write_tmp("export.jsonl", "");
+    a.run_silent(&["export", "--output", export_path.to_str().expect("utf8")])
+        .unwrap_status("export");
+
+    let b = namespaced_profile(&["ns-a"]);
+    let _uuid_b = save(&b, "pre-existing", &["--topic-key", "shared"]);
+
+    let out = b.run_silent(&[
+        "import",
+        "--policy",
+        "remap",
+        "--input",
+        export_path.to_str().expect("utf8"),
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(5),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn import_validation_rejects_oversized_input() {
+    let b = namespaced_profile(&["ns-a"]);
+    let big = std::iter::repeat("x")
+        .take(51 * 1024 * 1024)
+        .collect::<String>();
+    let path = write_tmp("big.jsonl", &big);
+    let out = b.run_silent(&["import", "--input", path.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("INVALID_ARGUMENT"), "stderr: {stderr}");
+}
+
+#[test]
+fn import_validation_rejects_oversized_content() {
+    let b = namespaced_profile(&["ns-a"]);
+    let oversize = "x".repeat(16 * 1024 + 1);
+    let line = serde_json::json!({
+        "uuid": "00000000-0000-4000-8000-000000000001",
+        "topic_key": "",
+        "namespace": "ns-a",
+        "memory_type": "fact",
+        "content": oversize,
+        "state": "active",
+        "revision": 1,
+        "deleted": false,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "deleted_at": null,
+        "purge_after": null,
+        "valid_from": null,
+        "valid_until": null,
+        "actor": "user",
+        "channel": "cli",
+        "assertion_basis": "user_stated"
+    })
+    .to_string();
+    let path = write_tmp("oversize.jsonl", &(line + "\n"));
+    let out = b.run_silent(&["import", "--input", path.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(2));
+}

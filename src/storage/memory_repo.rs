@@ -510,6 +510,72 @@ impl MemoryRepository for SqliteMemoryRepository {
             limit,
         )
     }
+
+    /// Snapshot all memories in the given namespaces, optionally including
+    /// soft-deleted ones. Used by `MemoryService::export`; the result is
+    /// already filtered to the caller's authorised namespaces and the
+    /// `deleted` policy. Returns a consistent row-by-row vec.
+    fn list_for_export(
+        &self,
+        namespaces: &[String],
+        include_deleted: bool,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        if namespaces.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Build a single IN (?, ?, …) clause. The places binder is dynamic
+        // because we don't know the count at compile time.
+        let placeholders: Vec<&str> = (1..=namespaces.len()).map(|_| "?").collect();
+        let sql = format!(
+            "SELECT {SELECT_COLUMNS} FROM memories WHERE namespace IN ({}) {} \
+             ORDER BY id ASC",
+            placeholders.join(","),
+            if include_deleted {
+                ""
+            } else {
+                "AND deleted = 0"
+            }
+        );
+        let mut stmt = self.conn.prepare(&sql).map_err(sql_to_domain)?;
+        let params: Vec<&dyn rusqlite::ToSql> = namespaces
+            .iter()
+            .map(|n| n as &dyn rusqlite::ToSql)
+            .collect();
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Self::row_to_memory(row).map_err(to_sql_err)
+            })
+            .map_err(sql_to_domain)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(sql_to_domain)?);
+        }
+        Ok(out)
+    }
+
+    /// Find a memory that occupies the given `(namespace, topic_key)` pair
+    /// (any state, any deletion status). Returns the uuid of the occupier,
+    /// or None if the topic_key is free.
+    fn topic_key_occupier(
+        &self,
+        namespace: &str,
+        topic_key: &str,
+    ) -> Result<Option<String>, MnexisError> {
+        if topic_key.is_empty() {
+            return Ok(None);
+        }
+        let mut stmt = self
+            .conn
+            .prepare("SELECT uuid FROM memories WHERE namespace = ?1 AND topic_key = ?2 LIMIT 1")
+            .map_err(sql_to_domain)?;
+        let mut rows = stmt
+            .query(rusqlite::params![namespace, topic_key])
+            .map_err(sql_to_domain)?;
+        match rows.next().map_err(sql_to_domain)? {
+            Some(row) => Ok(Some(row.get(0).map_err(sql_to_domain)?)),
+            None => Ok(None),
+        }
+    }
 }
 
 #[cfg(test)]
