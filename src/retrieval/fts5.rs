@@ -133,7 +133,7 @@ pub fn search(
 
     let mut stmt = conn
         .prepare(&sql)
-        .map_err(|e| MnexisError::busy(format!("fts5::search prepare: {e}")))?;
+        .map_err(|e| fts_unavailable_or_busy("fts5::search prepare", &e))?;
     let rows = stmt
         .query_map(&params[..], |row| {
             Ok(SearchHit {
@@ -153,4 +153,22 @@ pub fn search(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| MnexisError::busy(format!("fts5::search collect: {e}")))?;
     Ok(hits)
+}
+
+/// Map a rusqlite error from an FTS5 path. When the message indicates the
+/// FTS index or triggers are missing/unavailable, surface
+/// `IndexUnavailable` so the operator knows to run `mnexis doctor --repair`.
+/// Anything else is treated as the BUSY path the previous design used.
+fn fts_unavailable_or_busy(stage: &str, e: &rusqlite::Error) -> MnexisError {
+    let msg = e.to_string();
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("no such table")
+        || lower.contains("fts5")
+        || lower.contains("no such column")
+        || lower.contains("database disk image is malformed")
+    {
+        MnexisError::index_unavailable(format!("{stage}: {e}"))
+    } else {
+        MnexisError::busy(format!("{stage}: {e}"))
+    }
 }

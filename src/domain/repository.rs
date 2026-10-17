@@ -101,6 +101,18 @@ pub trait MemoryRepository {
         include_deleted: bool,
     ) -> Result<Vec<Memory>, MnexisError>;
 
+    /// Apply an update + history + tag rewrite as a single transaction
+    /// (T23 close test `partial_failure_no_partial_writes`). Returns the
+    /// updated `Memory`. A failure inside the transaction rolls back all
+    /// three writes.
+    fn update_with_history_and_tags(
+        &mut self,
+        updated: &Memory,
+        expected_revision: i32,
+        history: &MemoryHistory,
+        tags: Option<&[String]>,
+    ) -> Result<Memory, MnexisError>;
+
     /// Full-text search over active, non-deleted memories. Delegates to
     /// the retrieval module (T18 will formalize the production search).
     fn search(

@@ -449,6 +449,104 @@ impl MemoryRepository for SqliteMemoryRepository {
         Ok(())
     }
 
+    /// Atomic update + history + tag rewrite. Used by `MemoryService::update`
+    /// so that a failure at any step rolls back the entire change
+    /// (T23 `partial_failure_no_partial_writes`).
+    fn update_with_history_and_tags(
+        &mut self,
+        updated: &Memory,
+        expected_revision: i32,
+        history: &MemoryHistory,
+        tags: Option<&[String]>,
+    ) -> Result<Memory, MnexisError> {
+        let tx = self.conn.unchecked_transaction().map_err(sql_to_domain)?;
+        let result: Result<Memory, MnexisError> = (|| {
+            let rows = tx
+                .execute(
+                    "UPDATE memories SET \
+                       content = ?1, state = ?2, revision = revision + 1, \
+                       updated_at = ?3, assertion_basis = ?4, \
+                       topic_key = ?5, memory_type = ?6, \
+                       valid_from = ?7, valid_until = ?8, \
+                       actor = ?9, channel = ?10 \
+                     WHERE uuid = ?11 AND revision = ?12",
+                    params![
+                        updated.content,
+                        updated.state.as_str(),
+                        updated.updated_at,
+                        updated.assertion_basis,
+                        updated.topic_key,
+                        updated.memory_type,
+                        updated.valid_from,
+                        updated.valid_until,
+                        updated.actor,
+                        updated.channel,
+                        updated.uuid,
+                        expected_revision,
+                    ],
+                )
+                .map_err(sql_to_domain)?;
+            if rows == 0 {
+                return Err(MnexisError::revision_conflict(expected_revision as i64));
+            }
+            tx.execute(
+                "INSERT INTO memory_history (memory_uuid, revision, memory_type, content, state, \
+                        valid_from, valid_until, assertion_basis, changed_by, change_reason, changed_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    history.memory_uuid,
+                    history.revision,
+                    history.memory_type,
+                    history.content,
+                    history.state.as_str(),
+                    history.valid_from,
+                    history.valid_until,
+                    history.assertion_basis,
+                    history.changed_by,
+                    history.change_reason,
+                    history.changed_at,
+                ],
+            )
+            .map_err(sql_to_domain)?;
+            if let Some(tags) = tags {
+                if !tags.is_empty() {
+                    tx.execute(
+                        "DELETE FROM memory_tags WHERE memory_uuid = ?1",
+                        [history.memory_uuid.as_str()],
+                    )
+                    .map_err(sql_to_domain)?;
+                    for tag in tags {
+                        tx.execute(
+                            "INSERT INTO memory_tags (memory_uuid, tag, created_at) \
+                             VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+                            params![history.memory_uuid, tag],
+                        )
+                        .map_err(sql_to_domain)?;
+                    }
+                }
+            }
+            let mut stmt = tx
+                .prepare(&format!(
+                    "SELECT {SELECT_COLUMNS} FROM memories WHERE uuid = ?1"
+                ))
+                .map_err(sql_to_domain)?;
+            stmt.query_row([updated.uuid.as_str()], |row| {
+                Self::row_to_memory(row).map_err(to_sql_err)
+            })
+            .map_err(sql_to_domain)
+        })();
+        match result {
+            Ok(memory) => {
+                tx.commit().map_err(sql_to_domain)?;
+                Ok(memory)
+            }
+            Err(e) => {
+                // Drop tx without commit to roll back.
+                Err(e)
+            }
+        }
+    }
+
     fn get_idempotency(
         &self,
         key: &str,

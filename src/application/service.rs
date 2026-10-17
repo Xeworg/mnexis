@@ -253,32 +253,37 @@ impl<R: MemoryRepository> MemoryService<R> {
         }
         updated.updated_at = req.now.clone();
 
-        let result = self.repo.update(&updated, req.expected_revision)?;
-
-        if let Some(tags) = req.tags.as_ref() {
-            if !tags.is_empty() {
-                validate_tags(tags, self.config.max_tags)?;
-                self.repo.set_tags(&req.uuid, tags)?;
-            }
-        }
-
+        // The history revision is what the UPDATE will produce
+        // (current + 1). We pre-compute it so the history row matches
+        // the post-update row exactly.
+        let new_revision = current.revision + 1;
         let history = MemoryHistory {
             id: None,
             memory_uuid: req.uuid.clone(),
-            revision: result.revision,
-            memory_type: result.memory_type.clone(),
-            content: result.content.clone(),
-            state: result.state,
-            valid_from: result.valid_from.clone(),
-            valid_until: result.valid_until.clone(),
-            assertion_basis: result.assertion_basis.clone(),
-            changed_by: result.actor.clone(),
-            change_reason: req.reason,
-            changed_at: req.now,
+            revision: new_revision,
+            memory_type: updated.memory_type.clone(),
+            content: updated.content.clone(),
+            state: updated.state,
+            valid_from: updated.valid_from.clone(),
+            valid_until: updated.valid_until.clone(),
+            assertion_basis: updated.assertion_basis.clone(),
+            changed_by: updated.actor.clone(),
+            change_reason: req.reason.clone(),
+            changed_at: req.now.clone(),
         };
-        self.repo.save_history(&history)?;
-
-        Ok(result)
+        // T23 close test `partial_failure_no_partial_writes`: the UPDATE
+        // and the history insert must commit atomically. We use the
+        // transactional repo method that wraps both in a single tx
+        // (plus the tag rewrite when one is requested). If the history
+        // INSERT (or anything in the transaction) fails, the canonical
+        // row rolls back too.
+        let tags = req
+            .tags
+            .as_ref()
+            .filter(|t| !t.is_empty())
+            .map(Vec::as_slice);
+        self.repo
+            .update_with_history_and_tags(&updated, req.expected_revision, &history, tags)
     }
 
     // --- history ---
