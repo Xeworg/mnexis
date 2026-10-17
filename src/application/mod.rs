@@ -5,6 +5,9 @@
 pub mod budget;
 pub mod service;
 
+/// Convenient alias for the concrete service used by both CLI and MCP.
+pub type ApplicationService = MemoryService<crate::storage::memory_repo::SqliteMemoryRepository>;
+
 pub use budget::{Budget, BudgetMode};
 pub use service::{
     ListFilter, MemoryService, SaveRequest, ServiceConfig, SupersedeRequest, UpdateRequest,

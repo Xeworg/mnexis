@@ -51,20 +51,11 @@ impl CommandOutcome {
     }
 }
 
-/// Stable error labels (PRD §8 "Errores estables").
+/// Stable error labels (PRD §8 "Errores estables"; e2-core §8).
+/// Delegates to [`MnexisError::error_code_label`](crate::domain::error::MnexisError::error_code_label)
+/// to keep the canonical mapping in the domain layer.
 pub fn error_code_label(err: &MnexisError) -> &'static str {
-    match err {
-        MnexisError::InvalidArgument { .. } => "INVALID_ARGUMENT",
-        MnexisError::NotFound { .. } => "NOT_FOUND",
-        MnexisError::Forbidden { .. } => "FORBIDDEN",
-        MnexisError::RevisionConflict { .. } => "REVISION_CONFLICT",
-        MnexisError::TopicConflict { .. } => "TOPIC_CONFLICT",
-        MnexisError::Busy { .. } => "BUSY",
-        MnexisError::IndexUnavailable { .. } => "INDEX_UNAVAILABLE",
-        MnexisError::BudgetTooSmall { .. } => "BUDGET_TOO_SMALL",
-        MnexisError::CursorExpired { .. } => "CURSOR_EXPIRED",
-        MnexisError::UnsupportedVersion { .. } => "UNSUPPORTED_VERSION",
-    }
+    err.error_code_label()
 }
 
 /// Exit codes 2–10 (e2-core §7 "Exit codes"); 1 is any other failure.

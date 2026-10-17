@@ -203,6 +203,33 @@ pub enum ConfigAction {
 /// Parse and run. Returns the process exit code.
 pub async fn run(cli: Cli) -> i32 {
     let mode = output::OutputMode::from_flag(cli.json);
+    // The MCP server owns its own lifecycle; it is not a service command.
+    // A startup failure is infrastructure outside the stable error set
+    // (the dominant case: missing profile), so it exits 1 with the raw cause.
+    if matches!(
+        &cli.command,
+        Command::Mcp {
+            action: McpAction::Serve
+        }
+    ) {
+        let data_dir = match profile::resolve_data_dir(cli.data_dir.clone()) {
+            Ok(dir) => dir,
+            Err(err) => {
+                eprintln!("{}", output::render_error(&err, mode));
+                return output::exit_code(&err);
+            }
+        };
+        return match crate::mcp::serve_stdio(data_dir).await {
+            Ok(()) => {
+                eprintln!("mcp serve stopped");
+                0
+            }
+            Err(e) => {
+                eprintln!("error: mcp serve: {e}");
+                1
+            }
+        };
+    }
     match execute(&cli).await {
         Ok(outcome) => {
             println!("{}", outcome.render(mode));
@@ -223,15 +250,9 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Mcp {
             action: McpAction::Serve,
         } => {
-            // The MCP server owns its own lifecycle; it is not a service
-            // wrapper. Failures surface as exit 1 with the raw error.
-            if let Err(e) = crate::mcp::serve_stdio().await {
-                eprintln!("mcp serve error: {e}");
-            }
-            Ok(CommandOutcome::new(
-                serde_json::json!({ "mcp": "serve", "status": "stopped" }),
-                "mcp serve stopped",
-            ))
+            // Unreachable: run() intercepts the server lifecycle before
+            // dispatching (see run). Kept for exhaustiveness.
+            unreachable!("mcp serve is handled in run()")
         }
         Command::Save {
             namespace,

@@ -48,6 +48,23 @@ pub enum MnexisError {
 }
 
 impl MnexisError {
+    /// The stable error label used in JSON-RPC `data.error_code` (e2-core §8)
+    /// and in the CLI JSON error envelope.
+    pub fn error_code_label(&self) -> &'static str {
+        match self {
+            MnexisError::InvalidArgument { .. } => "INVALID_ARGUMENT",
+            MnexisError::NotFound { .. } => "NOT_FOUND",
+            MnexisError::Forbidden { .. } => "FORBIDDEN",
+            MnexisError::RevisionConflict { .. } => "REVISION_CONFLICT",
+            MnexisError::TopicConflict { .. } => "TOPIC_CONFLICT",
+            MnexisError::Busy { .. } => "BUSY",
+            MnexisError::IndexUnavailable { .. } => "INDEX_UNAVAILABLE",
+            MnexisError::BudgetTooSmall { .. } => "BUDGET_TOO_SMALL",
+            MnexisError::CursorExpired { .. } => "CURSOR_EXPIRED",
+            MnexisError::UnsupportedVersion { .. } => "UNSUPPORTED_VERSION",
+        }
+    }
+
     pub fn invalid_argument(field: impl Into<String>, message: impl Into<String>) -> Self {
         Self::InvalidArgument {
             field: field.into(),

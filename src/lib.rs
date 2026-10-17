@@ -18,6 +18,7 @@ pub mod mcp;
 pub mod retrieval;
 pub mod storage;
 
+pub use crate::application::ApplicationService;
 pub use crate::domain::error::MnexisError;
 pub use crate::storage::sqlite::open_sqlite;
 

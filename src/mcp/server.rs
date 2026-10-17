@@ -1,0 +1,484 @@
+//! MCP server implementation (T20; e2-core §3, §8).
+//!
+//! McpServer wraps MemoryService and exposes the 9 memory_* tools via the
+//! rmcp ServerHandler interface. Every tool call maps domain errors to
+//! JSON-RPC code -32050 with data.error_code set to the stable label.
+
+use std::sync::{Arc, Mutex};
+
+use rmcp::{
+    ServerHandler, ServiceExt, handler::server::wrapper::Parameters, tool, tool_handler,
+    tool_router,
+};
+
+use crate::ApplicationService;
+use crate::MnexisError;
+use crate::application::ListFilter;
+use crate::domain::idempotency::IdempotencyKey;
+use crate::mcp::tools::{
+    DeleteArgs, GetArgs, HistoryArgs, ListArgs, McpError, RestoreArgs, SaveArgs, SearchArgs,
+    SupersedeArgs, UpdateArgs, clamp_limit, parse_state, parse_tags,
+};
+use crate::mcp::transport::stdio;
+use crate::storage::memory_repo::SqliteMemoryRepository;
+use crate::storage::sqlite::open_sqlite;
+
+/// The MCP server — owns the MemoryService and exposes 9 tools.
+///
+/// All tool functions take `&self`; the Arc<Mutex> provides interior
+/// mutability so the service can be mutated without needing `&mut self`.
+/// (`MemoryService<SqliteMemoryRepository>` is Send via rusqlite's
+/// Connection, so Arc<Mutex<..>> is Send + Sync by the auto traits.)
+#[derive(Clone)]
+pub struct McpServer {
+    service: Arc<Mutex<ApplicationService>>,
+    default_namespace: String,
+}
+impl McpServer {
+    /// Build a McpServer from a data directory.
+    ///
+    /// Opens the SQLite database, loads the profile settings to construct
+    /// the AccessScope, and builds the MemoryService. Fails fast with
+    /// the service's NotFound error if the database is missing.
+    pub fn new(data_dir: std::path::PathBuf) -> Result<Self, MnexisError> {
+        let db_path = data_dir.join("mnexis.db");
+        if !db_path.exists() {
+            // Same contract as the CLI: the profile must be initialised
+            // explicitly (`mnexis init`); a server must not silently create
+            // one under an unintended data directory.
+            return Err(MnexisError::not_found(format!(
+                "profile at {} (run `mnexis init` first)",
+                data_dir.display()
+            )));
+        }
+        let conn = open_sqlite(&db_path)?;
+        let (settings, _) =
+            crate::config::ProfileSettings::load_or_default(&data_dir.join("mnexis.toml"))?;
+        let repo = SqliteMemoryRepository::new(conn);
+        let default_namespace = settings.default_namespace.clone();
+        let service = crate::application::MemoryService::new(
+            repo,
+            settings.to_access_scope()?,
+            settings.to_service_config(),
+        );
+        Ok(Self {
+            service: Arc::new(Mutex::new(service)),
+            default_namespace,
+        })
+    }
+
+    /// Access the service for direct use (e.g. in tests).
+    #[cfg(test)]
+    pub fn service(&self) -> &Arc<Mutex<ApplicationService>> {
+        &self.service
+    }
+
+    // -------------------------------------------------------------------------
+    // Tool implementations — all take `&self`; interior mutability via Arc<Mutex>
+    // -------------------------------------------------------------------------
+
+    fn do_save(&self, args: SaveArgs) -> Result<String, McpError> {
+        let uuid = uuid_v4_mcp()?;
+        let now = now_rfc3339_mcp();
+        let state = parse_state(args.state.clone())?;
+        let req = crate::application::SaveRequest {
+            uuid: uuid.clone(),
+            topic_key: args.topic_key.unwrap_or_default(),
+            namespace: args
+                .namespace
+                .unwrap_or_else(|| self.default_namespace.clone()),
+            memory_type: args.memory_type.unwrap_or_else(|| "fact".to_string()),
+            content: args.content,
+            actor: "mcp".to_string(),
+            channel: "mcp".to_string(),
+            assertion_basis: args
+                .assertion_basis
+                .unwrap_or_else(|| "user_stated".to_string()),
+            valid_from: args.valid_from,
+            valid_until: args.valid_until,
+            tags: parse_tags(args.tags),
+            idempotency_key: args.idempotency_key.map(IdempotencyKey::new),
+            state,
+            now,
+        };
+        let mut svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let row_id = svc.save(req)?;
+        let json = serde_json::json!({
+            "uuid": uuid,
+            "row_id": row_id,
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+
+    fn do_get(&self, args: GetArgs) -> Result<String, McpError> {
+        let svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        match svc.get(&args.uuid)? {
+            Some(mem) => Ok(serde_json::to_string_pretty(&mem).unwrap_or_default()),
+            // NOT_FOUND must not leak the UUID in the response per S10/A-04.
+            None => Err(MnexisError::not_found("memory").into()),
+        }
+    }
+
+    fn do_list(&self, args: ListArgs) -> Result<String, McpError> {
+        let svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let state = args
+            .state
+            .clone()
+            .map(|s| parse_state(Some(s)))
+            .transpose()?;
+        let filter = ListFilter {
+            namespace: args.namespace.clone(),
+            state,
+            limit: clamp_limit(args.limit),
+            offset: args.offset,
+        };
+        let memories = svc.list(filter)?;
+        drop(svc);
+        let json = serde_json::json!({
+            "count": memories.len(),
+            "items": memories,
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+
+    fn do_update(&self, args: UpdateArgs) -> Result<String, McpError> {
+        let now = now_rfc3339_mcp();
+        let state = args
+            .state
+            .clone()
+            .map(|s| parse_state(Some(s)))
+            .transpose()?;
+        let req = crate::application::UpdateRequest {
+            uuid: args.uuid.clone(),
+            expected_revision: args.expected_revision,
+            content: args.content,
+            state,
+            tags: args.tags.as_ref().map(|s| parse_tags(Some(s.clone()))),
+            assertion_basis: args.assertion_basis,
+            reason: args.reason,
+            now,
+        };
+        let mut svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let updated = svc.update(req)?;
+        drop(svc);
+        let json = serde_json::json!({
+            "uuid": updated.uuid,
+            "revision": updated.revision,
+            "state": updated.state.as_str(),
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+
+    fn do_history(&self, args: HistoryArgs) -> Result<String, McpError> {
+        let svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let entries = svc.history(&args.uuid)?;
+        drop(svc);
+        let shown: Vec<_> = match args.limit {
+            Some(l) => entries.iter().rev().take(l).cloned().collect(),
+            None => entries,
+        };
+        let items: Vec<_> = shown
+            .iter()
+            .map(|h| {
+                serde_json::json!({
+                    "revision": h.revision,
+                    "memory_type": h.memory_type,
+                    "state": h.state.as_str(),
+                    "content": h.content,
+                    "assertion_basis": h.assertion_basis,
+                    "valid_from": h.valid_from,
+                    "valid_until": h.valid_until,
+                    "changed_by": h.changed_by,
+                    "change_reason": h.change_reason,
+                    "changed_at": h.changed_at,
+                })
+            })
+            .collect();
+        let json = serde_json::json!({
+            "uuid": args.uuid,
+            "count": items.len(),
+            "items": items,
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+
+    fn do_supersede(&self, args: SupersedeArgs) -> Result<String, McpError> {
+        let now = now_rfc3339_mcp();
+        let req = crate::application::SupersedeRequest {
+            older_uuid: args.older_uuid.clone(),
+            newer_uuid: args.newer_uuid.clone(),
+            expected_old_revision: args.expected_old_revision,
+            expected_new_revision: args.expected_new_revision,
+            reason: args.reason,
+            now,
+        };
+        let mut svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        svc.supersede(req)?;
+        drop(svc);
+        let json = serde_json::json!({
+            "older": args.older_uuid,
+            "newer": args.newer_uuid,
+            "ok": true,
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+
+    fn do_delete(&self, args: DeleteArgs) -> Result<String, McpError> {
+        let mut svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        svc.soft_delete(&args.uuid, args.expected_revision)?;
+        drop(svc);
+        let json = serde_json::json!({
+            "deleted": args.uuid,
+            "expected_revision": args.expected_revision,
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+
+    fn do_restore(&self, args: RestoreArgs) -> Result<String, McpError> {
+        let mut svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        svc.restore(&args.uuid)?;
+        drop(svc);
+        let json = serde_json::json!({
+            "restored": args.uuid,
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+
+    fn do_search(&self, args: SearchArgs) -> Result<String, McpError> {
+        let limit = clamp_limit(args.limit);
+        let svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        // Out-of-scope namespace denial follows the profile's configured
+        // existence_disclosure (service-enforced); no layer-2 remapping.
+        let hits = svc.search(&args.query, args.namespace.as_deref(), limit)?;
+        drop(svc);
+        let items: Vec<_> = hits
+            .iter()
+            .map(|h| {
+                serde_json::json!({
+                    "uuid": h.uuid,
+                    "rank": h.rank,
+                    "namespace": h.namespace,
+                    "memory_type": h.memory_type,
+                    "state": h.state,
+                    "revision": h.revision,
+                    "created_at": h.created_at,
+                    "valid_from": h.valid_from,
+                    "valid_until": h.valid_until,
+                })
+            })
+            .collect();
+        let json = serde_json::json!({
+            "query": args.query,
+            "namespace": args.namespace,
+            "count": hits.len(),
+            "items": items,
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// rmcp ServerHandler
+// ---------------------------------------------------------------------------
+
+#[tool_router]
+impl McpServer {
+    #[tool(
+        name = "memory_save",
+        description = "Save a new memory. Returns uuid and row_id."
+    )]
+    fn memory_save(&self, Parameters(args): Parameters<SaveArgs>) -> Result<String, McpError> {
+        self.do_save(args)
+    }
+
+    #[tool(name = "memory_get", description = "Get a memory by UUID.")]
+    fn memory_get(&self, Parameters(args): Parameters<GetArgs>) -> Result<String, McpError> {
+        self.do_get(args)
+    }
+
+    #[tool(
+        name = "memory_list",
+        description = "List memories with optional namespace/state filters and pagination."
+    )]
+    fn memory_list(&self, Parameters(args): Parameters<ListArgs>) -> Result<String, McpError> {
+        self.do_list(args)
+    }
+
+    #[tool(
+        name = "memory_update",
+        description = "Update a memory's content/state/tags. Requires expected_revision for optimistic locking."
+    )]
+    fn memory_update(&self, Parameters(args): Parameters<UpdateArgs>) -> Result<String, McpError> {
+        self.do_update(args)
+    }
+
+    #[tool(
+        name = "memory_history",
+        description = "Return the revision history for a memory."
+    )]
+    fn memory_history(
+        &self,
+        Parameters(args): Parameters<HistoryArgs>,
+    ) -> Result<String, McpError> {
+        self.do_history(args)
+    }
+
+    #[tool(
+        name = "memory_supersede",
+        description = "Atomically link an older memory as superseded by a newer one."
+    )]
+    fn memory_supersede(
+        &self,
+        Parameters(args): Parameters<SupersedeArgs>,
+    ) -> Result<String, McpError> {
+        self.do_supersede(args)
+    }
+
+    #[tool(
+        name = "memory_delete",
+        description = "Soft-delete a memory (sets deleted=1, removes from FTS5)."
+    )]
+    fn memory_delete(&self, Parameters(args): Parameters<DeleteArgs>) -> Result<String, McpError> {
+        self.do_delete(args)
+    }
+
+    #[tool(
+        name = "memory_restore",
+        description = "Restore a soft-deleted memory (clears deleted fields, re-indexes in FTS5)."
+    )]
+    fn memory_restore(
+        &self,
+        Parameters(args): Parameters<RestoreArgs>,
+    ) -> Result<String, McpError> {
+        self.do_restore(args)
+    }
+
+    #[tool(
+        name = "memory_search",
+        description = "FTS5 ranked search. Returns memories ordered by bm25 relevance."
+    )]
+    fn memory_search(&self, Parameters(args): Parameters<SearchArgs>) -> Result<String, McpError> {
+        self.do_search(args)
+    }
+}
+
+#[tool_handler]
+impl ServerHandler for McpServer {}
+
+/// Start the MCP stdio server.
+///
+/// Fails fast with the service's NotFound error if the database is missing.
+pub async fn serve_stdio(
+    data_dir: std::path::PathBuf,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let server = McpServer::new(data_dir)?;
+    let service = server.serve(stdio()).await?;
+    service.waiting().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Local UUIDv4 and RFC3339 helpers (duplicated from cli::profile;
+// consolidation is a later refactor — noted in T20)
+// ---------------------------------------------------------------------------
+
+fn uuid_v4_mcp() -> Result<String, MnexisError> {
+    use std::io::Read;
+    let mut bytes = [0u8; 16];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut bytes))
+        .map_err(|e| {
+            MnexisError::invalid_argument("uuid", format!("cannot read /dev/urandom: {e}"))
+        })?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    ))
+}
+
+fn now_rfc3339_mcp() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs.div_euclid(86_400);
+    let secs_of_day = secs.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        secs_of_day / 3600,
+        (secs_of_day % 3600) / 60,
+        secs_of_day % 60
+    )
+}
+
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    (year + if month <= 2 { 1 } else { 0 }, month, day)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uuid_v4_mcp_produces_valid_uuid() {
+        let uuid = uuid_v4_mcp().unwrap();
+        let parts: Vec<&str> = uuid.split('-').collect();
+        assert_eq!(
+            parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+            vec![8, 4, 4, 4, 12]
+        );
+        assert_eq!(&parts[2][0..1], "4"); // version nibble
+    }
+
+    #[test]
+    fn now_rfc3339_mcp_format() {
+        let ts = now_rfc3339_mcp();
+        assert!(ts.ends_with('Z'));
+        assert!(ts.len() == 20);
+        assert!(ts.contains('T'));
+    }
+}
