@@ -3,8 +3,10 @@ name = "mnexis"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
-description = "Local-first memory engine prototype for AI agents"
-license = "UNLICENSED"
+description = "Local-first memory engine for AI agents"
+license = "MIT"
+authors = ["xeworg"]
+publish = false
 
 [lib]
 name = "mnexis_core"

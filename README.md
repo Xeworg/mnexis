@@ -1,0 +1,99 @@
+# Mnexis
+
+Local-first memory engine for AI agents. SQLite + FTS5, single Rust
+binary, no daemon, no cloud. Linux-first MVP.
+
+## Install
+
+Requires Rust 1.95+ and a C toolchain (for the bundled SQLite).
+
+```sh
+git clone <this-repo> mnexis
+cd mnexis
+cargo install --path .
+```
+
+The `mnexis` binary is now in `~/.cargo/bin` (or wherever your `CARGO_HOME`
+points). On a fresh profile, initialise a data directory and you are
+ready to go:
+
+```sh
+mnexis --data-dir ~/.mnexis init
+mnexis --data-dir ~/.mnexis save --namespace default "first memory"
+mnexis --data-dir ~/.mnexis list
+mnexis --data-dir ~/.mnexis search "first memory"
+```
+
+The data directory holds two files (`mnexis.db` and `mnexis.toml`); copy
+them to migrate the profile to another machine.
+
+## CLI
+
+The full surface (15 command groups; see `mnexis --help`):
+
+```
+version           print the version and exit
+init              create a new profile (mnexis.db + mnexis.toml)
+mcp serve         run the MCP stdio server
+save              save a new memory
+update            update a memory (optimistic revision)
+supersede         mark an older memory superseded by a newer one
+search            FTS5 ranked search
+list              list memories
+show              show a memory (current or specific revision)
+history           show revision history
+delete            soft-delete a memory
+restore           restore a soft-deleted memory
+purge             hard-delete soft-deleted memories (dry-run by default)
+reindex           rebuild the FTS5 index from canonical data
+doctor            integrity checks; --repair rebuilds FTS5
+config show       print effective configuration and scope
+import / export   JSONL round-trip with conflict policies
+context           budgeted memory_context pipeline (PRD §9)
+```
+
+Exit codes follow the stable error set (`INVALID_ARGUMENT=2`,
+`NOT_FOUND=3`, `FORBIDDEN=4`, `REVISION_CONFLICT|TOPIC_CONFLICT=5`,
+`INDEX_UNAVAILABLE=6`, `BUDGET_TOO_SMALL=7`, `CURSOR_EXPIRED=8`,
+`UNSUPPORTED_VERSION=9`, `BUSY=10`); 1 is reserved for infrastructure
+errors, 0 for success.
+
+## MCP
+
+The binary ships the MCP stdio server (`mnexis mcp serve`). Point your
+MCP-capable host at the binary, with the `--data-dir` flag in the
+command line. Example `mcp.json` entry:
+
+```json
+{
+  "mcpServers": {
+    "mnexis": {
+      "command": "mnexis",
+      "args": ["--data-dir", "~/.mnexis", "mcp", "serve"]
+    }
+  }
+}
+```
+
+The server exposes 9 tools (`memory_save`, `memory_get`,
+`memory_list`, `memory_update`, `memory_history`, `memory_supersede`,
+`memory_delete`, `memory_restore`, `memory_search`). All errors map to
+JSON-RPC code `-32050` with `data.error_code` carrying the stable
+label.
+
+## Testing
+
+`cargo test` runs 204 tests across 15 suites (lib + binary + integration).
+CI is currently the dev host's `cargo fmt --check && git diff --check
+&& cargo test --all-targets` chain — there is no hosted CI yet.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+## Status
+
+v0.1.0 (E0..E5 MVP). Linux only. The 500-memory/150-query evaluation
+fixture is not yet committed; the spike corpora (`docs/t14-fts5-benchmark.md`)
+are the only measured quality evidence at the moment. See `odd/tasks/`
+for the implementation record.
