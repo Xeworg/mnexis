@@ -379,6 +379,70 @@ impl<R: MemoryRepository> MemoryService<R> {
         self.repo.reindex()
     }
 
+    // --- context (PRD §9, E3) ---
+    /// Run the full `memory_context` pipeline: FTS5 candidates +
+    /// canonical revalidation + eligibility + dedup + budget selection.
+    /// The `tokenizer_id` is enforced against the supported tokenizer v1
+    /// when `Exact` mode is requested; an unsupported id in exact mode
+    /// raises `MnexisError::BudgetTooSmall`.
+    pub fn context(
+        &self,
+        req: &crate::application::ContextRequest,
+    ) -> Result<crate::application::ContextResponse, MnexisError> {
+        use crate::application::budget::{Budget, token_count_v1};
+        use crate::application::context::{build_response, serialise_envelope};
+
+        let budget = Budget::new(req.token_budget, req.budget_mode);
+        let tokenizer_id = req.tokenizer_id.as_deref().unwrap_or("");
+
+        // Step 1: scope authorisation (read the namespace, or fall back
+        // to the first read_namespaces entry).
+        let ns = match req.namespace.as_deref() {
+            Some(ns) => {
+                self.scope.authorize_read(ns)?;
+                ns.to_string()
+            }
+            None => {
+                if self.scope.read_namespaces.is_empty() {
+                    return Ok(crate::application::ContextResponse::empty(
+                        "scope has no read_namespaces",
+                        &budget,
+                    ));
+                }
+                self.scope.read_namespaces[0].clone()
+            }
+        };
+
+        // Step 2: FTS5 candidate retrieval (active + non-deleted by
+        // default; the pipeline's eligibility pass re-enforces the
+        // same invariant as defence in depth).
+        let max_items = req.max_items.unwrap_or(20);
+        let hits = self.repo.search(&req.task, Some(&ns), max_items)?;
+
+        // Steps 3+4: revalidate the canonical record and pair the
+        // (hit, memory) tuples the pipeline consumes.
+        let mut pairs: Vec<(crate::retrieval::SearchHit, Memory)> = Vec::with_capacity(hits.len());
+        for hit in hits {
+            if let Some(mem) = self.repo.get_by_uuid(&hit.uuid)? {
+                pairs.push((hit, mem));
+            }
+        }
+
+        // Steps 5+6: build the response through the pipeline.
+        let response = build_response(&budget, tokenizer_id, pairs, &req.search, &req.now)?;
+
+        // A-07 invariant (debug-only): in exact mode, the
+        // response-claimed tokens_used equals the supported tokenizer's
+        // count of the serialised envelope.
+        if matches!(req.budget_mode, crate::application::BudgetMode::Exact) {
+            let s = serialise_envelope(&response.items, &budget);
+            let tokens = token_count_v1(&s);
+            debug_assert_eq!(response.tokens_used, tokens);
+        }
+
+        Ok(response)
+    }
+
     // --- export ---
     /// Snapshot all non-deleted memories (unless `include_deleted` is true)
     /// in the namespaces the caller is authorised to read. The scope is
