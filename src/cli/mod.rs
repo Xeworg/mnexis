@@ -50,6 +50,27 @@ pub enum Command {
         action: McpAction,
     },
 
+    /// Retrieve a budgeted context for a task (PRD §9, E3)
+    Context {
+        /// Namespace to search within (default: scope's first read namespace)
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Token budget for the response envelope
+        #[arg(long, default_value_t = 1024)]
+        token_budget: i64,
+        /// Supported tokenizer id (default: supported-tokenizer-v1)
+        #[arg(long, value_name = "ID")]
+        tokenizer_id: Option<String>,
+        /// Maximum items to consider (default 20, capped at 100)
+        #[arg(long, default_value_t = 20)]
+        max_items: usize,
+        /// Budget enforcement: estimated (default) | exact
+        #[arg(long, default_value = "estimated", value_name = "MODE")]
+        budget_mode: String,
+        /// Task / query (positional)
+        task: String,
+    },
+
     /// Save a new memory
     Save {
         /// Namespace (default: the profile's default_namespace)
@@ -284,6 +305,25 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             // Unreachable: run() intercepts the server lifecycle before
             // dispatching (see run). Kept for exhaustiveness.
             unreachable!("mcp serve is handled in run()")
+        }
+        Command::Context {
+            namespace,
+            token_budget,
+            tokenizer_id,
+            max_items,
+            budget_mode,
+            task,
+        } => {
+            let profile = Profile::open(data_dir)?;
+            commands::context(
+                &profile,
+                namespace.clone(),
+                *token_budget,
+                tokenizer_id.clone(),
+                *max_items,
+                budget_mode,
+                task.clone(),
+            )
         }
         Command::Save {
             namespace,

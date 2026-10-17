@@ -1012,3 +1012,112 @@ fn import_validation_rejects_oversized_content() {
     let out = b.run_silent(&["import", "--input", path.to_str().expect("utf8")]);
     assert_eq!(out.status.code(), Some(2));
 }
+
+// --- context (E3) ---
+
+#[test]
+fn context_exact_mode_returns_items_and_pins_a_07_invariant() {
+    let p = namespaced_profile(&["default"]);
+    save(&p, "alpha alpha alpha", &[]);
+    save(&p, "beta beta", &[]);
+    let out = p
+        .run_silent(&[
+            "context",
+            "--namespace",
+            "default",
+            "--token-budget",
+            "1024",
+            "--tokenizer-id",
+            "supported-tokenizer-v1",
+            "--budget-mode",
+            "exact",
+            "alpha",
+        ])
+        .unwrap_status("context exact");
+    let json = stdout_json(&out);
+    assert_eq!(json["budget_enforcement"], "exact");
+    assert_eq!(json["tokenizer_id"], "supported-tokenizer-v1");
+    assert_eq!(json["retrieval_mode"], "textual");
+    assert!(json["items"].as_array().expect("items").len() >= 1);
+    let tokens_used = json["tokens_used"].as_i64().expect("tokens_used");
+    assert!(tokens_used > 0, "tokens_used must be > 0");
+    assert!(tokens_used <= 1024, "A-07: tokens_used <= token_budget");
+    let items = json["items"].as_array().unwrap();
+    for item in items {
+        assert!(item["uuid"].is_string());
+        assert!(item["content"].is_string());
+        assert!(item["revision"].is_i64());
+        assert!(item["state"].is_string());
+    }
+}
+
+#[test]
+fn context_estimated_mode_keeps_estimated_label_and_warning() {
+    let p = namespaced_profile(&["default"]);
+    save(&p, "alpha", &[]);
+    let out = p
+        .run_silent(&[
+            "context",
+            "--namespace",
+            "default",
+            "--token-budget",
+            "1024",
+            "--budget-mode",
+            "estimated",
+            "alpha",
+        ])
+        .unwrap_status("context estimated");
+    let json = stdout_json(&out);
+    assert_eq!(json["budget_enforcement"], "estimated");
+    assert!(
+        json["warnings"]
+            .as_array()
+            .map(|a| a.iter().any(|v| v == "lexical_estimation"))
+            .unwrap_or(false),
+        "estimated mode must include the lexical_estimation warning: {json}"
+    );
+}
+
+#[test]
+fn context_unsupported_tokenizer_in_exact_mode_exits_7() {
+    let p = namespaced_profile(&["default"]);
+    save(&p, "alpha", &[]);
+    let out = p.run_silent(&[
+        "context",
+        "--namespace",
+        "default",
+        "--token-budget",
+        "1024",
+        "--tokenizer-id",
+        "unsupported-tokenizer-vX",
+        "--budget-mode",
+        "exact",
+        "alpha",
+    ]);
+    assert_eq!(out.status.code(), Some(7));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("BUDGET_TOO_SMALL"), "stderr: {stderr}");
+}
+
+#[test]
+fn context_with_no_candidates_returns_empty_with_reason() {
+    let p = namespaced_profile(&["default"]);
+    // FTS5 bareword tokens only; dashes / colons would be parsed as
+    // column refs and surface as a transport-level error, not an
+    // empty result. Use a token that won't match any saved memory.
+    let out = p
+        .run_silent(&[
+            "context",
+            "--namespace",
+            "default",
+            "--token-budget",
+            "1024",
+            "--budget-mode",
+            "estimated",
+            "zxcvbnmqwerty",
+        ])
+        .unwrap_status("context empty");
+    let json = stdout_json(&out);
+    assert_eq!(json["items"].as_array().expect("items").len(), 0);
+    assert!(json["empty_reason"].is_string());
+}

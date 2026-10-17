@@ -645,6 +645,55 @@ fn write_output(path: Option<&std::path::Path>, body: &str) -> Result<(), Mnexis
     }
 }
 
+/// `mnexis context TASK` — the PRD §9 budgeted context pipeline.
+#[allow(clippy::too_many_arguments)]
+pub fn context(
+    profile: &Profile,
+    namespace: Option<String>,
+    token_budget: i64,
+    tokenizer_id: Option<String>,
+    max_items: usize,
+    budget_mode: &str,
+    task: String,
+) -> Result<CommandOutcome, MnexisError> {
+    use crate::application::budget::BudgetMode;
+    use crate::application::{ContextRequest, SearchFilter};
+
+    let mode = match budget_mode {
+        "estimated" => BudgetMode::Estimated,
+        "exact" => BudgetMode::Exact,
+        other => {
+            return Err(MnexisError::invalid_argument(
+                "budget-mode",
+                format!("unknown mode `{other}` (expected estimated|exact)"),
+            ));
+        }
+    };
+    let max_items = max_items.clamp(1, 100);
+    let req = ContextRequest {
+        task,
+        namespace,
+        token_budget,
+        tokenizer_id,
+        max_items: Some(max_items),
+        budget_mode: mode,
+        search: SearchFilter::default(),
+        now: crate::cli::profile::now_rfc3339(),
+    };
+    let response = profile.service_ref().context(&req)?;
+    let json = serde_json::to_value(&response)
+        .map_err(|e| MnexisError::invalid_argument("context", format!("serialise: {e}")))?;
+    let count = response.items.len();
+    Ok(CommandOutcome::new(
+        json,
+        if count == 0 {
+            "no items selected".to_string()
+        } else {
+            format!("selected {count} items (tokens={})", response.tokens_used)
+        },
+    ))
+}
+
 pub fn export(
     profile: &Profile,
     include_deleted: bool,
