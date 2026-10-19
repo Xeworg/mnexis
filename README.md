@@ -5,27 +5,30 @@ binary, no daemon, no cloud. Linux-first MVP.
 
 ## Install
 
-Requires Rust 1.95+ and a C toolchain (for the bundled SQLite).
+Linux, Rust 1.95+ (`rust-toolchain.toml`), and a C toolchain (bundled SQLite).
 
 ```sh
 git clone <this-repo> mnexis
 cd mnexis
-cargo install --path .
+./install.sh
 ```
 
-The `mnexis` binary is now in `~/.cargo/bin` (or wherever your `CARGO_HOME`
-points). On a fresh profile, initialise a data directory and you are
-ready to go:
+The script builds the release binary with cargo and installs it to
+`~/.local/bin/mnexis`, printing PATH guidance when that directory is not on
+your PATH. Re-running it overwrites the installed binary. See
+[docs/install.md](docs/install.md) for requirements, uninstall, and
+`uninstall --purge` semantics.
+
+On a fresh profile, `mnexis init` creates the default data directory
+(`~/.local/share/mnexis`) with `mnexis.db` and `mnexis.toml`; copy those two
+files to migrate the profile to another machine.
 
 ```sh
-mnexis --data-dir ~/.mnexis init
-mnexis --data-dir ~/.mnexis save --namespace default "first memory"
-mnexis --data-dir ~/.mnexis list
-mnexis --data-dir ~/.mnexis search "first memory"
+mnexis init
+mnexis save --namespace default "first memory"
+mnexis list
+mnexis search "first memory"
 ```
-
-The data directory holds two files (`mnexis.db` and `mnexis.toml`); copy
-them to migrate the profile to another machine.
 
 ## CLI
 
@@ -86,6 +89,9 @@ label.
 `cargo test` runs 204 tests across 15 suites (lib + binary + integration).
 CI is currently the dev host's `cargo fmt --check && git diff --check
 && cargo test --all-targets` chain — there is no hosted CI yet.
+
+The bash installer harness is separate: `bash scripts/test-installer.sh`
+(see [docs/install.md](docs/install.md)).
 
 ## License
 
