@@ -38,7 +38,7 @@ with uninstall support, and a full-CRUD ratatui TUI behind `mnexis tui`.
 | T2  | S2   | worker        | 293aa55 feat(tui): scaffold mnexis tui three-pane read surface |
 | T3  | S2   | worker        | 71498be feat(tui): save and update forms with validation |
 | T4  | S2   | worker        | 43b8cea feat(service) + 083235a feat(tui) |
-| T5  | S2   | worker        | test(tui): app-state unit tests + docs + help |
+| T5  | S2   | worker        | a560414 test(tui) (+ d91b7ac style) |
 | T6  | S1   | verify        | independent verification of installer incl. purge |
 | T7  | S2   | verify        | independent verification of TUI CRUD surface |
 
@@ -88,3 +88,18 @@ with uninstall support, and a full-CRUD ratatui TUI behind `mnexis tui`.
 - L12 (2026-10-18): PAUSED at user request ("cuando el agente termine quedemos ahi")
   after T4. Remaining: T5 (docs/help + app-state unit tests), T7 (independent TUI
   verification), cierre (assess/review + report). Resume from T5.
+- L13 (2026-10-19): T5 evidence at a560414: 5 new unit tests pin the pure app-state
+  invariants the integration suites rely on implicitly (pane cycling both directions,
+  shift clamping incl. empty lists, MemoryRow snippet previews with 60-char ellipsis,
+  FTS5 hits carry no preview) and the per-mode footer help strings. docs/tui.md (~180
+  lines) documents launch, layout, and every key per mode; README gains the TUI section,
+  lists tui in the CLI surface, and refreshes the stale test count (204 -> 244; stale
+  since T2). Suite 244/244; CI chain green (fmt --check + git diff --check + test
+  --all-targets). Tests+docs only: no production behavior changed, so no CLI
+  differential applies.
+- L14 (2026-10-19): Slice boundary: d91b7ac is a mechanical rustfmt pass over the
+  unformatted T4 leftovers (CI fmt gate), split out of T5 to keep that unit clean.
+  T5 slice ~380 authored lines (within the L10 budget). Cumulative: 4926 authored
+  lines in 10 commits on feat/mnexis-installer-tui; every commit is one coherent unit
+  with recorded rationale (L5/L6/L9). T5 is the last code slice; remaining: T7
+  (independent TUI verification) and cierre (assess/review + report).
