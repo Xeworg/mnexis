@@ -40,7 +40,7 @@ with uninstall support, and a full-CRUD ratatui TUI behind `mnexis tui`.
 | T4  | S2   | worker        | 43b8cea feat(service) + 083235a feat(tui) |
 | T5  | S2   | worker        | a560414 test(tui) (+ d91b7ac style) |
 | T6  | S1   | verify        | independent verification of installer incl. purge |
-| T7  | S2   | verify        | independent verification of TUI CRUD surface |
+| T7  | S2   | verify        | PASS at 8d517c6 (no code commit; evidence in L15) |
 
 ## Log
 
@@ -103,3 +103,17 @@ with uninstall support, and a full-CRUD ratatui TUI behind `mnexis tui`.
   lines in 10 commits on feat/mnexis-installer-tui; every commit is one coherent unit
   with recorded rationale (L5/L6/L9). T5 is the last code slice; remaining: T7
   (independent TUI verification) and cierre (assess/review + report).
+- L15 (2026-10-19): T7 independent verification at 8d517c6: overall PASS, no blockers,
+  no advisories. All 8 items PASS with file:line evidence (entry wiring, three panes,
+  read surface incl. history+chain, all five write flows, pure-UI-layer grep, pinned
+  =x.y.z deps, docs/tui.md <-> keymap <-> footer consistency, 23/23 + 13/13 + fmt
+  clean). Spot-check of the supersede conflict -> Ctrl-R reload path observed green in
+  write_flows.rs. L11 gaps remain out of scope (client-side mirror documented).
+  Incident note: the first verify launch crashed with EDQUOT (errno -122) because its
+  cold build in /tmp/mnexis-verify-*/scratch filled the 12.7 GiB per-user tmpfs
+  quota; orphan cleaned, relaunch constrained to the warm repo target/ succeeded.
+- L16 (2026-10-19): Feature closed. T1..T7 done (T6/T7 independently verified PASS).
+  Final state: 11 commits + this doc commit on feat/mnexis-installer-tui; suite
+  244/244; CI chain green. Open follow-up needing user decision: the L11 supersede
+  contract gaps (expected_new_revision, cycle/same-namespace rejection, persisted
+  reason + migration 003). Merge/push remains the user's call.
