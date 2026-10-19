@@ -92,7 +92,11 @@ fn save_form_prefills_defaults_and_writes_through_the_service() {
     app.apply(Action::StartSave, p.service_mut());
     assert_eq!(app.mode, Mode::Form, "n opens the save form");
     let form = app.form.as_ref().expect("save form");
-    assert_eq!(form.value("namespace"), "ns-a", "current selection prefilled");
+    assert_eq!(
+        form.value("namespace"),
+        "ns-a",
+        "current selection prefilled"
+    );
     assert_eq!(form.value("type"), "fact");
     assert_eq!(form.value("basis"), "user_stated");
     assert_eq!(form.value("state"), "active");
@@ -160,7 +164,12 @@ fn save_form_validation_blocks_blank_content_and_bad_state() {
     app.apply(Action::StartSave, p.service_mut());
     app.apply(Action::Submit, p.service_mut());
     assert_eq!(form_error(&app), "content is required");
-    assert!(app.status.clone().unwrap_or_default().contains("content is required"));
+    assert!(
+        app.status
+            .clone()
+            .unwrap_or_default()
+            .contains("content is required")
+    );
     assert_eq!(app.mode, Mode::Form, "the form stays open");
     assert!(list(&p, "ns-a").is_empty(), "nothing was written");
 
@@ -211,13 +220,20 @@ fn update_form_prefills_and_writes_a_new_revision() {
     assert_eq!(form.value("content"), "first wording");
     assert_eq!(form.value("state"), "active");
     assert_eq!(form.value("basis"), "user_stated");
-    assert_eq!(form.value("expected_revision"), "1", "prefilled from the load");
+    assert_eq!(
+        form.value("expected_revision"),
+        "1",
+        "prefilled from the load"
+    );
 
     backspace(&mut app, &mut p, "first wording".len());
     type_text(&mut app, &mut p, "second wording");
     // content -> state -> tags -> basis -> reason
     next_fields(&mut app, &mut p, 4);
-    assert_eq!(app.form.as_ref().unwrap().focused().unwrap().label, "reason");
+    assert_eq!(
+        app.form.as_ref().unwrap().focused().unwrap().label,
+        "reason"
+    );
     type_text(&mut app, &mut p, "reword");
     app.apply(Action::Submit, p.service_mut());
 
@@ -298,11 +314,12 @@ fn update_form_surfaces_revision_conflict_with_the_revision_involved() {
         app.form.as_ref().unwrap().reload_offered,
         "the conflict offers a reload"
     );
-    assert!(app
-        .status
-        .clone()
-        .unwrap_or_default()
-        .contains("revision conflict"));
+    assert!(
+        app.status
+            .clone()
+            .unwrap_or_default()
+            .contains("revision conflict")
+    );
 
     // The offer: Ctrl-R re-reads the memory and refreshes the expectation.
     app.apply(Action::ReloadForm, p.service_mut());

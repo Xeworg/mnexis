@@ -224,10 +224,7 @@ mod tests {
         );
         // Form mode owns the text keys: `n`, `e`, and `q` are input.
         for c in ['n', 'e', 'q'] {
-            assert_eq!(
-                map_key(key(KeyCode::Char(c)), Mode::Form),
-                Action::Input(c)
-            );
+            assert_eq!(map_key(key(KeyCode::Char(c)), Mode::Form), Action::Input(c));
         }
         assert_eq!(map_key(key(KeyCode::Tab), Mode::Form), Action::NextField);
         assert_eq!(
@@ -261,9 +258,15 @@ mod tests {
     #[test]
     fn keymap_covers_the_picker_and_the_confirmation_dialog() {
         // Picker: the list keeps j/k/Enter/Esc, pane keys are inert.
-        assert_eq!(map_key(key(KeyCode::Char('j')), Mode::Pick), Action::NextRow);
+        assert_eq!(
+            map_key(key(KeyCode::Char('j')), Mode::Pick),
+            Action::NextRow
+        );
         assert_eq!(map_key(key(KeyCode::Down), Mode::Pick), Action::NextRow);
-        assert_eq!(map_key(key(KeyCode::Char('k')), Mode::Pick), Action::PrevRow);
+        assert_eq!(
+            map_key(key(KeyCode::Char('k')), Mode::Pick),
+            Action::PrevRow
+        );
         assert_eq!(map_key(key(KeyCode::Up), Mode::Pick), Action::PrevRow);
         assert_eq!(map_key(key(KeyCode::Enter), Mode::Pick), Action::Confirm);
         assert_eq!(map_key(key(KeyCode::Esc), Mode::Pick), Action::Escape);

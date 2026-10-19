@@ -107,7 +107,10 @@ enum SubmitFailure {
     Service(MnexisError),
     /// An optimistic precondition the form mirrors itself because the
     /// service does not check that side yet (supersede's newer revision).
-    Conflict { current: i64, expected: String },
+    Conflict {
+        current: i64,
+        expected: String,
+    },
 }
 
 impl Form {
@@ -350,7 +353,11 @@ impl Form {
     /// only to make a revision conflict message actionable.
     fn loaded_revision(&self, service: &AppService) -> Option<i32> {
         let uuid = self.target.as_deref()?;
-        service.get(uuid).ok().flatten().map(|memory| memory.revision)
+        service
+            .get(uuid)
+            .ok()
+            .flatten()
+            .map(|memory| memory.revision)
     }
 
     fn submit_save(&mut self, service: &mut AppService) -> Result<WriteOutcome, SubmitFailure> {
@@ -480,9 +487,9 @@ impl Form {
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {
-                    return Err(SubmitFailure::Service(MnexisError::not_found(
-                        format!("memory:{uuid}"),
-                    )))
+                    return Err(SubmitFailure::Service(MnexisError::not_found(format!(
+                        "memory:{uuid}"
+                    ))));
                 }
                 Err(e) => return Err(SubmitFailure::Service(e)),
             }
@@ -499,9 +506,9 @@ impl Form {
     }
 
     fn revision(&self, label: &str) -> Result<i32, SubmitFailure> {
-        self.required(label)?.parse::<i32>().map_err(|_| {
-            SubmitFailure::Invalid(format!("{label} must be a whole number"))
-        })
+        self.required(label)?
+            .parse::<i32>()
+            .map_err(|_| SubmitFailure::Invalid(format!("{label} must be a whole number")))
     }
 }
 
@@ -583,7 +590,10 @@ mod tests {
         assert_eq!(blank_to_none(" k "), Some("k".to_string()));
         assert!(check_bytes("content", "abcd", 3).is_err());
         assert!(check_tags("a, b", 1).is_err());
-        assert!(check_tags("a,, ,b", 2).is_ok(), "blank tags are not counted");
+        assert!(
+            check_tags("a,, ,b", 2).is_ok(),
+            "blank tags are not counted"
+        );
         assert!(
             validate_save_state("bogus").is_err(),
             "unknown states are rejected before the service call"

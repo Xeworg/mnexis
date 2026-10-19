@@ -220,7 +220,10 @@ fn deleted_reads_expose_soft_deleted_records_for_restore() {
     svc.save(save_req("uuid-2", "kept")).unwrap();
     svc.soft_delete("uuid-1", 1).unwrap();
 
-    assert!(svc.get("uuid-1").unwrap().is_none(), "get stays deleted-blind");
+    assert!(
+        svc.get("uuid-1").unwrap().is_none(),
+        "get stays deleted-blind"
+    );
     let deleted = svc
         .get_including_deleted("uuid-1")
         .unwrap()
@@ -232,7 +235,10 @@ fn deleted_reads_expose_soft_deleted_records_for_restore() {
     let listed = svc.list_deleted(Some("proyecto-a"), 100, 0).unwrap();
     assert_eq!(listed.len(), 1, "only the deleted row: {listed:?}");
     assert_eq!(listed[0].uuid, "uuid-1");
-    assert_eq!(svc.list_deleted(Some("proyecto-a"), 100, 0).unwrap().len(), 1);
+    assert_eq!(
+        svc.list_deleted(Some("proyecto-a"), 100, 0).unwrap().len(),
+        1
+    );
     assert!(
         matches!(
             svc.list_deleted(Some("other-ns"), 100, 0).unwrap_err(),
@@ -256,7 +262,11 @@ fn deleted_reads_expose_soft_deleted_records_for_restore() {
     // Restore puts the row back in the live list.
     svc.restore("uuid-1").unwrap();
     assert!(svc.get("uuid-1").unwrap().is_some());
-    assert!(svc.list_deleted(Some("proyecto-a"), 100, 0).unwrap().is_empty());
+    assert!(
+        svc.list_deleted(Some("proyecto-a"), 100, 0)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

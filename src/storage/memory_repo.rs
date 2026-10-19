@@ -858,7 +858,9 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             err,
-            MnexisError::RevisionConflict { current_revision: 2 },
+            MnexisError::RevisionConflict {
+                current_revision: 2
+            },
             "the conflict must carry the row's actual revision"
         );
     }

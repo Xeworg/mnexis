@@ -96,8 +96,16 @@ fn supersede_picks_a_newer_memory_and_links_both_through_the_service() {
     assert_eq!(form.kind, FormKind::Supersede);
     assert_eq!(form.value("older_uuid"), older);
     assert_eq!(form.value("newer_uuid"), newer);
-    assert_eq!(form.value("expected_old_revision"), "1", "prefilled from the load");
-    assert_eq!(form.value("expected_new_revision"), "1", "prefilled from the load");
+    assert_eq!(
+        form.value("expected_old_revision"),
+        "1",
+        "prefilled from the load"
+    );
+    assert_eq!(
+        form.value("expected_new_revision"),
+        "1",
+        "prefilled from the load"
+    );
 
     // The reason is required: submitting blank leaves the database alone.
     app.apply(Action::Submit, p.service_mut());
@@ -106,13 +114,20 @@ fn supersede_picks_a_newer_memory_and_links_both_through_the_service() {
     assert!(p.service_ref().links(&older).unwrap().is_empty());
 
     next_fields(&mut app, &mut p, 2); // older_uuid -> newer_uuid -> reason
-    assert_eq!(app.form.as_ref().unwrap().focused().unwrap().label, "reason");
+    assert_eq!(
+        app.form.as_ref().unwrap().focused().unwrap().label,
+        "reason"
+    );
     type_text(&mut app, &mut p, "new wording wins");
     app.apply(Action::Submit, p.service_mut());
 
     assert_eq!(app.mode, Mode::Normal, "the form closes on success");
     assert!(app.form.is_none());
-    assert!(status(&app).contains("superseded"), "status: {:?}", status(&app));
+    assert!(
+        status(&app).contains("superseded"),
+        "status: {:?}",
+        status(&app)
+    );
 
     // The write landed through the service: older superseded plus one link.
     let stored = p.service_ref().get(&older).unwrap().unwrap();
@@ -135,7 +150,10 @@ fn supersede_conflict_names_the_revision_on_disk_and_reload_recovers() {
     app.apply(Action::StartSupersede, p.service_mut());
     app.apply(Action::NextRow, p.service_mut());
     app.apply(Action::Confirm, p.service_mut());
-    assert_eq!(app.form.as_ref().unwrap().value("expected_old_revision"), "1");
+    assert_eq!(
+        app.form.as_ref().unwrap().value("expected_old_revision"),
+        "1"
+    );
 
     // Another writer moves the older memory to revision 2 after the form loaded.
     p.service_mut()
@@ -167,7 +185,10 @@ fn supersede_conflict_names_the_revision_on_disk_and_reload_recovers() {
         "the conflict names what the form expected: {error:?}"
     );
     assert!(app.form.as_ref().unwrap().reload_offered);
-    assert!(p.service_ref().links(&older).unwrap().is_empty(), "nothing written");
+    assert!(
+        p.service_ref().links(&older).unwrap().is_empty(),
+        "nothing written"
+    );
 
     // Ctrl-R refreshes the expectation and keeps the typed reason.
     app.apply(Action::ReloadForm, p.service_mut());
@@ -195,7 +216,10 @@ fn supersede_conflict_on_the_newer_side_is_surfaced_and_reload_recovers() {
     app.apply(Action::StartSupersede, p.service_mut());
     app.apply(Action::NextRow, p.service_mut());
     app.apply(Action::Confirm, p.service_mut());
-    assert_eq!(app.form.as_ref().unwrap().value("expected_new_revision"), "1");
+    assert_eq!(
+        app.form.as_ref().unwrap().value("expected_new_revision"),
+        "1"
+    );
 
     // Another writer moves the newer memory to revision 2 after the pick.
     p.service_mut()
@@ -224,11 +248,17 @@ fn supersede_conflict_on_the_newer_side_is_surfaced_and_reload_recovers() {
         "the conflict names the side that drifted: {error:?}"
     );
     assert!(app.form.as_ref().unwrap().reload_offered);
-    assert!(p.service_ref().links(&newer).unwrap().is_empty(), "nothing written");
+    assert!(
+        p.service_ref().links(&newer).unwrap().is_empty(),
+        "nothing written"
+    );
 
     // Ctrl-R refreshes both sides and the retry succeeds.
     app.apply(Action::ReloadForm, p.service_mut());
-    assert_eq!(app.form.as_ref().unwrap().value("expected_new_revision"), "2");
+    assert_eq!(
+        app.form.as_ref().unwrap().value("expected_new_revision"),
+        "2"
+    );
     app.apply(Action::Submit, p.service_mut());
     assert_eq!(app.mode, Mode::Normal);
     assert_eq!(p.service_ref().links(&newer).unwrap().len(), 1);
@@ -258,7 +288,10 @@ fn supersede_cancel_paths_write_nothing() {
     app.apply(Action::Escape, p.service_mut());
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.form.is_none());
-    assert!(p.service_ref().links(&older).unwrap().is_empty(), "nothing written");
+    assert!(
+        p.service_ref().links(&older).unwrap().is_empty(),
+        "nothing written"
+    );
     assert_eq!(p.service_ref().get(&older).unwrap().unwrap().revision, 1);
 }
 
@@ -308,21 +341,35 @@ fn delete_and_restore_flow_confirms_each_write_and_refreshes_the_list() {
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.confirm.is_none());
     assert_eq!(status(&app), "cancelled, nothing written");
-    assert!(p.service_ref().get(&uuid).unwrap().is_some(), "Esc wrote nothing");
+    assert!(
+        p.service_ref().get(&uuid).unwrap().is_some(),
+        "Esc wrote nothing"
+    );
 
     // `n` also cancels; `y` soft-deletes and refreshes the list.
     app.apply(Action::StartDelete, p.service_mut());
     app.apply(Action::ConfirmNo, p.service_mut());
-    assert!(p.service_ref().get(&uuid).unwrap().is_some(), "n wrote nothing");
+    assert!(
+        p.service_ref().get(&uuid).unwrap().is_some(),
+        "n wrote nothing"
+    );
     app.apply(Action::StartDelete, p.service_mut());
     app.apply(Action::ConfirmYes, p.service_mut());
     assert_eq!(app.mode, Mode::Normal);
     assert!(p.service_ref().get(&uuid).unwrap().is_none());
-    let deleted = p.service_ref().get_including_deleted(&uuid).unwrap().unwrap();
+    let deleted = p
+        .service_ref()
+        .get_including_deleted(&uuid)
+        .unwrap()
+        .unwrap();
     assert!(deleted.deleted);
     assert_eq!(deleted.revision, 2, "soft_delete bumped the revision");
     assert!(app.memories.is_empty(), "the live list refreshed");
-    assert!(status(&app).contains("soft-deleted"), "status: {:?}", status(&app));
+    assert!(
+        status(&app).contains("soft-deleted"),
+        "status: {:?}",
+        status(&app)
+    );
 
     // `x` shows the deleted row, and the detail pane renders it.
     app.apply(Action::ToggleDeleted, p.service_mut());
@@ -330,7 +377,10 @@ fn delete_and_restore_flow_confirms_each_write_and_refreshes_the_list() {
     assert_eq!(app.memories.len(), 1);
     assert_eq!(app.memories[0].uuid, uuid);
     assert!(app.detail.as_ref().unwrap().deleted);
-    assert!(app.history.is_empty(), "history stays hidden for deleted rows");
+    assert!(
+        app.history.is_empty(),
+        "history stays hidden for deleted rows"
+    );
 
     // `r` cancels on Esc, then restores on `y` and leaves the deleted view.
     app.apply(Action::StartRestore, p.service_mut());
@@ -340,7 +390,10 @@ fn delete_and_restore_flow_confirms_each_write_and_refreshes_the_list() {
         ConfirmKind::Restore { uuid: uuid.clone() }
     );
     app.apply(Action::Escape, p.service_mut());
-    assert!(p.service_ref().get(&uuid).unwrap().is_none(), "Esc wrote nothing");
+    assert!(
+        p.service_ref().get(&uuid).unwrap().is_none(),
+        "Esc wrote nothing"
+    );
 
     app.apply(Action::StartRestore, p.service_mut());
     app.apply(Action::ConfirmYes, p.service_mut());
@@ -352,7 +405,11 @@ fn delete_and_restore_flow_confirms_each_write_and_refreshes_the_list() {
     assert_eq!(app.memories.len(), 1, "the live list refreshed");
     assert_eq!(app.memories[0].uuid, uuid);
     assert_eq!(app.detail.as_ref().map(|m| m.uuid.clone()), Some(uuid));
-    assert!(status(&app).contains("restored"), "status: {:?}", status(&app));
+    assert!(
+        status(&app).contains("restored"),
+        "status: {:?}",
+        status(&app)
+    );
 }
 
 #[test]
@@ -365,7 +422,11 @@ fn write_flows_refuse_out_of_context_and_stray_keys_never_write() {
     app.apply(Action::StartRestore, p.service_mut());
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.confirm.is_none());
-    assert!(status(&app).contains("press x"), "status: {:?}", status(&app));
+    assert!(
+        status(&app).contains("press x"),
+        "status: {:?}",
+        status(&app)
+    );
 
     // Neither `d` nor `s` is allowed from inside the deleted view.
     app.apply(Action::ToggleDeleted, p.service_mut());
@@ -389,8 +450,15 @@ fn write_flows_refuse_out_of_context_and_stray_keys_never_write() {
     ] {
         app.apply(action, p.service_mut());
     }
-    assert_eq!(app.mode, Mode::Confirm, "a stray key never answers the dialog");
-    assert!(p.service_ref().get(&uuid).unwrap().is_some(), "nothing written");
+    assert_eq!(
+        app.mode,
+        Mode::Confirm,
+        "a stray key never answers the dialog"
+    );
+    assert!(
+        p.service_ref().get(&uuid).unwrap().is_some(),
+        "nothing written"
+    );
     app.apply(Action::ConfirmNo, p.service_mut());
     assert!(p.service_ref().get(&uuid).unwrap().is_some());
 }
