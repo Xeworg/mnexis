@@ -366,11 +366,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| render_form(frame, form)).unwrap();
         let buffer = terminal.backend().buffer().clone();
-        buffer
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect()
+        buffer.content().iter().map(|cell| cell.symbol()).collect()
     }
 
     #[test]
@@ -411,6 +407,43 @@ mod tests {
     }
 
     #[test]
+    fn footer_help_names_the_keys_of_each_mode() {
+        // The footer is the in-app help: every key the task table in
+        // docs/tui.md documents must appear in its mode's footer.
+        let normal = footer_text(Mode::Normal);
+        for key in [
+            "n save",
+            "e update",
+            "s supersede",
+            "d delete",
+            "r restore",
+            "x deleted",
+            "/ search",
+            "q quit",
+        ] {
+            assert!(
+                normal.contains(key),
+                "normal footer must mention {key}: {normal}"
+            );
+        }
+        let form = footer_text(Mode::Form);
+        for key in [
+            "Tab/Shift-Tab",
+            "Ctrl-S submit",
+            "Ctrl-R reload",
+            "Esc cancel",
+        ] {
+            assert!(form.contains(key), "form footer must mention {key}: {form}");
+        }
+        assert!(footer_text(Mode::Pick).contains("Enter chooses it"));
+        assert!(footer_text(Mode::Confirm).contains("nothing is written until y"));
+        assert!(
+            footer_text(Mode::Search).contains("q quit"),
+            "search keeps quit visible after Enter"
+        );
+    }
+
+    #[test]
     fn confirm_dialog_renders_its_prompt_and_cancel_hint() {
         use crate::tui::app::ConfirmKind;
         let pending = PendingConfirm {
@@ -426,7 +459,10 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
         let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
-        assert!(text.contains("soft-delete uuid-1"), "prompt renders: {text}");
+        assert!(
+            text.contains("soft-delete uuid-1"),
+            "prompt renders: {text}"
+        );
         assert!(text.contains("[y] yes"), "answers render: {text}");
 
         // A tiny terminal must clamp instead of panicking.

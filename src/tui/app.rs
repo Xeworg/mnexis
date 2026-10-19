@@ -495,9 +495,8 @@ impl App {
     /// side, then pick the newer memory in the list (`Mode::Pick`).
     fn start_supersede(&mut self, service: &AppService) {
         if self.deleted_view {
-            self.status = Some(
-                "supersede needs an active memory (x leaves the deleted view)".to_string(),
-            );
+            self.status =
+                Some("supersede needs an active memory (x leaves the deleted view)".to_string());
             return;
         }
         let Some(uuid) = self.memories.get(self.mem_index).map(|r| r.uuid.clone()) else {
@@ -701,7 +700,11 @@ impl App {
             self.ns_index = pos;
         }
         self.reload_memories(service);
-        if let Some(pos) = self.memories.iter().position(|row| row.uuid == outcome.uuid) {
+        if let Some(pos) = self
+            .memories
+            .iter()
+            .position(|row| row.uuid == outcome.uuid)
+        {
             self.mem_index = pos;
             self.refresh_detail(service);
         }
@@ -756,4 +759,92 @@ impl App {
 fn shift(index: usize, delta: isize, len: usize) -> usize {
     let last = len.saturating_sub(1) as isize;
     (index as isize + delta).clamp(0, last) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::memory::MemoryState;
+    use crate::retrieval::SearchHit;
+
+    fn memory(content: &str) -> Memory {
+        Memory {
+            id: Some(1),
+            uuid: "u-1".to_string(),
+            topic_key: String::new(),
+            namespace: "ns-a".to_string(),
+            memory_type: "fact".to_string(),
+            content: content.to_string(),
+            state: MemoryState::Active,
+            revision: 3,
+            deleted: false,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            purge_after: None,
+            valid_from: None,
+            valid_until: None,
+            actor: "user".to_string(),
+            channel: "cli".to_string(),
+            assertion_basis: "user_stated".to_string(),
+        }
+    }
+
+    #[test]
+    fn pane_navigation_cycles_through_all_three_panes() {
+        assert_eq!(Pane::Namespaces.next(), Pane::Memories);
+        assert_eq!(Pane::Memories.next(), Pane::Detail);
+        assert_eq!(Pane::Detail.next(), Pane::Namespaces, "next wraps");
+        assert_eq!(Pane::Namespaces.prev(), Pane::Detail, "prev wraps");
+        assert_eq!(Pane::Detail.prev(), Pane::Memories);
+        assert_eq!(Pane::Memories.prev(), Pane::Namespaces);
+    }
+
+    #[test]
+    fn shift_clamps_to_the_list_bounds_and_survives_empty_lists() {
+        assert_eq!(shift(0, -1, 4), 0, "stays on the first row");
+        assert_eq!(shift(3, 1, 4), 3, "stays on the last row");
+        assert_eq!(shift(1, -5, 4), 0, "a big jump clamps below");
+        assert_eq!(shift(1, 99, 4), 3, "a big jump clamps above");
+        assert_eq!(shift(0, 1, 0), 0, "an empty list never moves");
+        assert_eq!(shift(0, -1, 1), 0, "a single row list never moves");
+    }
+
+    #[test]
+    fn memory_rows_carry_a_one_line_snippet_preview() {
+        let row = MemoryRow::from(&memory("short content"));
+        assert_eq!(row.uuid, "u-1");
+        assert_eq!(row.memory_type, "fact");
+        assert_eq!(row.state, "active");
+        assert_eq!(row.revision, 3);
+        assert_eq!(row.preview.as_deref(), Some("short content"));
+
+        // Long content is clipped to the CLI snippet width and marked with
+        // an ellipsis; newlines collapse so the row stays one line.
+        let long = MemoryRow::from(&memory(&format!("{}\nsecond line", "x".repeat(200))));
+        let preview = long.preview.expect("preview present");
+        assert_eq!(preview.chars().count(), 61, "60 chars + ellipsis");
+        assert!(preview.ends_with('\u{2026}'));
+        assert!(!preview.contains('\n'), "preview is one line");
+    }
+
+    #[test]
+    fn search_hits_render_without_a_preview() {
+        let hit = SearchHit {
+            uuid: "u-2".to_string(),
+            rank: -1.5,
+            namespace: "ns-a".to_string(),
+            memory_type: "fact".to_string(),
+            state: "active".to_string(),
+            revision: 2,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            valid_from: None,
+            valid_until: None,
+        };
+        let row = MemoryRow::from(&hit);
+        assert_eq!(row.uuid, "u-2");
+        assert_eq!(row.state, "active");
+        assert_eq!(row.revision, 2);
+        assert_eq!(row.preview, None, "FTS5 hits carry no content");
+    }
 }

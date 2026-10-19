@@ -53,6 +53,7 @@ doctor            integrity checks; --repair rebuilds FTS5
 config show       print effective configuration and scope
 import / export   JSONL round-trip with conflict policies
 context           budgeted memory_context pipeline (PRD §9)
+tui               browse and edit memories in a terminal UI
 ```
 
 Exit codes follow the stable error set (`INVALID_ARGUMENT=2`,
@@ -60,6 +61,17 @@ Exit codes follow the stable error set (`INVALID_ARGUMENT=2`,
 `INDEX_UNAVAILABLE=6`, `BUDGET_TOO_SMALL=7`, `CURSOR_EXPIRED=8`,
 `UNSUPPORTED_VERSION=9`, `BUSY=10`); 1 is reserved for infrastructure
 errors, 0 for success.
+
+## TUI
+
+`mnexis tui` opens a full-CRUD terminal UI over the same service as the
+CLI: three panes (namespaces / memories / detail), FTS5 search with `/`,
+and the write flows — save (`n`), update (`e`), supersede (`s`),
+soft-delete (`d`), restore (`r`) — each with validation, revision-conflict
+recovery (`Ctrl-R`), and y/N confirmations. It requires an initialised
+profile and enforces the profile scope. Every key is documented in
+[docs/tui.md](docs/tui.md); the footer inside the TUI always shows the
+keys of the current mode.
 
 ## MCP
 
@@ -86,7 +98,7 @@ label.
 
 ## Testing
 
-`cargo test` runs 204 tests across 15 suites (lib + binary + integration).
+`cargo test` runs 244 tests across 15 suites (lib + binary + integration).
 CI is currently the dev host's `cargo fmt --check && git diff --check
 && cargo test --all-targets` chain — there is no hosted CI yet.
 
