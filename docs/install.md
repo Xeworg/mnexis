@@ -108,8 +108,8 @@ then step 3. Inside the data directory:
 
 | File | Meaning | Source |
 | --- | --- | --- |
-| `mnexis.db` (+ SQLite `-wal`/`-shm` sidecars) | memory database | `src/cli/profile.rs:59-65`, `src/cli/commands.rs:516-521` |
-| `mnexis.toml` | profile settings / access scope | `src/cli/profile.rs:63-65`, `src/cli/commands.rs:516-528`, `src/config/mod.rs:1-9` |
+| `mnexis.db` (+ SQLite `-wal`/`-shm` sidecars) | memory database | `src/cli/profile.rs:59-65`, `src/cli/commands.rs:555-563` (`init()` joins) |
+| `mnexis.toml` | profile settings / access scope | `src/cli/profile.rs:63-65`, `src/cli/commands.rs:555-588` (`init()`), `src/config/mod.rs:1-9` |
 
 `mnexis config show` also reads `mnexis.toml` from the data directory
 (`src/cli/config_cmd.rs:13-15`), confirming there is no separate config

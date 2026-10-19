@@ -79,4 +79,16 @@ RUN_STATUS=$?
 assert_status "'/' MNEXIS_DATA_DIR is refused" 1
 assert_contains "'/' refusal explains the guard" "refusing to purge"
 
+# 4b. MNEXIS_DATA_DIR equal to $HOME is refused (third documented unsafe target).
+RUN_OUT="$(MNEXIS_DATA_DIR="$HOME" bash "$INSTALL_SH" uninstall --purge 2>&1 </dev/null)"
+RUN_STATUS=$?
+assert_status "HOME MNEXIS_DATA_DIR is refused" 1
+assert_contains "HOME refusal names the home directory" "home directory"
+
+# 4c. Trailing-slash variant: $HOME/ collapses to $HOME after the strip.
+RUN_OUT="$(MNEXIS_DATA_DIR="${HOME}/" bash "$INSTALL_SH" uninstall --purge 2>&1 </dev/null)"
+RUN_STATUS=$?
+assert_status "HOME/ MNEXIS_DATA_DIR is refused" 1
+assert_contains "trailing-slash HOME refusal names the home directory" "home directory"
+
 finish
