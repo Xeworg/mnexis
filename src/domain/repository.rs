@@ -36,6 +36,16 @@ pub trait MemoryRepository {
         offset: usize,
     ) -> Result<Vec<Memory>, MnexisError>;
 
+    /// List soft-deleted memories with the same namespace pagination as
+    /// `list`. `list` intentionally hides deleted records; the TUI's
+    /// deleted view and its restore flow need to browse them.
+    fn list_deleted(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Memory>, MnexisError>;
+
     /// Update a memory with optimistic revision check.
     fn update(&mut self, mem: &Memory, expected_revision: i32) -> Result<Memory, MnexisError>;
 
@@ -65,6 +75,10 @@ pub trait MemoryRepository {
 
     /// Persist a memory link (MVP: supersedes only).
     fn save_link(&mut self, l: &MemoryLink) -> Result<i64, MnexisError>;
+
+    /// Get every link row that touches `uuid`, either as the older or the
+    /// newer side of a supersession. Ordered by insertion (`id`).
+    fn links_for(&self, uuid: &str) -> Result<Vec<MemoryLink>, MnexisError>;
 
     /// Get the tags attached to a memory.
     fn tags_for(&self, uuid: &str) -> Result<Vec<MemoryTag>, MnexisError>;

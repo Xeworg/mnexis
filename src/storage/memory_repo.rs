@@ -68,6 +68,51 @@ impl SqliteMemoryRepository {
             assertion_basis,
         })
     }
+
+    /// Shared implementation of [`MemoryRepository::list`] and
+    /// [`MemoryRepository::list_deleted`]; `deleted` selects which side of
+    /// the soft-delete flag the query returns.
+    fn list_filtered(
+        &self,
+        namespace: Option<&str>,
+        state: Option<&str>,
+        limit: usize,
+        offset: usize,
+        deleted: bool,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        let namespace = namespace.map(String::from);
+        let state = state.map(String::from);
+        let mut sql = format!(
+            "SELECT {SELECT_COLUMNS} FROM memories WHERE deleted = {}",
+            if deleted { 1 } else { 0 }
+        );
+        let mut param_refs: Vec<&dyn ToSql> = Vec::new();
+        if let Some(ns) = namespace.as_ref() {
+            sql.push_str(" AND namespace = ?");
+            param_refs.push(ns as &dyn ToSql);
+        }
+        if let Some(st) = state.as_ref() {
+            sql.push_str(" AND state = ?");
+            param_refs.push(st as &dyn ToSql);
+        }
+        sql.push_str(" ORDER BY id LIMIT ? OFFSET ?");
+        let limit_val: i64 = limit as i64;
+        let offset_val: i64 = offset as i64;
+        param_refs.push(&limit_val);
+        param_refs.push(&offset_val);
+
+        let mut stmt = self.conn.prepare(&sql).map_err(sql_to_domain)?;
+        let rows = stmt
+            .query_map(&param_refs[..], |row| {
+                Self::row_to_memory(row).map_err(to_sql_err)
+            })
+            .map_err(sql_to_domain)?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row.map_err(sql_to_domain)?);
+        }
+        Ok(result)
+    }
 }
 
 fn sql_to_domain(e: rusqlite::Error) -> MnexisError {
@@ -180,35 +225,16 @@ impl MemoryRepository for SqliteMemoryRepository {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Memory>, MnexisError> {
-        let namespace = namespace.map(String::from);
-        let state = state.map(String::from);
-        let mut sql = format!("SELECT {SELECT_COLUMNS} FROM memories WHERE deleted = 0");
-        let mut param_refs: Vec<&dyn ToSql> = Vec::new();
-        if let Some(ns) = namespace.as_ref() {
-            sql.push_str(" AND namespace = ?");
-            param_refs.push(ns as &dyn ToSql);
-        }
-        if let Some(st) = state.as_ref() {
-            sql.push_str(" AND state = ?");
-            param_refs.push(st as &dyn ToSql);
-        }
-        sql.push_str(" ORDER BY id LIMIT ? OFFSET ?");
-        let limit_val: i64 = limit as i64;
-        let offset_val: i64 = offset as i64;
-        param_refs.push(&limit_val);
-        param_refs.push(&offset_val);
+        self.list_filtered(namespace, state, limit, offset, false)
+    }
 
-        let mut stmt = self.conn.prepare(&sql).map_err(sql_to_domain)?;
-        let rows = stmt
-            .query_map(&param_refs[..], |row| {
-                Self::row_to_memory(row).map_err(to_sql_err)
-            })
-            .map_err(sql_to_domain)?;
-        let mut result = Vec::new();
-        for row in rows {
-            result.push(row.map_err(sql_to_domain)?);
-        }
-        Ok(result)
+    fn list_deleted(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        self.list_filtered(namespace, None, limit, offset, true)
     }
 
     fn update(&mut self, mem: &Memory, expected_revision: i32) -> Result<Memory, MnexisError> {
@@ -412,6 +438,28 @@ impl MemoryRepository for SqliteMemoryRepository {
             .map_err(sql_to_domain)
     }
 
+    fn links_for(&self, uuid: &str) -> Result<Vec<MemoryLink>, MnexisError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, older_uuid, newer_uuid, link_type, created_at \
+                 FROM memory_links WHERE older_uuid = ?1 OR newer_uuid = ?1 ORDER BY id",
+            )
+            .map_err(sql_to_domain)?;
+        let rows = stmt
+            .query_map([uuid], |row| {
+                Ok(MemoryLink {
+                    id: row.get(0)?,
+                    older_uuid: row.get(1)?,
+                    newer_uuid: row.get(2)?,
+                    link_type: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(sql_to_domain)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(sql_to_domain)
+    }
+
     fn tags_for(&self, uuid: &str) -> Result<Vec<MemoryTag>, MnexisError> {
         let mut stmt = self
             .conn
@@ -487,7 +535,18 @@ impl MemoryRepository for SqliteMemoryRepository {
                 )
                 .map_err(sql_to_domain)?;
             if rows == 0 {
-                return Err(MnexisError::revision_conflict(expected_revision as i64));
+                // Report the revision actually on disk, exactly like the
+                // non-transactional `update` above: the caller's expected
+                // revision is what failed the check, not the current one.
+                let current: Option<i64> = tx
+                    .query_row(
+                        "SELECT revision FROM memories WHERE uuid = ?1",
+                        [updated.uuid.as_str()],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(sql_to_domain)?;
+                return Err(MnexisError::revision_conflict(current.unwrap_or(0)));
             }
             tx.execute(
                 "INSERT INTO memory_history (memory_uuid, revision, memory_type, content, state, \
@@ -762,6 +821,46 @@ mod tests {
                 current_revision: 1
             }
         ));
+    }
+
+    #[test]
+    fn update_with_history_reports_the_actual_current_revision() {
+        let (mut repo, _dir) = make_repo(1);
+        let m0 = repo.get_by_uuid("uuid-0").unwrap().unwrap();
+        // Move the row to revision 2 through the non-transactional path.
+        let mut m1 = m0.clone();
+        m1.content = "rev 2".to_string();
+        m1.updated_at = "2026-01-02T00:00:00Z".to_string();
+        let updated = repo.update(&m1, 1).unwrap();
+        assert_eq!(updated.revision, 2);
+
+        // A stale writer still expecting revision 1 hits the transactional
+        // path. The conflict must name the revision actually on disk (2),
+        // not the writer's expectation (1).
+        let mut stale = updated.clone();
+        stale.content = "stale write".to_string();
+        let history = MemoryHistory {
+            id: None,
+            memory_uuid: "uuid-0".to_string(),
+            revision: 2,
+            memory_type: stale.memory_type.clone(),
+            content: stale.content.clone(),
+            state: stale.state,
+            valid_from: None,
+            valid_until: None,
+            assertion_basis: stale.assertion_basis.clone(),
+            changed_by: "user".to_string(),
+            change_reason: "stale".to_string(),
+            changed_at: "2026-01-03T00:00:00Z".to_string(),
+        };
+        let err = repo
+            .update_with_history_and_tags(&stale, 1, &history, None)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            MnexisError::RevisionConflict { current_revision: 2 },
+            "the conflict must carry the row's actual revision"
+        );
     }
 
     #[test]

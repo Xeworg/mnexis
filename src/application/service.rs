@@ -8,7 +8,7 @@ use std::hash::{Hash, Hasher};
 use crate::application::io::{ConflictPolicy, ImportDecision, LocalIndex};
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::{IdempotencyKey, IdempotencyRecord};
-use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState};
+use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
 use crate::domain::repository::MemoryRepository;
 use crate::domain::scope::{AccessScope, Operation};
 use crate::retrieval::SearchHit;
@@ -217,6 +217,18 @@ impl<R: MemoryRepository> MemoryService<R> {
         Ok(mem)
     }
 
+    // --- get (including soft-deleted) ---
+    /// Load a memory even when it is soft-deleted. `get` intentionally hides
+    /// deleted records; the TUI's deleted view needs the row to render it and
+    /// to read the revision a restore acts on.
+    pub fn get_including_deleted(&self, uuid: &str) -> Result<Option<Memory>, MnexisError> {
+        let mem = self.repo.get_by_uuid_including_deleted(uuid)?;
+        if let Some(ref m) = mem {
+            self.scope.authorize_read(&m.namespace)?;
+        }
+        Ok(mem)
+    }
+
     // --- list ---
     pub fn list(&self, filter: ListFilter) -> Result<Vec<Memory>, MnexisError> {
         if let Some(ref ns) = filter.namespace {
@@ -229,6 +241,22 @@ impl<R: MemoryRepository> MemoryService<R> {
             filter.limit,
             filter.offset,
         )
+    }
+
+    // --- list deleted ---
+    /// List soft-deleted memories for a namespace. `list` hides them by
+    /// design, so this is the read that makes `restore` reachable from the
+    /// TUI's deleted view. Same scope check as `list`.
+    pub fn list_deleted(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        if let Some(ns) = namespace {
+            self.scope.authorize_read(ns)?;
+        }
+        self.repo.list_deleted(namespace, limit, offset)
     }
 
     // --- update ---
@@ -308,6 +336,34 @@ impl<R: MemoryRepository> MemoryService<R> {
             .ok_or_else(|| MnexisError::not_found(format!("memory:{}", uuid)))?;
         self.scope.authorize_read(&mem.namespace)?;
         self.repo.history(uuid)
+    }
+
+    // --- links (supersession chain) ---
+    /// Every supersession link touching `uuid`, either as the older or the
+    /// newer side. Soft-deleted records are readable (the TUI chain of a
+    /// deleted memory); scope authorization matches `history`.
+    ///
+    /// A link row carries `older_uuid`/`newer_uuid`/`link_type`/`created_at`.
+    /// The `reason` a supersede was requested is a request argument only:
+    /// `memory_links` has no reason column, so it is not persisted and is not
+    /// fabricated here.
+    pub fn links(&self, uuid: &str) -> Result<Vec<MemoryLink>, MnexisError> {
+        let mem = self
+            .get_including_deleted(uuid)?
+            .ok_or_else(|| MnexisError::not_found(format!("memory:{}", uuid)))?;
+        self.scope.authorize_read(&mem.namespace)?;
+        self.repo.links_for(uuid)
+    }
+
+    // --- tags ---
+    /// The tags attached to a memory, ordered by tag. Delegates to the
+    /// repository's `tags_for`, like every other read here.
+    pub fn tags(&self, uuid: &str) -> Result<Vec<MemoryTag>, MnexisError> {
+        let mem = self
+            .get_including_deleted(uuid)?
+            .ok_or_else(|| MnexisError::not_found(format!("memory:{}", uuid)))?;
+        self.scope.authorize_read(&mem.namespace)?;
+        self.repo.tags_for(uuid)
     }
 
     // --- supersede ---

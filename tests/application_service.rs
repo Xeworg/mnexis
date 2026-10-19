@@ -1,7 +1,7 @@
 //! Integration tests for the application service end-to-end against SQLite.
 
 use mnexis_core::application::{
-    ListFilter, MemoryService, SaveRequest, ServiceConfig, UpdateRequest,
+    ListFilter, MemoryService, SaveRequest, ServiceConfig, SupersedeRequest, UpdateRequest,
 };
 use mnexis_core::domain::error::MnexisError;
 use mnexis_core::domain::idempotency::IdempotencyKey;
@@ -149,7 +149,114 @@ fn update_with_wrong_revision_returns_conflict() {
         now: "2026-01-02T00:00:00Z".into(),
     };
     let err = svc.update(req).unwrap_err();
-    assert!(matches!(err, MnexisError::RevisionConflict { .. }));
+    assert_eq!(
+        err,
+        MnexisError::RevisionConflict {
+            current_revision: 1
+        },
+        "the conflict carries the revision actually stored, not the expected one"
+    );
+    // The rejected write changed nothing.
+    let stored = svc.get("uuid-1").unwrap().unwrap();
+    assert_eq!(stored.revision, 1);
+    assert_eq!(stored.content, "original");
+}
+
+#[test]
+fn links_read_returns_the_supersession_chain_for_both_sides() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req("uuid-1", "older")).unwrap();
+    svc.save(save_req("uuid-2", "newer")).unwrap();
+    svc.supersede(SupersedeRequest {
+        older_uuid: "uuid-1".into(),
+        newer_uuid: "uuid-2".into(),
+        expected_old_revision: 1,
+        expected_new_revision: 1,
+        reason: "replaced".into(),
+        now: "2026-01-02T00:00:00Z".into(),
+    })
+    .unwrap();
+
+    let chain = svc.links("uuid-1").unwrap();
+    assert_eq!(chain.len(), 1, "one supersession link: {chain:?}");
+    assert!(chain[0].id.is_some(), "the persisted row id is exposed");
+    assert_eq!(chain[0].older_uuid, "uuid-1");
+    assert_eq!(chain[0].newer_uuid, "uuid-2");
+    assert_eq!(chain[0].link_type, "supersedes");
+    assert!(!chain[0].created_at.is_empty());
+    // The newer side sees the same chain.
+    assert_eq!(svc.links("uuid-2").unwrap(), chain);
+    // A memory outside the chain has none.
+    svc.save(save_req("uuid-3", "unrelated")).unwrap();
+    assert!(svc.links("uuid-3").unwrap().is_empty());
+    // A missing memory is a stable not-found, like every other read.
+    assert!(matches!(
+        svc.links("missing").unwrap_err(),
+        MnexisError::NotFound { .. }
+    ));
+}
+
+#[test]
+fn tags_read_returns_persisted_tags_in_order() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req("uuid-1", "tagged")).unwrap();
+    let tags: Vec<String> = svc
+        .tags("uuid-1")
+        .unwrap()
+        .into_iter()
+        .map(|t| t.tag)
+        .collect();
+    assert_eq!(tags, vec!["tag1", "tag2"]);
+    assert!(matches!(
+        svc.tags("missing").unwrap_err(),
+        MnexisError::NotFound { .. }
+    ));
+}
+
+#[test]
+fn deleted_reads_expose_soft_deleted_records_for_restore() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req("uuid-1", "to delete")).unwrap();
+    svc.save(save_req("uuid-2", "kept")).unwrap();
+    svc.soft_delete("uuid-1", 1).unwrap();
+
+    assert!(svc.get("uuid-1").unwrap().is_none(), "get stays deleted-blind");
+    let deleted = svc
+        .get_including_deleted("uuid-1")
+        .unwrap()
+        .expect("the deleted row is visible to the deleted view");
+    assert!(deleted.deleted);
+    assert_eq!(deleted.revision, 2, "soft_delete bumped the revision");
+    assert!(svc.get_including_deleted("missing").unwrap().is_none());
+
+    let listed = svc.list_deleted(Some("proyecto-a"), 100, 0).unwrap();
+    assert_eq!(listed.len(), 1, "only the deleted row: {listed:?}");
+    assert_eq!(listed[0].uuid, "uuid-1");
+    assert_eq!(svc.list_deleted(Some("proyecto-a"), 100, 0).unwrap().len(), 1);
+    assert!(
+        matches!(
+            svc.list_deleted(Some("other-ns"), 100, 0).unwrap_err(),
+            MnexisError::NotFound { .. }
+        ),
+        "the deleted view keeps the same scope check as list (not-found disclosure)"
+    );
+    let live = svc
+        .list(ListFilter {
+            namespace: Some("proyecto-a".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(live.len(), 1, "list still hides the deleted row");
+
+    // Tags and links stay readable while deleted: the deleted view renders
+    // them before the user restores.
+    assert_eq!(svc.tags("uuid-1").unwrap().len(), 2);
+    assert!(svc.links("uuid-1").unwrap().is_empty());
+
+    // Restore puts the row back in the live list.
+    svc.restore("uuid-1").unwrap();
+    assert!(svc.get("uuid-1").unwrap().is_some());
+    assert!(svc.list_deleted(Some("proyecto-a"), 100, 0).unwrap().is_empty());
 }
 
 #[test]
