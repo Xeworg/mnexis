@@ -104,7 +104,7 @@ pub fn render_error(err: &MnexisError, mode: OutputMode) -> String {
 
 const SNIPPET: usize = 60;
 
-fn snippet(content: &str) -> String {
+pub(crate) fn snippet(content: &str) -> String {
     let mut s: String = content.chars().take(SNIPPET).collect();
     if content.chars().count() > SNIPPET {
         s.push('…');

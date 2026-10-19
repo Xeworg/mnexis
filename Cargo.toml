@@ -20,6 +20,8 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "=4.5.53", features = ["derive"] }
+crossterm = "=0.29.0"
+ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm"] }
 rmcp = { version = "=3.3.0", features = ["macros", "server", "transport-io"] }
 # Keep the proc-macro API aligned with rmcp; its upstream semver range accepts newer macros.
 rmcp-macros = "=3.3.0"

@@ -18,6 +18,7 @@ pub mod domain;
 pub mod mcp;
 pub mod retrieval;
 pub mod storage;
+pub mod tui;
 
 pub use crate::application::ApplicationService;
 pub use crate::domain::error::MnexisError;

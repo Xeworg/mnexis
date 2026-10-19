@@ -210,6 +210,9 @@ pub enum Command {
         repair: bool,
     },
 
+    /// Browse and search memories in a terminal UI
+    Tui,
+
     /// Show effective configuration and scope
     Config {
         #[command(subcommand)]
@@ -470,6 +473,16 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Config {
             action: ConfigAction::Show,
         } => config_cmd::show(data_dir),
+        Command::Tui => {
+            // The TUI owns the terminal lifecycle; profile resolution and
+            // error reporting stay identical to every other command.
+            let profile = Profile::open(data_dir)?;
+            crate::tui::run(&profile)?;
+            Ok(CommandOutcome::new(
+                serde_json::json!({ "closed": true }),
+                "tui closed",
+            ))
+        }
     }
 }
 
@@ -496,6 +509,7 @@ mod tests {
             "restore",
             "purge",
             "reindex",
+            "tui",
             "config",
         ] {
             assert!(help.contains(word), "help must mention {word}: {help}");
