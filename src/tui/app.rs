@@ -4,13 +4,13 @@
 //! through [`App::apply`] against a real profile while `ui.rs` only reads
 //! it. No SQL and no domain rules live here — every read and write goes
 //! through [`MemoryService`], exactly as the CLI commands do. Write forms
-//! live in [`crate::tui::form`]; this module owns which form is open and
-//! what happens to the read surface after a write lands.
+//! live in [`crate::tui::form`]; this module owns which form (or dialog) is
+//! open and what happens to the read surface after a write lands.
 
 use crate::application::{ListFilter, MemoryService};
 use crate::cli::commands::MAX_LIMIT;
 use crate::cli::output::snippet;
-use crate::domain::memory::{Memory, MemoryHistory};
+use crate::domain::memory::{Memory, MemoryHistory, MemoryLink};
 use crate::retrieval::SearchHit;
 use crate::storage::memory_repo::SqliteMemoryRepository;
 use crate::tui::form::{Form, WriteOutcome};
@@ -44,12 +44,17 @@ impl Pane {
     }
 }
 
-/// Normal navigation, the `/` search input, or an open write form.
+/// Normal navigation, the `/` search input, an open write form, the
+/// newer-memory picker, or a y/N confirmation dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Search,
     Form,
+    /// Choosing the newer memory for an open supersede (`s`).
+    Pick,
+    /// A y/N dialog is open; nothing is written until it is answered.
+    Confirm,
 }
 
 /// One user intent, decoupled from the crossterm key map in `mod.rs`.
@@ -78,6 +83,34 @@ pub enum Action {
     Submit,
     /// Re-read the update target after a revision conflict (`Ctrl-R`).
     ReloadForm,
+    /// Open the supersede picker for the selected memory (`s`).
+    StartSupersede,
+    /// Open the soft-delete confirmation (`d`).
+    StartDelete,
+    /// Open the restore confirmation (`r`).
+    StartRestore,
+    /// Toggle between the live list and the soft-deleted view (`x`).
+    ToggleDeleted,
+    /// Answer a confirmation dialog with `y`.
+    ConfirmYes,
+    /// Answer a confirmation dialog with `n` (or Esc).
+    ConfirmNo,
+}
+
+/// The action a confirmation dialog will perform when answered `y`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmKind {
+    /// Soft-delete `uuid`, which was at `revision` when the dialog opened.
+    Delete { uuid: String, revision: i32 },
+    /// Restore the soft-deleted `uuid`.
+    Restore { uuid: String },
+}
+
+/// An open y/N dialog. `prompt` is rendered verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingConfirm {
+    pub prompt: String,
+    pub action: ConfirmKind,
 }
 
 /// One row of the memories pane (list row or FTS5 hit).
@@ -127,6 +160,17 @@ pub struct App {
     pub pane: Pane,
     pub detail: Option<Memory>,
     pub history: Vec<MemoryHistory>,
+    /// Supersession links touching the selected memory, from the service's
+    /// links read (T4): older/newer uuids, link type, and timestamps.
+    pub chain: Vec<MemoryLink>,
+    /// Tags of the selected memory, from the service's tags read.
+    pub tags: Vec<String>,
+    /// Whether the memories pane is showing soft-deleted rows (`x`).
+    pub deleted_view: bool,
+    /// Older memory chosen for the open supersede picker (`Mode::Pick`).
+    pub supersede_older: Option<String>,
+    /// The open confirmation dialog, if any (`Mode::Confirm`).
+    pub confirm: Option<PendingConfirm>,
     pub status: Option<String>,
     /// The open save/update form, if any. Only set while `mode` is `Form`.
     pub form: Option<Form>,
@@ -147,6 +191,11 @@ impl App {
             pane: Pane::Namespaces,
             detail: None,
             history: Vec::new(),
+            chain: Vec::new(),
+            tags: Vec::new(),
+            deleted_view: false,
+            supersede_older: None,
+            confirm: None,
             status: None,
             form: None,
             quit: false,
@@ -167,19 +216,27 @@ impl App {
         self.quit
     }
 
-    /// Reload the memories pane for the selected namespace: an FTS5
-    /// search when a query is set (the same service call as `mnexis
-    /// search`), a plain list otherwise. Service errors land in `status`.
+    /// Reload the memories pane for the selected namespace: the soft-deleted
+    /// rows in the deleted view (`x`), an FTS5 search when a query is set
+    /// (the same service call as `mnexis search`), a plain list otherwise.
+    /// Service errors land in `status`.
     pub fn reload_memories(&mut self, service: &AppService) {
         self.status = None;
         self.mem_index = 0;
         self.detail = None;
         self.history.clear();
+        self.chain.clear();
+        self.tags.clear();
         let Some(ns) = self.selected_namespace().map(str::to_string) else {
             self.memories.clear();
             return;
         };
-        let loaded = if self.query.is_empty() {
+        let loaded = if self.deleted_view {
+            service
+                .list_deleted(Some(&ns), MAX_LIMIT, 0)
+                .map(|list| list.iter().map(MemoryRow::from).collect::<Vec<_>>())
+                .map_err(|e| format!("deleted list failed: {e}"))
+        } else if self.query.is_empty() {
             service
                 .list(ListFilter {
                     namespace: Some(ns),
@@ -205,18 +262,38 @@ impl App {
         self.refresh_detail(service);
     }
 
-    /// Fetch the selected memory plus its revision history.
+    /// Fetch the selected memory plus its revision history, supersession
+    /// chain, and tags. The deleted view reads the row through
+    /// `get_including_deleted` (plain `get` hides it) and skips history,
+    /// which the service only exposes for live rows.
     pub fn refresh_detail(&mut self, service: &AppService) {
         self.detail = None;
         self.history.clear();
+        self.chain.clear();
+        self.tags.clear();
         let Some(uuid) = self.memories.get(self.mem_index).map(|r| r.uuid.clone()) else {
             return;
         };
-        match service.get(&uuid) {
+        let loaded = if self.deleted_view {
+            service.get_including_deleted(&uuid)
+        } else {
+            service.get(&uuid)
+        };
+        match loaded {
             Ok(Some(mem)) => {
-                match service.history(&uuid) {
-                    Ok(history) => self.history = history,
-                    Err(e) => self.status = Some(format!("history failed: {e}")),
+                if !self.deleted_view {
+                    match service.history(&uuid) {
+                        Ok(history) => self.history = history,
+                        Err(e) => self.status = Some(format!("history failed: {e}")),
+                    }
+                }
+                match service.links(&uuid) {
+                    Ok(links) => self.chain = links,
+                    Err(e) => self.status = Some(format!("links failed: {e}")),
+                }
+                match service.tags(&uuid) {
+                    Ok(tags) => self.tags = tags.into_iter().map(|t| t.tag).collect(),
+                    Err(e) => self.status = Some(format!("tags failed: {e}")),
                 }
                 self.detail = Some(mem);
             }
@@ -226,11 +303,14 @@ impl App {
     }
 
     /// Apply one intent. Write actions need `&mut` access to the service;
-    /// every other action only reads through it.
+    /// every other action only reads through it. The modal modes (form,
+    /// picker, confirmation) own their keys.
     pub fn apply(&mut self, action: Action, service: &mut AppService) {
-        if self.mode == Mode::Form {
-            self.apply_form(action, service);
-            return;
+        match self.mode {
+            Mode::Form => return self.apply_form(action, service),
+            Mode::Confirm => return self.apply_confirm(action, service),
+            Mode::Pick => return self.apply_pick(action, service),
+            _ => {}
         }
         match action {
             Action::Quit => self.quit = true,
@@ -246,6 +326,10 @@ impl App {
             }
             Action::StartSave => self.start_save(),
             Action::StartUpdate => self.start_update(service),
+            Action::StartSupersede => self.start_supersede(service),
+            Action::StartDelete => self.start_delete(service),
+            Action::StartRestore => self.start_restore(),
+            Action::ToggleDeleted => self.toggle_deleted(service),
             Action::Input(c) if self.mode == Mode::Search => {
                 self.query.push(c);
                 self.reload_memories(service);
@@ -261,7 +345,9 @@ impl App {
             | Action::NextField
             | Action::PrevField
             | Action::Submit
-            | Action::ReloadForm => {}
+            | Action::ReloadForm
+            | Action::ConfirmYes
+            | Action::ConfirmNo => {}
         }
     }
 
@@ -302,6 +388,74 @@ impl App {
         }
     }
 
+    /// While picking the newer memory, the list owns j/k (rows), Enter
+    /// (choose), and Esc (cancel). Every other key is inert so nothing can
+    /// be written by accident.
+    fn apply_pick(&mut self, action: Action, service: &mut AppService) {
+        match action {
+            Action::Quit => self.quit = true,
+            Action::NextRow => self.move_selection(1, service),
+            Action::PrevRow => self.move_selection(-1, service),
+            Action::Confirm => self.pick_newer(service),
+            Action::Escape => {
+                self.supersede_older = None;
+                self.mode = Mode::Normal;
+                self.status = Some("cancelled, nothing written".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    /// While a confirmation dialog is open, only `y` writes; `n`/Enter/Esc
+    /// cancel and leave the database exactly as it was.
+    fn apply_confirm(&mut self, action: Action, service: &mut AppService) {
+        match action {
+            Action::Quit => self.quit = true,
+            Action::ConfirmYes => self.confirm_yes(service),
+            Action::ConfirmNo | Action::Escape => {
+                self.confirm = None;
+                self.mode = Mode::Normal;
+                self.status = Some("cancelled, nothing written".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    fn confirm_yes(&mut self, service: &mut AppService) {
+        let Some(pending) = self.confirm.take() else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        self.mode = Mode::Normal;
+        match pending.action {
+            ConfirmKind::Delete { uuid, revision } => match service.soft_delete(&uuid, revision) {
+                Ok(()) => {
+                    self.reload_memories(service);
+                    self.status = Some(format!(
+                        "soft-deleted {uuid} (was revision {revision}) — x lists deleted rows, \
+                         r restores"
+                    ));
+                }
+                Err(e) => self.status = Some(format!("delete failed: {e}")),
+            },
+            ConfirmKind::Restore { uuid } => match service.restore(&uuid) {
+                Ok(()) => {
+                    // The restored row is live again: leave the deleted view
+                    // and select it in the list.
+                    self.deleted_view = false;
+                    self.reload_memories(service);
+                    if let Some(pos) = self.memories.iter().position(|row| row.uuid == uuid) {
+                        self.mem_index = pos;
+                        self.refresh_detail(service);
+                    }
+                    self.pane = Pane::Memories;
+                    self.status = Some(format!("restored {uuid}"));
+                }
+                Err(e) => self.status = Some(format!("restore failed: {e}")),
+            },
+        }
+    }
+
     /// `n`: open the save form prefilled with the current namespace.
     fn start_save(&mut self) {
         match self.selected_namespace().map(str::to_string) {
@@ -315,21 +469,155 @@ impl App {
     }
 
     /// `e`: open the update form for the selected memory, loaded fresh so
-    /// the prefilled `expected_revision` is the revision on disk.
+    /// the prefilled `expected_revision` is the revision on disk and the
+    /// prefilled tags are the ones currently attached.
     fn start_update(&mut self, service: &AppService) {
         let Some(uuid) = self.memories.get(self.mem_index).map(|r| r.uuid.clone()) else {
             self.status = Some("select a memory to update".to_string());
             return;
         };
         match service.get(&uuid) {
+            Ok(Some(memory)) => match service.tags(&uuid) {
+                Ok(tags) => {
+                    let tags: Vec<String> = tags.into_iter().map(|t| t.tag).collect();
+                    self.form = Some(Form::update(&memory, &tags));
+                    self.mode = Mode::Form;
+                    self.status = None;
+                }
+                Err(e) => self.status = Some(format!("tags failed: {e}")),
+            },
+            Ok(None) => self.status = Some(format!("memory {uuid} not found")),
+            Err(e) => self.status = Some(format!("detail failed: {e}")),
+        }
+    }
+
+    /// `s`: start the supersede flow with the selected memory as the older
+    /// side, then pick the newer memory in the list (`Mode::Pick`).
+    fn start_supersede(&mut self, service: &AppService) {
+        if self.deleted_view {
+            self.status = Some(
+                "supersede needs an active memory (x leaves the deleted view)".to_string(),
+            );
+            return;
+        }
+        let Some(uuid) = self.memories.get(self.mem_index).map(|r| r.uuid.clone()) else {
+            self.status = Some("select the older memory to supersede".to_string());
+            return;
+        };
+        match service.get(&uuid) {
+            Ok(Some(older)) => {
+                self.supersede_older = Some(older.uuid);
+                self.pane = Pane::Memories;
+                self.mode = Mode::Pick;
+                self.status = Some(
+                    "pick the newer memory with j/k, Enter chooses it, Esc cancels".to_string(),
+                );
+            }
+            Ok(None) => self.status = Some(format!("memory {uuid} not found")),
+            Err(e) => self.status = Some(format!("detail failed: {e}")),
+        }
+    }
+
+    /// Enter in the picker: load both rows so the form's expected revisions
+    /// are the ones on disk now, then open the supersede form.
+    fn pick_newer(&mut self, service: &mut AppService) {
+        let Some(older_uuid) = self.supersede_older.clone() else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        let Some(newer_uuid) = self.memories.get(self.mem_index).map(|r| r.uuid.clone()) else {
+            self.status = Some("pick a newer memory first".to_string());
+            return;
+        };
+        let older = match service.get(&older_uuid) {
+            Ok(Some(memory)) => memory,
+            Ok(None) => {
+                self.status = Some(format!("memory {older_uuid} not found"));
+                return;
+            }
+            Err(e) => {
+                self.status = Some(format!("detail failed: {e}"));
+                return;
+            }
+        };
+        let newer = match service.get(&newer_uuid) {
+            Ok(Some(memory)) => memory,
+            Ok(None) => {
+                self.status = Some(format!("memory {newer_uuid} not found"));
+                return;
+            }
+            Err(e) => {
+                self.status = Some(format!("detail failed: {e}"));
+                return;
+            }
+        };
+        self.form = Some(Form::supersede(&older, &newer));
+        self.supersede_older = None;
+        self.mode = Mode::Form;
+        self.status = None;
+    }
+
+    /// `d`: ask before soft-deleting the selected memory. The revision is
+    /// read fresh here so the optimistic check uses the row on disk.
+    fn start_delete(&mut self, service: &AppService) {
+        if self.deleted_view {
+            self.status = Some("already in the deleted view".to_string());
+            return;
+        }
+        let Some(uuid) = self.memories.get(self.mem_index).map(|r| r.uuid.clone()) else {
+            self.status = Some("select a memory to delete".to_string());
+            return;
+        };
+        match service.get(&uuid) {
             Ok(Some(memory)) => {
-                self.form = Some(Form::update(&memory));
-                self.mode = Mode::Form;
+                self.confirm = Some(PendingConfirm {
+                    prompt: format!(
+                        "soft-delete {} (revision {})? [y/N]",
+                        memory.uuid, memory.revision
+                    ),
+                    action: ConfirmKind::Delete {
+                        uuid: memory.uuid,
+                        revision: memory.revision,
+                    },
+                });
+                self.mode = Mode::Confirm;
                 self.status = None;
             }
             Ok(None) => self.status = Some(format!("memory {uuid} not found")),
             Err(e) => self.status = Some(format!("detail failed: {e}")),
         }
+    }
+
+    /// `r`: ask before restoring the memory selected in the deleted view.
+    fn start_restore(&mut self) {
+        if !self.deleted_view {
+            self.status = Some("press x for the deleted view, then r to restore".to_string());
+            return;
+        }
+        let Some(uuid) = self.memories.get(self.mem_index).map(|r| r.uuid.clone()) else {
+            self.status = Some("select a deleted memory to restore".to_string());
+            return;
+        };
+        self.confirm = Some(PendingConfirm {
+            prompt: format!("restore {uuid}? [y/N]"),
+            action: ConfirmKind::Restore { uuid },
+        });
+        self.mode = Mode::Confirm;
+        self.status = None;
+    }
+
+    /// `x`: browse the soft-deleted memories of the selected namespace. This
+    /// is the read that makes `restore` reachable for rows deleted outside
+    /// this session.
+    fn toggle_deleted(&mut self, service: &AppService) {
+        self.deleted_view = !self.deleted_view;
+        self.query.clear();
+        self.reload_memories(service);
+        self.status = Some(if self.deleted_view {
+            "deleted view: r restores the selected memory, x goes back".to_string()
+        } else {
+            "live view".to_string()
+        });
     }
 
     /// Enter: newline in a multi-line field, next field otherwise, and

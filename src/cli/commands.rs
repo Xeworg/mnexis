@@ -174,6 +174,28 @@ pub fn update(
 
 // --- supersede ---
 
+/// Build the supersede request shared by `mnexis supersede` and the TUI
+/// supersede form, so both front ends send the same request shape. The
+/// caller resolves the expected revisions: the CLI from
+/// `--expected-*-revision` (falling back to the rows it reads) and the TUI
+/// from the memories it loaded. `now` always comes from this builder.
+pub fn supersede_request(
+    older_uuid: String,
+    newer_uuid: String,
+    expected_old_revision: i32,
+    expected_new_revision: i32,
+    reason: String,
+) -> SupersedeRequest {
+    SupersedeRequest {
+        older_uuid,
+        newer_uuid,
+        expected_old_revision,
+        expected_new_revision,
+        reason,
+        now: crate::cli::profile::now_rfc3339(),
+    }
+}
+
 pub fn supersede(
     profile: &mut Profile,
     older: String,
@@ -182,7 +204,6 @@ pub fn supersede(
     expected_new_revision: Option<i32>,
     reason: String,
 ) -> Result<CommandOutcome, MnexisError> {
-    let now = crate::cli::profile::now_rfc3339();
     // Omitted revision flags resolve to the current revisions; the service
     // still enforces the optimistic check against them.
     let old_rev = match expected_old_revision {
@@ -193,14 +214,7 @@ pub fn supersede(
         Some(r) => r,
         None => current_revision(profile, &newer)?,
     };
-    let req = SupersedeRequest {
-        older_uuid: older.clone(),
-        newer_uuid: newer.clone(),
-        expected_old_revision: old_rev,
-        expected_new_revision: new_rev,
-        reason,
-        now,
-    };
+    let req = supersede_request(older.clone(), newer.clone(), old_rev, new_rev, reason);
     profile.service_mut().supersede(req)?;
     Ok(CommandOutcome::new(
         json!({ "older": older, "newer": newer, "ok": true }),

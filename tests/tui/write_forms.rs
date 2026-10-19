@@ -21,6 +21,10 @@ fn profile(scope: &str) -> (tempfile::TempDir, Profile) {
 }
 
 fn save(profile: &mut Profile, ns: &str, content: &str) -> String {
+    save_tagged(profile, ns, content, Vec::new())
+}
+
+fn save_tagged(profile: &mut Profile, ns: &str, content: &str, tags: Vec<String>) -> String {
     let uuid = uuid_v4().unwrap();
     profile
         .service_mut()
@@ -35,7 +39,7 @@ fn save(profile: &mut Profile, ns: &str, content: &str) -> String {
             assertion_basis: "user_stated".to_string(),
             valid_from: None,
             valid_until: None,
-            tags: Vec::new(),
+            tags,
             idempotency_key: None,
             state: MemoryState::Active,
             now: now_rfc3339(),
@@ -279,6 +283,10 @@ fn update_form_surfaces_revision_conflict_with_the_revision_involved() {
     let error = form_error(&app);
     assert!(error.contains("revision conflict"), "error: {error:?}");
     assert!(
+        error.contains("current is 2"),
+        "the conflict reports the revision actually stored: {error:?}"
+    );
+    assert!(
         error.contains("loaded revision is 2"),
         "the conflict names the revision on disk: {error:?}"
     );
@@ -308,6 +316,62 @@ fn update_form_surfaces_revision_conflict_with_the_revision_involved() {
     let stored = p.service_ref().get(&uuid).unwrap().unwrap();
     assert_eq!(stored.revision, 3);
     assert_eq!(stored.content, "first");
+}
+
+#[test]
+fn update_form_prefills_tags_and_blank_still_keeps_the_current_set() {
+    let (_guard, mut p) = profile(SCOPE);
+    let uuid = save_tagged(
+        &mut p,
+        "ns-a",
+        "tagged memory",
+        vec!["alpha".to_string(), "beta".to_string()],
+    );
+    let mut app = App::new(p.service_ref());
+    app.apply(Action::StartUpdate, p.service_mut());
+    assert_eq!(
+        app.form.as_ref().unwrap().value("tags"),
+        "alpha, beta",
+        "the update form prefills the tags read through the service"
+    );
+
+    // Blanking the field means "keep current", exactly like `update` without
+    // `--tags`: the service drops an empty tag list.
+    next_fields(&mut app, &mut p, 2); // content -> state -> tags
+    assert_eq!(app.form.as_ref().unwrap().focused().unwrap().label, "tags");
+    backspace(&mut app, &mut p, "alpha, beta".len());
+    assert_eq!(app.form.as_ref().unwrap().value("tags"), "");
+    next_fields(&mut app, &mut p, 2); // tags -> basis -> reason
+    type_text(&mut app, &mut p, "keep the tags");
+    app.apply(Action::Submit, p.service_mut());
+
+    assert_eq!(app.mode, Mode::Normal);
+    let tags: Vec<String> = p
+        .service_ref()
+        .tags(&uuid)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.tag)
+        .collect();
+    assert_eq!(tags, vec!["alpha", "beta"]);
+
+    // A non-blank tag list replaces the set.
+    app.apply(Action::StartUpdate, p.service_mut());
+    assert_eq!(app.form.as_ref().unwrap().value("tags"), "alpha, beta");
+    next_fields(&mut app, &mut p, 2);
+    backspace(&mut app, &mut p, "alpha, beta".len());
+    type_text(&mut app, &mut p, "gamma");
+    next_fields(&mut app, &mut p, 2);
+    type_text(&mut app, &mut p, "retag");
+    app.apply(Action::Submit, p.service_mut());
+    let tags: Vec<String> = p
+        .service_ref()
+        .tags(&uuid)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.tag)
+        .collect();
+    assert_eq!(tags, vec!["gamma"]);
 }
 
 #[test]

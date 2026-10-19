@@ -74,6 +74,18 @@ fn map_key(key: KeyEvent, mode: Mode) -> Action {
             _ => {}
         }
     }
+    // The y/N dialog owns its answers before any text-key mapping: `y` and
+    // `n` must never reach a pane or a field while it is open. Enter is the
+    // safe default answer (`n`), matching the `[y/N]` prompt.
+    if mode == Mode::Confirm {
+        return match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => Action::ConfirmYes,
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Enter | KeyCode::Esc => {
+                Action::ConfirmNo
+            }
+            _ => Action::Noop,
+        };
+    }
     match key.code {
         KeyCode::Char(c) if matches!(mode, Mode::Search | Mode::Form) => Action::Input(c),
         KeyCode::Char('q') if mode == Mode::Normal => Action::Quit,
@@ -81,12 +93,17 @@ fn map_key(key: KeyEvent, mode: Mode) -> Action {
         KeyCode::Char('/') if mode == Mode::Normal => Action::StartSearch,
         KeyCode::Char('n') if mode == Mode::Normal => Action::StartSave,
         KeyCode::Char('e') if mode == Mode::Normal => Action::StartUpdate,
+        KeyCode::Char('s') if mode == Mode::Normal => Action::StartSupersede,
+        KeyCode::Char('d') if mode == Mode::Normal => Action::StartDelete,
+        KeyCode::Char('r') if mode == Mode::Normal => Action::StartRestore,
+        KeyCode::Char('x') if mode == Mode::Normal => Action::ToggleDeleted,
         KeyCode::Down if mode == Mode::Form => Action::NextField,
         KeyCode::Up if mode == Mode::Form => Action::PrevField,
         KeyCode::Char('j') | KeyCode::Down => Action::NextRow,
         KeyCode::Char('k') | KeyCode::Up => Action::PrevRow,
         KeyCode::Tab if mode == Mode::Form => Action::NextField,
         KeyCode::BackTab if mode == Mode::Form => Action::PrevField,
+        KeyCode::Tab | KeyCode::BackTab if mode == Mode::Pick => Action::Noop,
         KeyCode::Tab => Action::NextPane,
         KeyCode::BackTab => Action::PrevPane,
         KeyCode::Enter => Action::Confirm,
@@ -189,6 +206,22 @@ mod tests {
             map_key(key(KeyCode::Char('e')), Mode::Normal),
             Action::StartUpdate
         );
+        assert_eq!(
+            map_key(key(KeyCode::Char('s')), Mode::Normal),
+            Action::StartSupersede
+        );
+        assert_eq!(
+            map_key(key(KeyCode::Char('d')), Mode::Normal),
+            Action::StartDelete
+        );
+        assert_eq!(
+            map_key(key(KeyCode::Char('r')), Mode::Normal),
+            Action::StartRestore
+        );
+        assert_eq!(
+            map_key(key(KeyCode::Char('x')), Mode::Normal),
+            Action::ToggleDeleted
+        );
         // Form mode owns the text keys: `n`, `e`, and `q` are input.
         for c in ['n', 'e', 'q'] {
             assert_eq!(
@@ -222,6 +255,48 @@ mod tests {
                 Mode::Form
             ),
             Action::ReloadForm
+        );
+    }
+
+    #[test]
+    fn keymap_covers_the_picker_and_the_confirmation_dialog() {
+        // Picker: the list keeps j/k/Enter/Esc, pane keys are inert.
+        assert_eq!(map_key(key(KeyCode::Char('j')), Mode::Pick), Action::NextRow);
+        assert_eq!(map_key(key(KeyCode::Down), Mode::Pick), Action::NextRow);
+        assert_eq!(map_key(key(KeyCode::Char('k')), Mode::Pick), Action::PrevRow);
+        assert_eq!(map_key(key(KeyCode::Up), Mode::Pick), Action::PrevRow);
+        assert_eq!(map_key(key(KeyCode::Enter), Mode::Pick), Action::Confirm);
+        assert_eq!(map_key(key(KeyCode::Esc), Mode::Pick), Action::Escape);
+        assert_eq!(map_key(key(KeyCode::Tab), Mode::Pick), Action::Noop);
+        assert_eq!(map_key(key(KeyCode::Char('y')), Mode::Pick), Action::Noop);
+
+        // Confirmation: `y` answers yes, everything that is not an answer
+        // is inert (never a pane action or a text edit).
+        assert_eq!(
+            map_key(key(KeyCode::Char('y')), Mode::Confirm),
+            Action::ConfirmYes
+        );
+        assert_eq!(
+            map_key(key(KeyCode::Char('Y')), Mode::Confirm),
+            Action::ConfirmYes
+        );
+        for code in [
+            KeyCode::Char('n'),
+            KeyCode::Char('N'),
+            KeyCode::Enter,
+            KeyCode::Esc,
+        ] {
+            assert_eq!(map_key(key(code), Mode::Confirm), Action::ConfirmNo);
+        }
+        for code in [KeyCode::Tab, KeyCode::Char('j'), KeyCode::Char('q')] {
+            assert_eq!(map_key(key(code), Mode::Confirm), Action::Noop);
+        }
+        assert_eq!(
+            map_key(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                Mode::Confirm
+            ),
+            Action::Quit
         );
     }
 }

@@ -1,10 +1,10 @@
-//! Terminal-free write forms for `mnexis tui` (S2 save + update).
+//! Terminal-free write forms for `mnexis tui` (S2 save, update, supersede).
 //!
 //! A form is a list of labelled text fields plus a submit action. It never
 //! touches SQL or the terminal: submission builds the request with the same
-//! builder the CLI uses (`cli::commands::{save_request, update_request}`)
-//! and calls the same [`MemoryService`] method, so the TUI cannot drift from
-//! `mnexis save` / `mnexis update`.
+//! builder the CLI uses (`cli::commands::{save_request, update_request,
+//! supersede_request}`) and calls the same [`MemoryService`] method, so the
+//! TUI cannot drift from `mnexis save` / `mnexis update` / `mnexis supersede`.
 //!
 //! The client-side checks only mirror the service's required-field and size
 //! limits for fast feedback (limits come from [`ServiceConfig`], never from
@@ -33,6 +33,7 @@ pub struct WriteOutcome {
 pub enum FormKind {
     Save,
     Update,
+    Supersede,
 }
 
 /// One editable row. `multiline` fields take Enter as a newline; every
@@ -91,6 +92,10 @@ pub struct Form {
     pub reload_offered: bool,
     /// Update target (uuid); `None` for the save form.
     pub target: Option<String>,
+    /// Namespace of the write target when the service result cannot supply
+    /// it: `supersede` returns `()`, so the form carries the older row's
+    /// namespace for the list refresh after the write.
+    pub namespace: Option<String>,
 }
 
 /// A submission failure. Client-side rejections carry a form message;
@@ -100,6 +105,9 @@ pub struct Form {
 enum SubmitFailure {
     Invalid(String),
     Service(MnexisError),
+    /// An optimistic precondition the form mirrors itself because the
+    /// service does not check that side yet (supersede's newer revision).
+    Conflict { current: i64, expected: String },
 }
 
 impl Form {
@@ -122,21 +130,22 @@ impl Form {
             error: None,
             reload_offered: false,
             target: None,
+            namespace: None,
         }
     }
 
     /// The update form for a loaded memory: content, state, and basis are
     /// prefilled, and `expected_revision` comes from the revision we read.
-    /// Tags start blank because the service has no tag read method; blank
-    /// means "keep the current tags" (same as `mnexis update` without
-    /// `--tags`).
-    pub fn update(memory: &Memory) -> Self {
+    /// Tags are read through the service by the caller and prefilled here;
+    /// blank still means "keep the current tags" (the service drops an empty
+    /// tag list, exactly like `mnexis update` without `--tags`).
+    pub fn update(memory: &Memory, tags: &[String]) -> Self {
         Self {
             kind: FormKind::Update,
             fields: vec![
                 Field::multi("content", memory.content.clone()),
                 Field::single("state", memory.state.as_str()).hint("blank keeps current"),
-                Field::single("tags", "").hint("blank keeps current"),
+                Field::single("tags", tags.join(", ")).hint("blank keeps current"),
                 Field::single("basis", memory.assertion_basis.clone()),
                 Field::single("reason", "").hint("required"),
                 Field::single("expected_revision", memory.revision.to_string()),
@@ -145,6 +154,28 @@ impl Form {
             error: None,
             reload_offered: false,
             target: Some(memory.uuid.clone()),
+            namespace: Some(memory.namespace.clone()),
+        }
+    }
+
+    /// The supersede form, opened after the newer memory has been picked.
+    /// Both revisions are prefilled from the rows loaded at pick time and
+    /// the uuid pair is editable, so the request is always explicit.
+    pub fn supersede(older: &Memory, newer: &Memory) -> Self {
+        Self {
+            kind: FormKind::Supersede,
+            fields: vec![
+                Field::single("older_uuid", older.uuid.clone()).hint("required"),
+                Field::single("newer_uuid", newer.uuid.clone()).hint("required"),
+                Field::single("reason", "").hint("required"),
+                Field::single("expected_old_revision", older.revision.to_string()),
+                Field::single("expected_new_revision", newer.revision.to_string()),
+            ],
+            index: 0,
+            error: None,
+            reload_offered: false,
+            target: Some(older.uuid.clone()),
+            namespace: Some(older.namespace.clone()),
         }
     }
 
@@ -152,9 +183,13 @@ impl Form {
         match (self.kind, self.target.as_deref()) {
             (FormKind::Save, _) => "Save memory (n)".to_string(),
             (FormKind::Update, Some(uuid)) => {
-                format!("Update memory {} (e)", uuid.chars().take(8).collect::<String>())
+                format!("Update memory {} (e)", short_uuid(uuid))
             }
             (FormKind::Update, None) => "Update memory (e)".to_string(),
+            (FormKind::Supersede, Some(uuid)) => {
+                format!("Supersede {} (s)", short_uuid(uuid))
+            }
+            (FormKind::Supersede, None) => "Supersede memory (s)".to_string(),
         }
     }
 
@@ -217,19 +252,40 @@ impl Form {
         }
     }
 
-    /// Re-read the update target and refresh the revision this form will
-    /// submit against, keeping every edit the user already typed.
+    /// Re-read the update target (or both supersede sides) and refresh the
+    /// revisions this form will submit against, keeping every edit the user
+    /// already typed.
     pub fn reload(&mut self, service: &AppService) -> Result<Memory, String> {
         let Some(uuid) = self.target.clone() else {
             return Err("no memory to reload".to_string());
         };
-        match service.get(&uuid) {
-            Ok(Some(memory)) => {
-                self.set_value("expected_revision", memory.revision.to_string());
+        match self.kind {
+            FormKind::Supersede => {
+                let older = self.read_for_revision(service, &uuid)?;
+                let newer_uuid = self.value("newer_uuid").to_string();
+                let newer = self.read_for_revision(service, &newer_uuid)?;
+                self.set_value("expected_old_revision", older.revision.to_string());
+                self.set_value("expected_new_revision", newer.revision.to_string());
                 self.error = None;
                 self.reload_offered = false;
-                Ok(memory)
+                Ok(older)
             }
+            _ => match service.get(&uuid) {
+                Ok(Some(memory)) => {
+                    self.set_value("expected_revision", memory.revision.to_string());
+                    self.error = None;
+                    self.reload_offered = false;
+                    Ok(memory)
+                }
+                Ok(None) => Err(format!("memory {uuid} not found")),
+                Err(e) => Err(format!("reload failed: {e}")),
+            },
+        }
+    }
+
+    fn read_for_revision(&self, service: &AppService, uuid: &str) -> Result<Memory, String> {
+        match service.get(uuid) {
+            Ok(Some(memory)) => Ok(memory),
             Ok(None) => Err(format!("memory {uuid} not found")),
             Err(e) => Err(format!("reload failed: {e}")),
         }
@@ -243,32 +299,50 @@ impl Form {
         let result = match self.kind {
             FormKind::Save => self.submit_save(service),
             FormKind::Update => self.submit_update(service),
+            FormKind::Supersede => self.submit_supersede(service),
         };
         match result {
             Ok(outcome) => Ok(outcome),
             Err(failure) => {
                 match &failure {
                     SubmitFailure::Invalid(message) => self.error = Some(message.clone()),
+                    SubmitFailure::Conflict { current, expected } => {
+                        self.reload_offered = true;
+                        self.error = Some(format!(
+                            "revision conflict: current is {current} — {expected}, \
+                             Ctrl-R reloads the memory"
+                        ));
+                    }
                     SubmitFailure::Service(err @ MnexisError::RevisionConflict { .. }) => {
                         self.reload_offered = true;
                         // The service error is rendered verbatim, plus the
                         // revision the form submitted with and the revision
                         // currently on disk, so the conflict is actionable.
-                        let expected = self.value("expected_revision").to_string();
-                        self.error = Some(match self.loaded_revision(service) {
-                            Some(rev) => format!(
-                                "{err} — expected revision {expected}, loaded revision is \
-                                 {rev}; Ctrl-R reloads the memory"
-                            ),
-                            None => format!(
-                                "{err} — expected revision {expected}; Ctrl-R reloads the memory"
-                            ),
-                        });
+                        self.error = Some(self.conflict_message(err, service));
                     }
                     SubmitFailure::Service(e) => self.error = Some(e.to_string()),
                 }
                 Err(())
             }
+        }
+    }
+
+    /// A conflict is only actionable when it names what the form expected
+    /// and what is on disk. The update form owns one revision, the supersede
+    /// form two; both get the same message shape.
+    fn conflict_message(&self, err: &MnexisError, service: &AppService) -> String {
+        let expected = match self.kind {
+            FormKind::Supersede => format!(
+                "expected older revision {}",
+                self.value("expected_old_revision")
+            ),
+            _ => format!("expected revision {}", self.value("expected_revision")),
+        };
+        match self.loaded_revision(service) {
+            Some(rev) => {
+                format!("{err} — {expected}, loaded revision is {rev}; Ctrl-R reloads the memory")
+            }
+            None => format!("{err} — {expected}; Ctrl-R reloads the memory"),
         }
     }
 
@@ -319,12 +393,7 @@ impl Form {
         let content = self.required("content")?;
         check_bytes("content", &content, service.config().max_content_bytes)?;
         let reason = self.required("reason")?;
-        let expected_revision = self
-            .required("expected_revision")?
-            .parse::<i32>()
-            .map_err(|_| {
-                SubmitFailure::Invalid("expected_revision must be a whole number".to_string())
-            })?;
+        let expected_revision = self.revision("expected_revision")?;
         let tags = self.value("tags").to_string();
         check_tags(&tags, service.config().max_tags)?;
         // State transitions are domain rules: only the parse is mirrored
@@ -357,6 +426,70 @@ impl Form {
         })
     }
 
+    fn submit_supersede(
+        &mut self,
+        service: &mut AppService,
+    ) -> Result<WriteOutcome, SubmitFailure> {
+        let older_uuid = self.required("older_uuid")?;
+        let newer_uuid = self.required("newer_uuid")?;
+        if older_uuid == newer_uuid {
+            // A self-link is the smallest cycle; the service owns the
+            // general cycle rule, but this one is cheap to name here.
+            return Err(SubmitFailure::Invalid(
+                "older_uuid and newer_uuid must differ".to_string(),
+            ));
+        }
+        let reason = self.required("reason")?;
+        let expected_old_revision = self.revision("expected_old_revision")?;
+        let expected_new_revision = self.revision("expected_new_revision")?;
+        self.check_supersede_revisions(service)?;
+        let req = commands::supersede_request(
+            older_uuid.clone(),
+            newer_uuid.clone(),
+            expected_old_revision,
+            expected_new_revision,
+            reason,
+        );
+        service.supersede(req).map_err(SubmitFailure::Service)?;
+        Ok(WriteOutcome {
+            message: format!("superseded {older_uuid} with {newer_uuid}"),
+            uuid: older_uuid,
+            namespace: self.namespace.clone().unwrap_or_default(),
+        })
+    }
+
+    /// Re-read both sides of the supersession and fail when either drifted
+    /// from the revision the form carries. `MemoryService::supersede`
+    /// enforces the older side itself; the newer side is mirrored here
+    /// until the service checks it too (`docs/contracts/v1/README.md`: the
+    /// supersede is "revision-checked on both records"), so a stale picker
+    /// can never link silently.
+    fn check_supersede_revisions(&self, service: &AppService) -> Result<(), SubmitFailure> {
+        for (uuid_label, revision_label, side) in [
+            ("older_uuid", "expected_old_revision", "older"),
+            ("newer_uuid", "expected_new_revision", "newer"),
+        ] {
+            let uuid = self.value(uuid_label).to_string();
+            let expected = self.revision(revision_label)?;
+            match service.get(&uuid) {
+                Ok(Some(memory)) if memory.revision != expected => {
+                    return Err(SubmitFailure::Conflict {
+                        current: memory.revision as i64,
+                        expected: format!("expected {side} revision {expected}"),
+                    });
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    return Err(SubmitFailure::Service(MnexisError::not_found(
+                        format!("memory:{uuid}"),
+                    )))
+                }
+                Err(e) => return Err(SubmitFailure::Service(e)),
+            }
+        }
+        Ok(())
+    }
+
     fn required(&self, label: &str) -> Result<String, SubmitFailure> {
         let value = self.value(label).to_string();
         if value.trim().is_empty() {
@@ -364,6 +497,16 @@ impl Form {
         }
         Ok(value)
     }
+
+    fn revision(&self, label: &str) -> Result<i32, SubmitFailure> {
+        self.required(label)?.parse::<i32>().map_err(|_| {
+            SubmitFailure::Invalid(format!("{label} must be a whole number"))
+        })
+    }
+}
+
+fn short_uuid(uuid: &str) -> String {
+    uuid.chars().take(8).collect()
 }
 
 fn blank_to_none(value: &str) -> Option<String> {
