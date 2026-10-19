@@ -2,8 +2,10 @@
 //!
 //! The model is deliberately terminal-free: integration tests drive it
 //! through [`App::apply`] against a real profile while `ui.rs` only reads
-//! it. No SQL and no domain rules live here — every read goes through
-//! [`MemoryService`], exactly as the CLI commands do.
+//! it. No SQL and no domain rules live here — every read and write goes
+//! through [`MemoryService`], exactly as the CLI commands do. Write forms
+//! live in [`crate::tui::form`]; this module owns which form is open and
+//! what happens to the read surface after a write lands.
 
 use crate::application::{ListFilter, MemoryService};
 use crate::cli::commands::MAX_LIMIT;
@@ -11,6 +13,7 @@ use crate::cli::output::snippet;
 use crate::domain::memory::{Memory, MemoryHistory};
 use crate::retrieval::SearchHit;
 use crate::storage::memory_repo::SqliteMemoryRepository;
+use crate::tui::form::{Form, WriteOutcome};
 
 /// The concrete service the profile hands to the TUI.
 pub type AppService = MemoryService<SqliteMemoryRepository>;
@@ -41,11 +44,12 @@ impl Pane {
     }
 }
 
-/// Normal navigation or the `/` search input.
+/// Normal navigation, the `/` search input, or an open write form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Search,
+    Form,
 }
 
 /// One user intent, decoupled from the crossterm key map in `mod.rs`.
@@ -62,6 +66,18 @@ pub enum Action {
     Escape,
     Quit,
     Noop,
+    /// Open the save form (`n`).
+    StartSave,
+    /// Open the update form for the selected memory (`e`).
+    StartUpdate,
+    /// Move the focused form field down (`Tab` / `Down`).
+    NextField,
+    /// Move the focused form field up (`Shift-Tab` / `Up`).
+    PrevField,
+    /// Submit the open form from any field (`Ctrl-S`).
+    Submit,
+    /// Re-read the update target after a revision conflict (`Ctrl-R`).
+    ReloadForm,
 }
 
 /// One row of the memories pane (list row or FTS5 hit).
@@ -112,6 +128,8 @@ pub struct App {
     pub detail: Option<Memory>,
     pub history: Vec<MemoryHistory>,
     pub status: Option<String>,
+    /// The open save/update form, if any. Only set while `mode` is `Form`.
+    pub form: Option<Form>,
     quit: bool,
 }
 
@@ -130,6 +148,7 @@ impl App {
             detail: None,
             history: Vec::new(),
             status: None,
+            form: None,
             quit: false,
         };
         if app.namespaces.is_empty() {
@@ -206,8 +225,13 @@ impl App {
         }
     }
 
-    /// Apply one intent. Read-only: every service call takes `&self`.
-    pub fn apply(&mut self, action: Action, service: &AppService) {
+    /// Apply one intent. Write actions need `&mut` access to the service;
+    /// every other action only reads through it.
+    pub fn apply(&mut self, action: Action, service: &mut AppService) {
+        if self.mode == Mode::Form {
+            self.apply_form(action, service);
+            return;
+        }
         match action {
             Action::Quit => self.quit = true,
             Action::Noop => {}
@@ -220,6 +244,8 @@ impl App {
                 self.pane = Pane::Memories;
                 self.status = None;
             }
+            Action::StartSave => self.start_save(),
+            Action::StartUpdate => self.start_update(service),
             Action::Input(c) if self.mode == Mode::Search => {
                 self.query.push(c);
                 self.reload_memories(service);
@@ -230,8 +256,169 @@ impl App {
             }
             Action::Confirm => self.confirm(service),
             Action::Escape => self.escape(service),
-            Action::Input(_) | Action::Backspace => {}
+            Action::Input(_)
+            | Action::Backspace
+            | Action::NextField
+            | Action::PrevField
+            | Action::Submit
+            | Action::ReloadForm => {}
         }
+    }
+
+    /// While a form is open it owns the keys: text edits go to the focused
+    /// field and pane navigation is inert.
+    fn apply_form(&mut self, action: Action, service: &mut AppService) {
+        match action {
+            Action::Quit => self.quit = true,
+            Action::Escape => {
+                self.form = None;
+                self.mode = Mode::Normal;
+                self.status = Some("cancelled, nothing written".to_string());
+            }
+            Action::Input(c) => {
+                if let Some(form) = self.form.as_mut() {
+                    form.insert(c);
+                }
+            }
+            Action::Backspace => {
+                if let Some(form) = self.form.as_mut() {
+                    form.backspace();
+                }
+            }
+            Action::NextField => {
+                if let Some(form) = self.form.as_mut() {
+                    form.next();
+                }
+            }
+            Action::PrevField => {
+                if let Some(form) = self.form.as_mut() {
+                    form.prev();
+                }
+            }
+            Action::Confirm => self.form_confirm(service),
+            Action::Submit => self.form_submit(service),
+            Action::ReloadForm => self.form_reload(service),
+            _ => {}
+        }
+    }
+
+    /// `n`: open the save form prefilled with the current namespace.
+    fn start_save(&mut self) {
+        match self.selected_namespace().map(str::to_string) {
+            Some(namespace) => {
+                self.form = Some(Form::save(&namespace));
+                self.mode = Mode::Form;
+                self.status = None;
+            }
+            None => self.status = Some("no namespace to save into".to_string()),
+        }
+    }
+
+    /// `e`: open the update form for the selected memory, loaded fresh so
+    /// the prefilled `expected_revision` is the revision on disk.
+    fn start_update(&mut self, service: &AppService) {
+        let Some(uuid) = self.memories.get(self.mem_index).map(|r| r.uuid.clone()) else {
+            self.status = Some("select a memory to update".to_string());
+            return;
+        };
+        match service.get(&uuid) {
+            Ok(Some(memory)) => {
+                self.form = Some(Form::update(&memory));
+                self.mode = Mode::Form;
+                self.status = None;
+            }
+            Ok(None) => self.status = Some(format!("memory {uuid} not found")),
+            Err(e) => self.status = Some(format!("detail failed: {e}")),
+        }
+    }
+
+    /// Enter: newline in a multi-line field, next field otherwise, and
+    /// submit from the last field.
+    fn form_confirm(&mut self, service: &mut AppService) {
+        let Some(form) = self.form.as_ref() else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        if form.enter_edits() {
+            if let Some(form) = self.form.as_mut() {
+                form.newline();
+            }
+            return;
+        }
+        if form.is_last() {
+            self.form_submit(service);
+            return;
+        }
+        if let Some(form) = self.form.as_mut() {
+            form.next();
+        }
+    }
+
+    fn form_submit(&mut self, service: &mut AppService) {
+        let Some(mut form) = self.form.take() else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        match form.submit(service) {
+            Ok(outcome) => {
+                self.mode = Mode::Normal;
+                self.after_write(service, outcome);
+            }
+            Err(()) => {
+                // Keep every entered value; the error also lands in the
+                // status line so it is visible when the form is narrow.
+                self.status = form.error.clone();
+                self.form = Some(form);
+            }
+        }
+    }
+
+    fn form_reload(&mut self, service: &mut AppService) {
+        // Only the update form targets a memory; Ctrl-R in the save form is
+        // a no-op rather than an error.
+        let has_target = self.form.as_ref().and_then(|f| f.target.as_ref()).is_some();
+        if !has_target {
+            return;
+        }
+        let result = match self.form.as_mut() {
+            Some(form) => form.reload(service),
+            None => return,
+        };
+        match result {
+            Ok(memory) => {
+                self.status = Some(format!(
+                    "reloaded {} at revision {}",
+                    memory.uuid, memory.revision
+                ));
+                self.refresh_detail(service);
+            }
+            Err(message) => {
+                self.status = Some(message.clone());
+                if let Some(form) = self.form.as_mut() {
+                    form.error = Some(message);
+                }
+            }
+        }
+    }
+
+    /// After a successful write: drop the search filter, focus the written
+    /// namespace and row, and reload list + detail from the service.
+    fn after_write(&mut self, service: &mut AppService, outcome: WriteOutcome) {
+        self.query.clear();
+        if let Some(pos) = self
+            .namespaces
+            .iter()
+            .position(|ns| ns == &outcome.namespace)
+        {
+            self.ns_index = pos;
+        }
+        self.reload_memories(service);
+        if let Some(pos) = self.memories.iter().position(|row| row.uuid == outcome.uuid) {
+            self.mem_index = pos;
+            self.refresh_detail(service);
+        }
+        self.pane = Pane::Memories;
+        self.status = Some(outcome.message);
     }
 
     fn move_selection(&mut self, delta: isize, service: &AppService) {

@@ -58,10 +58,10 @@ fn loads_scope_namespaces_and_lists_selected_namespace_memories() {
         Some(&alpha[..])
     );
 
-    app.apply(Action::NextRow, p.service_ref());
+    app.apply(Action::NextRow, p.service_mut());
     assert_eq!(app.selected_namespace(), Some("ns-b"));
     assert_eq!(app.memories.len(), 2);
-    app.apply(Action::NextRow, p.service_ref());
+    app.apply(Action::NextRow, p.service_mut());
     assert_eq!(app.selected_namespace(), Some("ns-b"), "clamped at the end");
 }
 
@@ -72,18 +72,18 @@ fn tab_and_shift_tab_cycle_panes_and_enter_descends() {
     let mut app = App::new(p.service_ref());
 
     assert_eq!(app.pane, Pane::Namespaces);
-    app.apply(Action::Confirm, p.service_ref());
+    app.apply(Action::Confirm, p.service_mut());
     assert_eq!(app.pane, Pane::Memories, "Enter descends from namespaces");
-    app.apply(Action::Confirm, p.service_ref());
+    app.apply(Action::Confirm, p.service_mut());
     assert_eq!(app.pane, Pane::Detail, "Enter descends from memories");
-    app.apply(Action::PrevPane, p.service_ref());
+    app.apply(Action::PrevPane, p.service_mut());
     assert_eq!(app.pane, Pane::Memories);
-    app.apply(Action::PrevPane, p.service_ref());
-    app.apply(Action::PrevPane, p.service_ref());
+    app.apply(Action::PrevPane, p.service_mut());
+    app.apply(Action::PrevPane, p.service_mut());
     assert_eq!(app.pane, Pane::Detail, "Shift-Tab wraps backwards");
-    app.apply(Action::NextPane, p.service_ref());
+    app.apply(Action::NextPane, p.service_mut());
     assert_eq!(app.pane, Pane::Namespaces, "Tab wraps forwards");
-    app.apply(Action::Quit, p.service_ref());
+    app.apply(Action::Quit, p.service_mut());
     assert!(app.should_quit());
 }
 
@@ -95,18 +95,18 @@ fn search_uses_service_fts5_and_escape_restores_the_list() {
 
     let mut app = App::new(p.service_ref());
     assert_eq!(app.memories.len(), 2);
-    app.apply(Action::StartSearch, p.service_ref());
+    app.apply(Action::StartSearch, p.service_mut());
     assert_eq!(app.mode, Mode::Search);
     for c in "petgraph".chars() {
-        app.apply(Action::Input(c), p.service_ref());
+        app.apply(Action::Input(c), p.service_mut());
     }
     assert_eq!(app.query, "petgraph");
     assert_eq!(app.memories.len(), 1);
     assert_eq!(app.memories[0].uuid, target);
 
-    app.apply(Action::Confirm, p.service_ref());
+    app.apply(Action::Confirm, p.service_mut());
     assert_eq!(app.mode, Mode::Normal, "Enter leaves the search input");
-    app.apply(Action::Escape, p.service_ref());
+    app.apply(Action::Escape, p.service_mut());
     assert_eq!(app.query, "");
     assert_eq!(app.memories.len(), 2, "Esc clears the search filter");
 }
@@ -130,8 +130,8 @@ fn enter_on_a_memory_shows_detail_with_revision_history() {
         .unwrap();
 
     let mut app = App::new(p.service_ref());
-    app.apply(Action::NextPane, p.service_ref());
-    app.apply(Action::Confirm, p.service_ref());
+    app.apply(Action::NextPane, p.service_mut());
+    app.apply(Action::Confirm, p.service_mut());
     let detail = app.detail.as_ref().expect("detail loaded");
     assert_eq!(detail.revision, 2);
     assert_eq!(detail.content, "second wording");
@@ -144,17 +144,17 @@ fn service_errors_surface_in_status_and_bad_input_never_panics() {
     let (_guard, mut p) = profile(SCOPE);
     save(&mut p, "ns-a", "alpha");
     let mut app = App::new(p.service_ref());
-    app.apply(Action::StartSearch, p.service_ref());
+    app.apply(Action::StartSearch, p.service_mut());
     for c in "(".chars() {
-        app.apply(Action::Input(c), p.service_ref());
+        app.apply(Action::Input(c), p.service_mut());
     }
     let status = app.status.clone().unwrap_or_default();
     assert!(status.contains("search failed"), "status: {status:?}");
     assert!(app.memories.is_empty());
-    app.apply(Action::Escape, p.service_ref());
+    app.apply(Action::Escape, p.service_mut());
 
     // A scope with no read namespaces must stay harmless under every key.
-    let (_empty_guard, empty) = profile(
+    let (_empty_guard, mut empty) = profile(
         "default_namespace = \"ns-a\"\nread_namespaces = []\nwrite_namespaces = []\nallow_global = false\nallowed_operations = [\"all\"]\n",
     );
     let mut app = App::new(empty.service_ref());
@@ -167,7 +167,7 @@ fn service_errors_surface_in_status_and_bad_input_never_panics() {
         Action::Escape,
         Action::Backspace,
     ] {
-        app.apply(action, empty.service_ref());
+        app.apply(action, empty.service_mut());
     }
     assert!(app.memories.is_empty());
     assert!(app.detail.is_none());

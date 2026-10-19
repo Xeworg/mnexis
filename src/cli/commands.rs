@@ -44,6 +44,43 @@ fn parse_tags(raw: Option<&String>) -> Vec<String> {
 
 // --- save ---
 
+/// Build the save request shared by `mnexis save` and the TUI save form,
+/// so both front ends keep the same defaults (`fact`, `user_stated`,
+/// `active`), the same tag parsing, and the same idempotency shape.
+/// Blank/absent optionals fall back to those defaults.
+#[allow(clippy::too_many_arguments)]
+pub fn save_request(
+    channel: &str,
+    namespace: String,
+    memory_type: Option<String>,
+    basis: Option<String>,
+    topic_key: Option<String>,
+    idempotency_key: Option<String>,
+    valid_from: Option<String>,
+    valid_until: Option<String>,
+    tags: Option<String>,
+    state: Option<String>,
+    content: String,
+) -> Result<SaveRequest, MnexisError> {
+    let state = parse_state(state.as_deref().unwrap_or("active"))?;
+    Ok(SaveRequest {
+        uuid: crate::cli::profile::uuid_v4()?,
+        topic_key: topic_key.unwrap_or_default(),
+        namespace,
+        memory_type: memory_type.unwrap_or_else(|| "fact".to_string()),
+        content,
+        actor: "user".to_string(),
+        channel: channel.to_string(),
+        assertion_basis: basis.unwrap_or_else(|| "user_stated".to_string()),
+        valid_from,
+        valid_until,
+        tags: parse_tags(tags.as_ref()),
+        idempotency_key: idempotency_key.map(IdempotencyKey::new),
+        state,
+        now: crate::cli::profile::now_rfc3339(),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn save(
     profile: &mut Profile,
@@ -58,25 +95,19 @@ pub fn save(
     state: Option<String>,
     content: String,
 ) -> Result<CommandOutcome, MnexisError> {
-    let state = parse_state(state.as_deref().unwrap_or("active"))?;
-    let uuid = crate::cli::profile::uuid_v4()?;
-    let now = crate::cli::profile::now_rfc3339();
-    let req = SaveRequest {
-        uuid: uuid.clone(),
-        topic_key: topic_key.unwrap_or_default(),
-        namespace: namespace.unwrap_or_else(|| profile.default_namespace()),
-        memory_type: memory_type.unwrap_or_else(|| "fact".to_string()),
-        content,
-        actor: "user".to_string(),
-        channel: "cli".to_string(),
-        assertion_basis: basis.unwrap_or_else(|| "user_stated".to_string()),
+    let req = save_request(
+        "cli",
+        namespace.unwrap_or_else(|| profile.default_namespace()),
+        memory_type,
+        basis,
+        topic_key,
+        idempotency_key,
         valid_from,
         valid_until,
-        tags: parse_tags(tags.as_ref()),
-        idempotency_key: idempotency_key.map(IdempotencyKey::new),
+        tags,
         state,
-        now,
-    };
+        content,
+    )?;
     let mem = profile.service_mut().save(req)?;
     let uuid_out = mem.uuid.clone();
     let row_id = mem.id.unwrap_or(0);
@@ -87,6 +118,31 @@ pub fn save(
 }
 
 // --- update ---
+
+/// Build the update request shared by `mnexis update` and the TUI update
+/// form. `None`/blank optional values mean "leave unchanged"; an empty
+/// tag list is dropped by the service, so it also means "keep tags".
+#[allow(clippy::too_many_arguments)]
+pub fn update_request(
+    uuid: String,
+    content: Option<String>,
+    state: Option<String>,
+    tags: Option<String>,
+    basis: Option<String>,
+    expected_revision: i32,
+    reason: String,
+) -> Result<UpdateRequest, MnexisError> {
+    Ok(UpdateRequest {
+        uuid,
+        expected_revision,
+        content,
+        state: state.as_deref().map(parse_state).transpose()?,
+        tags: Some(parse_tags(tags.as_ref())),
+        assertion_basis: basis,
+        reason,
+        now: crate::cli::profile::now_rfc3339(),
+    })
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn update(
@@ -99,17 +155,7 @@ pub fn update(
     expected_revision: i32,
     reason: String,
 ) -> Result<CommandOutcome, MnexisError> {
-    let now = crate::cli::profile::now_rfc3339();
-    let req = UpdateRequest {
-        uuid: uuid.clone(),
-        expected_revision,
-        content,
-        state: state.as_deref().map(parse_state).transpose()?,
-        tags: Some(parse_tags(tags.as_ref())),
-        assertion_basis: basis,
-        reason,
-        now,
-    };
+    let req = update_request(uuid, content, state, tags, basis, expected_revision, reason)?;
     let updated = profile.service_mut().update(req)?;
     Ok(CommandOutcome::new(
         json!({

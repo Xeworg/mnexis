@@ -1,4 +1,4 @@
-//! Terminal rendering for the `mnexis tui` read surface.
+//! Terminal rendering for `mnexis tui`.
 //!
 //! Rendering is a pure read of [`App`]; all state transitions live in
 //! `app.rs`, so tests exercise the model without a terminal.
@@ -7,10 +7,11 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::domain::memory::MemoryState;
 use crate::tui::app::{App, MemoryRow, Mode, Pane};
+use crate::tui::form::{Field, Form};
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let [main, status, footer] = Layout::vertical([
@@ -30,13 +31,20 @@ pub fn draw(frame: &mut Frame, app: &App) {
     render_memories(frame, app, memories);
     render_detail(frame, app, detail);
 
-    let status_text = if app.mode == Mode::Search {
-        format!("Search: {}▏", app.query)
-    } else {
-        app.status.as_deref().unwrap_or_default().to_string()
+    let status_text = match (app.form.as_ref(), app.mode) {
+        (Some(form), Mode::Form) => form.error.clone().unwrap_or_else(|| {
+            let label = form.focused().map(|f| f.label).unwrap_or_default();
+            format!("editing `{label}`")
+        }),
+        _ if app.mode == Mode::Search => format!("Search: {}▏", app.query),
+        _ => app.status.as_deref().unwrap_or_default().to_string(),
     };
     frame.render_widget(Paragraph::new(status_text), status);
-    frame.render_widget(Paragraph::new(footer_text()), footer);
+    frame.render_widget(Paragraph::new(footer_text(app.mode)), footer);
+
+    if let (Some(form), Mode::Form) = (app.form.as_ref(), app.mode) {
+        render_form(frame, form);
+    }
 }
 
 fn render_namespaces(frame: &mut Frame, app: &App, area: Rect) {
@@ -171,6 +179,101 @@ fn pane_block(title: String, focused: bool) -> Block<'static> {
     Block::bordered().title(title).border_style(border)
 }
 
-fn footer_text() -> &'static str {
-    "Tab/Shift-Tab panes  Up/k Down/j rows  / search  Enter select  Esc clear  q quit"
+fn footer_text(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Form => {
+            "Tab/Shift-Tab field  Enter next/submit  Esc cancel  Ctrl-S submit  Ctrl-R reload  Ctrl-C quit"
+        }
+        _ => "n save  e update  Tab panes  j/k rows  / search  Enter select  Esc clear  q quit",
+    }
+}
+
+/// Center a popup over the frame: `percent_x` of the width, `height` rows.
+fn popup_area(area: Rect, percent_x: u16, height: u16) -> Rect {
+    let width = area.width.saturating_mul(percent_x.min(100)) / 100;
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
+}
+
+/// The modal save/update form: one line per field with the focused field
+/// highlighted, then the error (or the focused field's hint).
+fn render_form(frame: &mut Frame, form: &Form) {
+    let area = popup_area(frame.area(), 80, (form.fields.len() + 3) as u16);
+    frame.render_widget(Clear, area);
+    let mut lines: Vec<Line> = form
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| field_line(field, index == form.index))
+        .collect();
+    lines.push(match (&form.error, form.reload_offered) {
+        (Some(error), _) => Line::from(Span::styled(error.clone(), Style::new().fg(Color::Red))),
+        (None, true) => Line::from(Span::styled(
+            "Ctrl-R reloads the memory",
+            Style::new().fg(Color::DarkGray),
+        )),
+        (None, false) => Line::from(Span::styled(
+            form.focused().map(|f| f.hint).unwrap_or_default(),
+            Style::new().fg(Color::DarkGray),
+        )),
+    });
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(pane_block(form.title(), true))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn field_line(field: &Field, focused: bool) -> Line<'static> {
+    // One row per field: content newlines render as `⏎`.
+    let shown = field.value.replace('\n', " ⏎ ");
+    let marker = if focused { "> " } else { "  " };
+    let caret = if focused { "▏" } else { "" };
+    let style = if focused {
+        Style::new().fg(Color::Yellow)
+    } else {
+        Style::new()
+    };
+    Line::from(Span::styled(
+        format!("{marker}{}: {shown}{caret}", field.label),
+        style,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn render(form: &Form, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| render_form(frame, form)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn form_renders_in_a_normal_and_in_a_tiny_terminal() {
+        let mut form = Form::save("ns-a");
+        form.insert('x');
+        let normal = render(&form, 80, 24);
+        assert!(normal.contains("content"), "fields render: {normal}");
+        assert!(normal.contains("Save memory"), "the title renders");
+
+        // A tiny terminal must clamp instead of panicking.
+        form.error = Some("revision conflict: expected revision 1".to_string());
+        let tiny = render(&form, 8, 3);
+        assert!(!tiny.is_empty());
+    }
 }

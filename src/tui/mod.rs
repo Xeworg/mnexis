@@ -1,11 +1,12 @@
-//! Interactive terminal UI behind `mnexis tui` (S2 read surface).
+//! Interactive terminal UI behind `mnexis tui` (S2).
 //!
-//! The read surface is a pure UI over [`MemoryService`]: `app.rs` holds
-//! the terminal-free model, `ui.rs` renders it, and this module owns the
-//! crossterm lifecycle (alternate screen + raw mode), including
-//! panic-safe terminal restoration.
+//! The UI is a pure layer over [`MemoryService`]: `app.rs` holds the
+//! terminal-free model, `form.rs` the write forms, `ui.rs` renders them, and
+//! this module owns the crossterm lifecycle (alternate screen + raw mode),
+//! including panic-safe terminal restoration.
 
 pub mod app;
+pub mod form;
 mod ui;
 
 use std::io::{self, Stdout};
@@ -28,7 +29,7 @@ type TuiTerminal = Terminal<CrosstermBackend<Stdout>>;
 /// Enter the TUI until `q`. The profile must already be open (the caller
 /// resolves it exactly like every other command, so `mnexis tui` without
 /// an initialised profile fails with the same `NOT_FOUND` error).
-pub fn run(profile: &Profile) -> Result<(), MnexisError> {
+pub fn run(profile: &mut Profile) -> Result<(), MnexisError> {
     let mut terminal = setup_terminal()?;
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -46,7 +47,7 @@ pub fn run(profile: &Profile) -> Result<(), MnexisError> {
 fn event_loop(
     terminal: &mut TuiTerminal,
     app: &mut App,
-    profile: &Profile,
+    profile: &mut Profile,
 ) -> Result<(), MnexisError> {
     loop {
         terminal
@@ -54,7 +55,7 @@ fn event_loop(
             .map_err(term_err)?;
         match event::read().map_err(term_err)? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                app.apply(map_key(key, app.mode), profile.service_ref());
+                app.apply(map_key(key, app.mode), profile.service_mut());
             }
             _ => {}
         }
@@ -65,16 +66,27 @@ fn event_loop(
 }
 
 fn map_key(key: KeyEvent, mode: Mode) -> Action {
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        return Action::Quit;
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('c') => return Action::Quit,
+            KeyCode::Char('s') if mode == Mode::Form => return Action::Submit,
+            KeyCode::Char('r') if mode == Mode::Form => return Action::ReloadForm,
+            _ => {}
+        }
     }
     match key.code {
+        KeyCode::Char(c) if matches!(mode, Mode::Search | Mode::Form) => Action::Input(c),
         KeyCode::Char('q') if mode == Mode::Normal => Action::Quit,
-        KeyCode::Char(c) if mode == Mode::Search => Action::Input(c),
-        KeyCode::Backspace if mode == Mode::Search => Action::Backspace,
+        KeyCode::Backspace if matches!(mode, Mode::Search | Mode::Form) => Action::Backspace,
         KeyCode::Char('/') if mode == Mode::Normal => Action::StartSearch,
+        KeyCode::Char('n') if mode == Mode::Normal => Action::StartSave,
+        KeyCode::Char('e') if mode == Mode::Normal => Action::StartUpdate,
+        KeyCode::Down if mode == Mode::Form => Action::NextField,
+        KeyCode::Up if mode == Mode::Form => Action::PrevField,
         KeyCode::Char('j') | KeyCode::Down => Action::NextRow,
         KeyCode::Char('k') | KeyCode::Up => Action::PrevRow,
+        KeyCode::Tab if mode == Mode::Form => Action::NextField,
+        KeyCode::BackTab if mode == Mode::Form => Action::PrevField,
         KeyCode::Tab => Action::NextPane,
         KeyCode::BackTab => Action::PrevPane,
         KeyCode::Enter => Action::Confirm,
@@ -164,6 +176,52 @@ mod tests {
         assert_eq!(
             map_key(key(KeyCode::Backspace), Mode::Search),
             Action::Backspace
+        );
+    }
+
+    #[test]
+    fn keymap_covers_write_forms() {
+        assert_eq!(
+            map_key(key(KeyCode::Char('n')), Mode::Normal),
+            Action::StartSave
+        );
+        assert_eq!(
+            map_key(key(KeyCode::Char('e')), Mode::Normal),
+            Action::StartUpdate
+        );
+        // Form mode owns the text keys: `n`, `e`, and `q` are input.
+        for c in ['n', 'e', 'q'] {
+            assert_eq!(
+                map_key(key(KeyCode::Char(c)), Mode::Form),
+                Action::Input(c)
+            );
+        }
+        assert_eq!(map_key(key(KeyCode::Tab), Mode::Form), Action::NextField);
+        assert_eq!(
+            map_key(key(KeyCode::BackTab), Mode::Form),
+            Action::PrevField
+        );
+        assert_eq!(map_key(key(KeyCode::Down), Mode::Form), Action::NextField);
+        assert_eq!(map_key(key(KeyCode::Up), Mode::Form), Action::PrevField);
+        assert_eq!(
+            map_key(key(KeyCode::Backspace), Mode::Form),
+            Action::Backspace
+        );
+        assert_eq!(map_key(key(KeyCode::Enter), Mode::Form), Action::Confirm);
+        assert_eq!(map_key(key(KeyCode::Esc), Mode::Form), Action::Escape);
+        assert_eq!(
+            map_key(
+                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+                Mode::Form
+            ),
+            Action::Submit
+        );
+        assert_eq!(
+            map_key(
+                KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+                Mode::Form
+            ),
+            Action::ReloadForm
         );
     }
 }

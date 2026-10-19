@@ -34,10 +34,10 @@ with uninstall support, and a full-CRUD ratatui TUI behind `mnexis tui`.
 
 | ID  | Spec | Route         | Commit |
 | --- | ---- | ------------- | ------ |
-| T1  | S1   | worker        | feat(installer): cargo-building install.sh with uninstall --purge |
-| T2  | S2   | worker        | feat(tui): scaffold `mnexis tui` 3-pane read surface |
+| T1  | S1   | worker        | 0504f48 feat(installer): cargo-building install.sh with uninstall --purge |
+| T2  | S2   | worker        | 293aa55 feat(tui): scaffold mnexis tui three-pane read surface |
 | T3  | S2   | worker        | feat(tui): save and update forms with validation |
-| T4  | S2   | worker        | feat(tui): supersede, delete, restore flows |
+| T4  | S2   | worker        | feat(tui): supersede, delete, restore flows + links read path |
 | T5  | S2   | worker        | test(tui): app-state unit tests + docs + help |
 | T6  | S1   | verify        | independent verification of installer incl. purge |
 | T7  | S2   | verify        | independent verification of TUI CRUD surface |
@@ -48,3 +48,14 @@ with uninstall support, and a full-CRUD ratatui TUI behind `mnexis tui`.
 - L2 (2026-10-18): Product decisions via ask_user_question: installer = "Script que
   compila con cargo" (over "Binarios + curl | sh" and "Híbrido por etapas"); TUI =
   "CRUD completo" (over "Solo lectura v1" and "CRUD + context preview").
+- L3 (2026-10-18): T1 evidence: installer harness 62/62 green, suite 212/212 (204
+  base + 8 TUI in flight); purge paths derived from src/cli/profile.rs:74-90;
+  declined purge exits 1 by design; XDG wording deviation documented in docs/install.md.
+- L4 (2026-10-18): T2 evidence: suite 212/212; supersession chain NOT covered —
+  MemoryService lacks a links read method (needs application/domain/storage surface);
+  detail pane shows an explicit note. Gap folded into T4.
+- L5 (2026-10-18): Slice strategy note: dab3903+0504f48+293aa55 total 1782 authored
+  lines (two parallel independent units, each with its own commit per the high-risk
+  own-commit rule). Remaining TUI tasks commit at ~400 authored lines per slice.
+  Parent re-ran scripts/test-installer.sh (62/62) and cargo test (212/212) before
+  committing; unused-var warnings (req_a, i) are pre-existing from e803ba9.

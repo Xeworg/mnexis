@@ -476,8 +476,8 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Tui => {
             // The TUI owns the terminal lifecycle; profile resolution and
             // error reporting stay identical to every other command.
-            let profile = Profile::open(data_dir)?;
-            crate::tui::run(&profile)?;
+            let mut profile = Profile::open(data_dir)?;
+            crate::tui::run(&mut profile)?;
             Ok(CommandOutcome::new(
                 serde_json::json!({ "closed": true }),
                 "tui closed",
