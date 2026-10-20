@@ -1,6 +1,7 @@
-//! `mnexis config show` — the effective configuration and scope
+//! `mnexis config` — the effective configuration and scope
 //! (e2-core §7 "Admin commands"). Prints what the process would run
-//! with; never any memory content.
+//! with; never any memory content. `allow-namespace` authorizes a
+//! namespace in the profile.
 
 use std::path::PathBuf;
 
@@ -9,6 +10,77 @@ use serde_json::json;
 use crate::cli::output::CommandOutcome;
 use crate::config::ProfileSettings;
 use crate::domain::error::MnexisError;
+
+/// `mnexis config allow-namespace <ns>` — authorize a namespace in the
+/// profile (project-bindings S3).
+///
+/// The change lands in `mnexis.toml`: the namespace joins the read and
+/// write allowlists. The allowlists only grow; nothing is revoked. The
+/// profile must already exist (`mnexis init`), because the command edits
+/// an existing profile rather than creating one.
+pub fn allow_namespace(
+    data_dir: PathBuf,
+    namespace: String,
+) -> Result<CommandOutcome, MnexisError> {
+    if namespace.trim().is_empty() {
+        return Err(MnexisError::invalid_argument(
+            "namespace",
+            "namespace must not be empty",
+        ));
+    }
+    if namespace.contains('\n') || namespace.contains('\r') {
+        return Err(MnexisError::invalid_argument(
+            "namespace",
+            "namespace must not contain line breaks",
+        ));
+    }
+
+    let config_path = data_dir.join("mnexis.toml");
+    let src = std::fs::read_to_string(&config_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            MnexisError::not_found(format!(
+                "profile at {} (run `mnexis init` first)",
+                data_dir.display()
+            ))
+        } else {
+            MnexisError::invalid_argument("mnexis.toml", format!("cannot read: {e}"))
+        }
+    })?;
+
+    let mut settings = ProfileSettings::from_toml(&src)?;
+    let changed = settings.allow_namespace(&namespace);
+    if changed {
+        settings.save_to(&config_path)?;
+    }
+
+    let (text, changed_json) = if changed {
+        (
+            format!(
+                "Allowed namespace {namespace} for read and write in {}",
+                config_path.display()
+            ),
+            true,
+        )
+    } else {
+        (
+            format!(
+                "Namespace {namespace} was already allowed in {}",
+                config_path.display()
+            ),
+            false,
+        )
+    };
+    Ok(CommandOutcome::new(
+        json!({
+            "namespace": namespace,
+            "changed": changed_json,
+            "config_path": config_path.display().to_string(),
+            "read_namespaces": settings.read_namespaces,
+            "write_namespaces": settings.write_namespaces,
+        }),
+        text,
+    ))
+}
 
 pub fn show(data_dir: PathBuf) -> Result<CommandOutcome, MnexisError> {
     let config_path = data_dir.join("mnexis.toml");

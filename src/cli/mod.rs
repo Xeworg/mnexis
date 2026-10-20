@@ -8,6 +8,7 @@ pub mod commands;
 pub mod config_cmd;
 pub mod output;
 pub mod profile;
+pub mod project_cmd;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -219,6 +220,12 @@ pub enum Command {
         action: ConfigAction,
     },
 
+    /// Manage workspace → namespace bindings
+    Project {
+        #[command(subcommand)]
+        action: ProjectAction,
+    },
+
     /// Export memories as JSONL (excludes deleted by default)
     Export {
         /// Also include soft-deleted records
@@ -253,6 +260,36 @@ pub enum McpAction {
 pub enum ConfigAction {
     /// Print the effective configuration
     Show,
+    /// Authorize a namespace for read and write in the profile
+    AllowNamespace {
+        /// Namespace to authorize
+        namespace: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProjectAction {
+    /// Bind a workspace key to a namespace
+    Bind {
+        /// Namespace the workspace writes into
+        namespace: String,
+        /// Workspace identity (e.g. `git:github.com/owner/repo` or `path:/abs/dir`)
+        #[arg(long, value_name = "KEY")]
+        key: String,
+        /// Workspace path (informational)
+        #[arg(long, value_name = "DIR")]
+        path: Option<String>,
+        /// Move an already-bound key to another namespace
+        #[arg(long)]
+        force: bool,
+    },
+    /// List the recorded bindings
+    List,
+    /// Remove the bindings for a namespace (memories are untouched)
+    Unbind {
+        /// Namespace to unbind
+        namespace: String,
+    },
 }
 
 /// Parse and run. Returns the process exit code.
@@ -473,6 +510,30 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Config {
             action: ConfigAction::Show,
         } => config_cmd::show(data_dir),
+        Command::Config {
+            action: ConfigAction::AllowNamespace { namespace },
+        } => config_cmd::allow_namespace(data_dir, namespace.clone()),
+        Command::Project {
+            action:
+                ProjectAction::Bind {
+                    namespace,
+                    key,
+                    path,
+                    force,
+                },
+        } => project_cmd::bind(
+            data_dir,
+            namespace.clone(),
+            key.clone(),
+            path.clone(),
+            *force,
+        ),
+        Command::Project {
+            action: ProjectAction::List,
+        } => project_cmd::list(data_dir),
+        Command::Project {
+            action: ProjectAction::Unbind { namespace },
+        } => project_cmd::unbind(data_dir, namespace.clone()),
         Command::Tui => {
             // The TUI owns the terminal lifecycle; profile resolution and
             // error reporting stay identical to every other command.
@@ -511,6 +572,7 @@ mod tests {
             "reindex",
             "tui",
             "config",
+            "project",
         ] {
             assert!(help.contains(word), "help must mention {word}: {help}");
         }
