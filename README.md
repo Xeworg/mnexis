@@ -19,6 +19,16 @@ your PATH. Re-running it overwrites the installed binary. See
 [docs/install.md](docs/install.md) for requirements, uninstall, and
 `uninstall --purge` semantics.
 
+To install the shipped agent skills (`skills/`, starting with
+`mnexis-memory`) into an AI environment — `pi` first, target
+`~/.pi/skills`:
+
+```sh
+./install.sh skills            # pick the environment interactively
+./install.sh skills --env pi   # unattended
+./install.sh uninstall --skills --env pi   # remove them again
+```
+
 On a fresh profile, `mnexis init` creates the default data directory
 (`~/.local/share/mnexis`) with `mnexis.db` and `mnexis.toml`; copy those two
 files to migrate the profile to another machine.
