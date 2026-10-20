@@ -39,7 +39,7 @@ docs/contracts/v1/README.md, over main@17141ec (installer-tui delivered).
 | T2  | S1      | worker  | 7d67562 feat(supersede) |
 | T3  | S2      | worker  | 7d67562 (doctor v3 travels with the migration) |
 | T4  | S2,S3   | worker  | a344e8e feat(tui) |
-| T5  | S1-S3   | verify  | independent verification incl. migration on an existing v2 profile |
+| T5  | S1-S3   | verify  | PASS at a16a309; probe test 82f939f |
 
 ## Log
 
@@ -67,3 +67,18 @@ docs/contracts/v1/README.md, over main@17141ec (installer-tui delivered).
   list, and doctor identical. Migration verified live: NEW on a v2 profile
   auto-migrates (doctor all green, data intact); OLD on the migrated v3
   profile refuses with UNSUPPORTED_VERSION (no-downgrade rule).
+- L5 (2026-10-19): T5 independent verification at a16a309: overall PASS, no
+  blockers, no advisories. All 8 items PASS with file:line evidence + live
+  reproduction through the public binary (atomicity, same-ns, both-revision
+  conflicts carrying the disk revision, seeded-cycle CTE walk, migration 003
+  + no-backfill read-back, unchanged CLI/MCP wire shapes, TUI mirror kept,
+  fmt clean). The verifier's durable probes: #1 (non-active older gate, a real
+  pre-existing coverage gap in touched code) ACCEPTED at 82f939f; #2 depth-3
+  cycle DECLINED (depth-2 already exercises the recursive step); #3 pre-
+  migration empty reason DECLINED (pinned by migrations test + verifier's live
+  check); #4 doctor v3 DECLINED (pinned by the three doctor integration
+  tests). Verifier scratch dirs cleaned.
+- L6 (2026-10-19): Feature closed. T1..T5 done; suite 250/250; CI chain green.
+  Slice boundary: 7d67562 (contract unit, Risk: item 1 migration, own commit)
+  + a344e8e (TUI reason) + a16a309/82f939f (docs/probe); 500 authored lines
+  in 4 commits + doc commits. Merge/push remains the user's call.
