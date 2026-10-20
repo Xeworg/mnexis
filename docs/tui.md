@@ -35,7 +35,8 @@ footer help line
 - **Memories** — the rows of the selected namespace, the FTS5 results while
   searching (`/`), or the soft-deleted rows in the deleted view (`x`).
 - **Detail** — the selected memory: metadata, content, tags, revision
-  history (newest first), and its supersession chain.
+  history (newest first), and its supersession chain (each link shows the
+  reason it was superseded with, when recorded).
 
 The yellow border marks the focused pane. The status line above the footer
 carries transient results and errors; the footer always shows the keys of
