@@ -60,6 +60,32 @@ mnexis init
 `mnexis.db` and `mnexis.toml`. The CLI also accepts `--data-dir DIR` and the
 `MNEXIS_DATA_DIR` environment variable if you want the profile elsewhere.
 
+## Agent skills
+
+The repository ships agent skills in [`skills/`](../skills): each
+subdirectory is one installable skill (Agent Skills format — a `SKILL.md`
+plus optional supporting files). The first skill, `mnexis-memory`, teaches
+AI agents the mnexis memory loop (recall, save, supersede) so they can use
+mnexis without per-session prompting.
+
+```sh
+./install.sh skills            # interactive environment selection
+./install.sh skills --env pi   # unattended, explicit environment
+```
+
+Behaviour:
+
+- `pi` is the first supported environment; its skills are installed to
+  `~/.pi/skills/<skill-name>/` (pi's user skills directory). Adding more
+  environments later extends the registry in `install.sh`.
+- Running `skills` is a pure file copy: no Rust toolchain, no build, and
+  the `mnexis` binary is not required or installed by it.
+- Re-running overwrites the installed skills with the shipped content.
+- Skill directories that mnexis does not ship are never touched.
+- Without `--env`, the selector requires an interactive terminal; from a
+  pipe it aborts (exit `1`) with the supported environment list, mirroring
+  the `--purge` confirmation policy. An unknown environment exits `2`.
+
 ## Uninstall
 
 ```sh
@@ -69,6 +95,20 @@ mnexis init
 This removes `~/.local/bin/mnexis` and nothing else: the profile data and
 settings stay in place. It is idempotent — running it when the binary is
 already gone is a clean no-op success.
+
+## Uninstall agent skills
+
+```sh
+./install.sh uninstall --skills            # interactive environment selection
+./install.sh uninstall --skills --env pi   # unattended, explicit environment
+```
+
+This removes exactly the skill directories mnexis ships (`skills/*` with a
+`SKILL.md`) from the selected environment's skills directory — foreign
+skills are kept. When nothing is installed it prints
+`No mnexis skills are installed ...` and exits `0`. `--skills` cannot be
+combined with `--purge`: they are separate scopes (skills are not profile
+data), so run them separately.
 
 ## Uninstall and purge profile data
 

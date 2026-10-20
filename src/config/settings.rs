@@ -246,6 +246,27 @@ impl ProfileSettings {
         out
     }
 
+    /// Add a namespace to the read and write allowlists (project-bindings
+    /// S3). Returns whether anything changed. The allowlists only ever
+    /// grow: this command authorizes, it never revokes.
+    pub fn allow_namespace(&mut self, namespace: &str) -> bool {
+        let mut changed = false;
+        if !self.read_namespaces.iter().any(|n| n == namespace) {
+            self.read_namespaces.push(namespace.to_string());
+            changed = true;
+        }
+        if !self.write_namespaces.iter().any(|n| n == namespace) {
+            self.write_namespaces.push(namespace.to_string());
+            changed = true;
+        }
+        changed
+    }
+
+    /// Write the settings to `path` atomically.
+    pub fn save_to(&self, path: &Path) -> Result<(), MnexisError> {
+        crate::config::write_atomic(path, &self.to_toml())
+    }
+
     /// Load settings from `path`, falling back to the permissive default
     /// when the file does not exist (a profile being created by `init`,
     /// or an operator who never wrote one). Returns the settings and
