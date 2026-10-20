@@ -428,9 +428,15 @@ impl MemoryRepository for SqliteMemoryRepository {
     fn save_link(&mut self, l: &MemoryLink) -> Result<i64, MnexisError> {
         self.conn
             .execute(
-                "INSERT INTO memory_links (older_uuid, newer_uuid, link_type, created_at) \
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![l.older_uuid, l.newer_uuid, l.link_type, l.created_at],
+                "INSERT INTO memory_links (older_uuid, newer_uuid, link_type, reason, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    l.older_uuid,
+                    l.newer_uuid,
+                    l.link_type,
+                    l.reason,
+                    l.created_at
+                ],
             )
             .map_err(sql_to_domain)?;
         self.conn
@@ -442,7 +448,7 @@ impl MemoryRepository for SqliteMemoryRepository {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, older_uuid, newer_uuid, link_type, created_at \
+                "SELECT id, older_uuid, newer_uuid, link_type, reason, created_at \
                  FROM memory_links WHERE older_uuid = ?1 OR newer_uuid = ?1 ORDER BY id",
             )
             .map_err(sql_to_domain)?;
@@ -453,11 +459,100 @@ impl MemoryRepository for SqliteMemoryRepository {
                     older_uuid: row.get(1)?,
                     newer_uuid: row.get(2)?,
                     link_type: row.get(3)?,
-                    created_at: row.get(4)?,
+                    reason: row.get(4)?,
+                    created_at: row.get(5)?,
                 })
             })
             .map_err(sql_to_domain)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(sql_to_domain)
+    }
+
+    fn supersede_atomic(
+        &mut self,
+        older_uuid: &str,
+        newer_uuid: &str,
+        expected_old_revision: i32,
+        expected_new_revision: i32,
+        reason: &str,
+        now: &str,
+    ) -> Result<(), MnexisError> {
+        let tx = self.conn.unchecked_transaction().map_err(sql_to_domain)?;
+
+        // Cycle rejection. Edges run older -> newer ("newer supersedes
+        // older"). The new link older->newer closes a cycle iff `older` is
+        // already reachable from `newer` over existing edges. The walk is
+        // seeded with `newer` itself, so a self-link trips the same check.
+        // UNION (not UNION ALL) deduplicates on cyclic imported data.
+        let closes_cycle: bool = tx
+            .query_row(
+                "WITH RECURSIVE walk(x) AS ( \
+                    VALUES (?1) \
+                    UNION \
+                    SELECT ml.newer_uuid FROM memory_links ml \
+                    JOIN walk ON ml.older_uuid = walk.x \
+                 ) SELECT EXISTS(SELECT 1 FROM walk WHERE x = ?2)",
+                params![newer_uuid, older_uuid],
+                |r| r.get(0),
+            )
+            .map_err(sql_to_domain)?;
+        if closes_cycle {
+            return Err(MnexisError::invalid_argument(
+                "newer_uuid",
+                format!(
+                    "supersede would close a cycle: {older_uuid} is already \
+                     superseded (transitively) by {newer_uuid}"
+                ),
+            ));
+        }
+
+        // Both-revision check, newer side: the row is not mutated by a
+        // supersede, so this is a guard against concurrent writers.
+        let newer_revision: Option<i64> = tx
+            .query_row(
+                "SELECT revision FROM memories WHERE uuid = ?1",
+                params![newer_uuid],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql_to_domain)?;
+        match newer_revision {
+            Some(revision) if revision == i64::from(expected_new_revision) => {}
+            Some(revision) => return Err(MnexisError::revision_conflict(revision)),
+            None => {
+                return Err(MnexisError::not_found(format!("memory:{newer_uuid}")));
+            }
+        }
+
+        // Older side: flip to superseded under the optimistic guard. Only
+        // state / updated_at / revision change, mirroring what the service
+        // used to write through `update` (no history row, by parity).
+        let affected = tx
+            .execute(
+                "UPDATE memories SET state = 'superseded', revision = revision + 1, \
+                 updated_at = ?1 WHERE uuid = ?2 AND revision = ?3 AND deleted = 0",
+                params![now, older_uuid, expected_old_revision],
+            )
+            .map_err(sql_to_domain)?;
+        if affected == 0 {
+            let current: Option<i64> = tx
+                .query_row(
+                    "SELECT revision FROM memories WHERE uuid = ?1",
+                    params![older_uuid],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(sql_to_domain)?;
+            return Err(MnexisError::revision_conflict(current.unwrap_or(0)));
+        }
+
+        tx.execute(
+            "INSERT INTO memory_links (older_uuid, newer_uuid, link_type, reason, created_at) \
+             VALUES (?1, ?2, 'supersedes', ?3, ?4)",
+            params![older_uuid, newer_uuid, reason, now],
+        )
+        .map_err(sql_to_domain)?;
+
+        tx.commit().map_err(sql_to_domain)
     }
 
     fn tags_for(&self, uuid: &str) -> Result<Vec<MemoryTag>, MnexisError> {

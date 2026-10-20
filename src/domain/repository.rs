@@ -80,6 +80,26 @@ pub trait MemoryRepository {
     /// newer side of a supersession. Ordered by insertion (`id`).
     fn links_for(&self, uuid: &str) -> Result<Vec<MemoryLink>, MnexisError>;
 
+    /// Atomically execute a supersede (contract v1: "Supersede is atomic,
+    /// same-namespace in MVP, revision-checked on both records, and must
+    /// reject cycles"). In one transaction: reject when the link would
+    /// close a cycle in the supersession graph (the trivial self-link
+    /// included), verify the newer row still holds
+    /// `expected_new_revision` (`REVISION_CONFLICT` with the row's current
+    /// revision otherwise), flip the older row to `superseded` at
+    /// `expected_old_revision` (bumping its revision), and persist the
+    /// link with its `reason`. Nothing commits unless every step passes;
+    /// namespace, scope, and state gates stay in the service.
+    fn supersede_atomic(
+        &mut self,
+        older_uuid: &str,
+        newer_uuid: &str,
+        expected_old_revision: i32,
+        expected_new_revision: i32,
+        reason: &str,
+        now: &str,
+    ) -> Result<(), MnexisError>;
+
     /// Get the tags attached to a memory.
     fn tags_for(&self, uuid: &str) -> Result<Vec<MemoryTag>, MnexisError>;
 

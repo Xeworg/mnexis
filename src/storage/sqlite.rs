@@ -176,8 +176,14 @@ BEGIN
 END;
 "#;
 
+/// Adds the persisted supersede `reason` to `memory_links` (supersede-contract
+/// S2). Existing rows keep the empty default; there is no backfill.
+const MIGRATION_003: &str = r#"
+ALTER TABLE memory_links ADD COLUMN reason TEXT NOT NULL DEFAULT '';
+"#;
+
 /// Applies pending migrations. Creates the `schema_migrations` ledger if
-/// absent. Applies migration 001 and 002 if not already recorded. A
+/// absent. Applies migrations 001 through 003 if not already recorded. A
 /// recorded version higher than the binary's known migrations returns
 /// `MnexisError::UnsupportedVersion` (no-downgrade rule).
 pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
@@ -197,7 +203,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
         )
         .map_err(|e| MnexisError::busy(format!("read schema_migrations: {e}")))?;
 
-    if applied > 2 {
+    if applied > 3 {
         return Err(MnexisError::unsupported_version(applied));
     }
 
@@ -213,6 +219,13 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
             .map_err(|e| MnexisError::busy(format!("migration 002: {e}")))?;
         conn.execute("INSERT INTO schema_migrations (version) VALUES (2)", [])
             .map_err(|e| MnexisError::busy(format!("record migration 002: {e}")))?;
+    }
+
+    if applied < 3 {
+        conn.execute_batch(MIGRATION_003)
+            .map_err(|e| MnexisError::busy(format!("migration 003: {e}")))?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (3)", [])
+            .map_err(|e| MnexisError::busy(format!("record migration 003: {e}")))?;
     }
 
     Ok(())
@@ -234,7 +247,20 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 2, "both migrations 001 and 002 should be recorded");
+        assert_eq!(version, 3, "migrations 001 through 003 should be recorded");
+
+        // Migration 003 added the persisted supersede reason column.
+        let (col_type, dflt, notnull): (String, String, i64) = conn
+            .query_row(
+                "SELECT type, dflt_value, [notnull] FROM pragma_table_info('memory_links') \
+                 WHERE name = 'reason'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("memory_links.reason exists after migration 003");
+        assert_eq!(col_type.to_uppercase(), "TEXT");
+        assert_eq!(dflt, "''", "existing rows read back an empty reason");
+        assert_eq!(notnull, 1, "the column is NOT NULL with an empty default");
 
         // Calling run_migrations again on the same DB must be a no-op.
         run_migrations(&conn).unwrap();
@@ -243,7 +269,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version_again, 2, "002 must not double-record on a re-run");
+        assert_eq!(version_again, 3, "003 must not double-record on a re-run");
     }
 
     #[test]
