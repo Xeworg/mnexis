@@ -369,3 +369,197 @@ fn reindex_is_denied_when_operation_not_in_scope() {
         "reindex without Operation::Reindex in scope must return Forbidden"
     );
 }
+
+// --- supersede contract v1 (odd/tasks/supersede-contract.md S1/S2) ---
+
+fn supersede_req(older: &str, newer: &str, old_rev: i32, new_rev: i32) -> SupersedeRequest {
+    SupersedeRequest {
+        older_uuid: older.into(),
+        newer_uuid: newer.into(),
+        expected_old_revision: old_rev,
+        expected_new_revision: new_rev,
+        reason: "replaced by newer fact".into(),
+        now: "2026-01-02T00:00:00Z".into(),
+    }
+}
+
+fn seed_link(dir: &tempfile::TempDir, older: &str, newer: &str) {
+    use mnexis_core::domain::memory::MemoryLink;
+    use mnexis_core::domain::repository::MemoryRepository;
+    let conn = open_sqlite(&dir.path().join("svc.db")).unwrap();
+    let mut repo = SqliteMemoryRepository::new(conn);
+    repo.save_link(&MemoryLink {
+        id: None,
+        older_uuid: older.into(),
+        newer_uuid: newer.into(),
+        link_type: "supersedes".into(),
+        reason: String::new(),
+        created_at: "2026-01-01T12:00:00Z".into(),
+    })
+    .unwrap();
+}
+
+#[test]
+fn supersede_rejects_a_stale_expected_new_revision_and_writes_nothing() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req("old-1", "older")).unwrap();
+    svc.save(save_req("new-1", "newer")).unwrap();
+    // A second writer moves the newer side to revision 2.
+    svc.update(UpdateRequest {
+        uuid: "new-1".into(),
+        expected_revision: 1,
+        content: Some("newer v2".into()),
+        state: None,
+        tags: None,
+        assertion_basis: None,
+        reason: "external edit".into(),
+        now: "2026-01-02T00:00:00Z".into(),
+    })
+    .unwrap();
+
+    let err = svc
+        .supersede(supersede_req("old-1", "new-1", 1, 1))
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            MnexisError::RevisionConflict {
+                current_revision: 2
+            }
+        ),
+        "stale newer revision must conflict with the disk revision: {err:?}"
+    );
+    // Nothing was written: the older side stays active at revision 1 and
+    // no link exists.
+    let older = svc.get("old-1").unwrap().unwrap();
+    assert_eq!(older.state, MemoryState::Active);
+    assert_eq!(older.revision, 1);
+    assert!(svc.links("old-1").unwrap().is_empty());
+}
+
+#[test]
+fn supersede_rejects_cross_namespace_pairs() {
+    // A scope that may write two namespaces; supersede must still refuse
+    // to link records across them (contract: same-namespace in MVP).
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&dir.path().join("svc.db")).unwrap();
+    let repo = SqliteMemoryRepository::new(conn);
+    let scope = AccessScope::new(
+        vec!["ns-one".into(), "ns-two".into()],
+        vec!["ns-one".into(), "ns-two".into()],
+        "ns-one".into(),
+        false,
+        vec![
+            Operation::Save,
+            Operation::Get,
+            Operation::List,
+            Operation::Supersede,
+        ],
+    );
+    let mut svc = MemoryService::new(repo, scope, ServiceConfig::default());
+
+    let mut a = save_req("a-1", "in one");
+    a.namespace = "ns-one".into();
+    let mut b = save_req("b-1", "in two");
+    b.namespace = "ns-two".into();
+    svc.save(a).unwrap();
+    svc.save(b).unwrap();
+
+    let err = svc
+        .supersede(supersede_req("a-1", "b-1", 1, 1))
+        .unwrap_err();
+    assert!(
+        matches!(err, MnexisError::InvalidArgument { .. }),
+        "cross-namespace supersede must be rejected: {err:?}"
+    );
+    let older = svc.get("a-1").unwrap().unwrap();
+    assert_eq!(older.state, MemoryState::Active, "nothing written");
+    assert!(svc.links("a-1").unwrap().is_empty());
+}
+
+#[test]
+fn supersede_rejects_a_self_link() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req("solo-1", "only")).unwrap();
+
+    let err = svc
+        .supersede(supersede_req("solo-1", "solo-1", 1, 1))
+        .unwrap_err();
+    assert!(
+        matches!(err, MnexisError::InvalidArgument { .. }),
+        "a memory cannot supersede itself: {err:?}"
+    );
+    let mem = svc.get("solo-1").unwrap().unwrap();
+    assert_eq!(mem.state, MemoryState::Active, "nothing written");
+    assert!(svc.links("solo-1").unwrap().is_empty());
+}
+
+#[test]
+fn supersede_rejects_a_link_that_would_close_a_cycle() {
+    let (mut svc, dir) = make_service();
+    svc.save(save_req("cyc-a", "a")).unwrap();
+    svc.save(save_req("cyc-b", "b")).unwrap();
+    svc.save(save_req("cyc-c", "c")).unwrap();
+    // Raw links seeded outside the service (e.g. imported): b supersedes a,
+    // c supersedes b. All three rows stay active, so the state gate alone
+    // cannot catch the cycle the next link would close.
+    seed_link(&dir, "cyc-a", "cyc-b");
+    seed_link(&dir, "cyc-b", "cyc-c");
+
+    // a->b->c exists; linking c under a (a supersedes c) closes the cycle.
+    let err = svc
+        .supersede(supersede_req("cyc-c", "cyc-a", 1, 1))
+        .unwrap_err();
+    assert!(
+        matches!(err, MnexisError::InvalidArgument { .. }),
+        "cycle-closing supersede must be rejected: {err:?}"
+    );
+    let older = svc.get("cyc-c").unwrap().unwrap();
+    assert_eq!(older.state, MemoryState::Active, "nothing written");
+    assert_eq!(svc.links("cyc-c").unwrap().len(), 1, "only the seeded link");
+}
+
+#[test]
+fn supersede_persists_the_reason_on_the_link() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req("r-old", "older")).unwrap();
+    svc.save(save_req("r-new", "newer")).unwrap();
+
+    svc.supersede(supersede_req("r-old", "r-new", 1, 1))
+        .unwrap();
+    let links = svc.links("r-old").unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(
+        links[0].reason, "replaced by newer fact",
+        "the request reason must be persisted on the link row"
+    );
+    let older = svc.get("r-old").unwrap().unwrap();
+    assert_eq!(older.state, MemoryState::Superseded);
+}
+
+#[test]
+fn supersede_rejects_when_the_older_side_is_not_active() {
+    // Pre-existing gate, now pinned because supersede was rewritten around
+    // it (T5 durable probe): a non-active older side must be rejected
+    // before anything is written.
+    let (mut svc, _dir) = make_service();
+    let mut older = save_req("st-old", "older");
+    older.state = MemoryState::Proposed;
+    svc.save(older).unwrap();
+    svc.save(save_req("st-new", "newer")).unwrap();
+
+    let err = svc
+        .supersede(supersede_req("st-old", "st-new", 1, 1))
+        .unwrap_err();
+    match &err {
+        MnexisError::InvalidArgument { field, message } => {
+            assert_eq!(field, "older");
+            assert!(message.contains("must be active, is proposed"), "{message}");
+        }
+        other => panic!("expected InvalidArgument, got {other:?}"),
+    }
+    let mem = svc.get("st-old").unwrap().unwrap();
+    assert_eq!(mem.state, MemoryState::Proposed, "nothing written");
+    assert_eq!(mem.revision, 1);
+    assert!(svc.links("st-old").unwrap().is_empty());
+}

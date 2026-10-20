@@ -199,8 +199,8 @@ fn row_label(row: &MemoryRow) -> String {
 }
 
 /// The persisted supersession chain for one memory, one line per link that
-/// touches it as either side. `MemoryLink` carries no reason (the schema has
-/// no reason column), so only older/newer/timestamp are rendered.
+/// touches it as either side. Since migration 003 each link carries the
+/// reason the supersede was requested with (empty for pre-migration rows).
 fn chain_lines(chain: &[MemoryLink], uuid: &str) -> Vec<Line<'static>> {
     if chain.is_empty() {
         return vec![Line::from("  no supersession links")];
@@ -208,17 +208,24 @@ fn chain_lines(chain: &[MemoryLink], uuid: &str) -> Vec<Line<'static>> {
     chain
         .iter()
         .map(|link| {
+            let reason = if link.reason.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", link.reason)
+            };
             if link.newer_uuid == uuid {
                 Line::from(format!(
-                    "  supersedes {} on {}",
+                    "  supersedes {} on {}{}",
                     short_uuid(&link.older_uuid),
-                    link.created_at
+                    link.created_at,
+                    reason
                 ))
             } else {
                 Line::from(format!(
-                    "  superseded by {} on {}",
+                    "  superseded by {} on {}{}",
                     short_uuid(&link.newer_uuid),
-                    link.created_at
+                    link.created_at,
+                    reason
                 ))
             }
         })
@@ -385,11 +392,12 @@ mod tests {
 
     #[test]
     fn chain_lines_name_the_other_side_of_each_link() {
-        let link = MemoryLink {
+        let mut link = MemoryLink {
             id: Some(1),
             older_uuid: "aaaaaaaa-1111".to_string(),
             newer_uuid: "bbbbbbbb-2222".to_string(),
             link_type: "supersedes".to_string(),
+            reason: String::new(),
             created_at: "2026-01-02T00:00:00Z".to_string(),
         };
         let older = chain_lines(std::slice::from_ref(&link), "aaaaaaaa-1111");
@@ -401,6 +409,14 @@ mod tests {
         assert_eq!(
             newer[0].to_string(),
             "  supersedes aaaaaaaa on 2026-01-02T00:00:00Z"
+        );
+        // A persisted reason (migration 003) renders on the line; blank
+        // reasons (pre-migration rows) render without the dash.
+        link.reason = "replaced by newer fact".to_string();
+        let with_reason = chain_lines(std::slice::from_ref(&link), "bbbbbbbb-2222");
+        assert_eq!(
+            with_reason[0].to_string(),
+            "  supersedes aaaaaaaa on 2026-01-02T00:00:00Z — replaced by newer fact"
         );
         let empty = chain_lines(&[], "cccccccc");
         assert_eq!(empty[0].to_string(), "  no supersession links");

@@ -156,6 +156,10 @@ pub struct MemoryLink {
     pub older_uuid: String,
     pub newer_uuid: String,
     pub link_type: String, // MVP: always "supersedes"
+    /// Why the supersede happened. Persisted since migration 003;
+    /// pre-migration rows read back as "" (no backfill, S2).
+    #[serde(default)]
+    pub reason: String,
     pub created_at: String,
 }
 

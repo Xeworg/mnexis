@@ -381,6 +381,21 @@ impl<R: MemoryRepository> MemoryService<R> {
         self.scope.authorize_write(&newer.namespace)?;
         self.scope.authorize_operation(Operation::Supersede)?;
 
+        // Contract v1: "Supersede is atomic, same-namespace in MVP,
+        // revision-checked on both records, and must reject cycles."
+        // Same-namespace is gated here (namespaces never change after
+        // save); revisions, atomicity, and cycle rejection live in the
+        // repository transaction.
+        if older.namespace != newer.namespace {
+            return Err(MnexisError::invalid_argument(
+                "newer_uuid",
+                format!(
+                    "supersede is same-namespace in MVP: {} is in {}, {} is in {}",
+                    req.older_uuid, older.namespace, req.newer_uuid, newer.namespace
+                ),
+            ));
+        }
+
         if older.state != MemoryState::Active {
             return Err(MnexisError::invalid_argument(
                 "older",
@@ -394,22 +409,14 @@ impl<R: MemoryRepository> MemoryService<R> {
             ));
         }
 
-        let mut older_updated = older.clone();
-        older_updated.state = MemoryState::Superseded;
-        older_updated.updated_at = req.now.clone();
-        self.repo
-            .update(&older_updated, req.expected_old_revision)?;
-
-        let link = MemoryLink {
-            id: None,
-            older_uuid: req.older_uuid.clone(),
-            newer_uuid: req.newer_uuid.clone(),
-            link_type: "supersedes".to_string(),
-            created_at: req.now,
-        };
-        self.repo.save_link(&link)?;
-
-        Ok(())
+        self.repo.supersede_atomic(
+            &req.older_uuid,
+            &req.newer_uuid,
+            req.expected_old_revision,
+            req.expected_new_revision,
+            &req.reason,
+            &req.now,
+        )
     }
 
     // --- soft_delete ---
