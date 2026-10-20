@@ -65,4 +65,9 @@ bash-installer test-first.
   specced. shellcheck: not installed on this machine — reported
   unavailable; `bash -n` plus the suite cover the surface. Cargo suite
   untouched (no Rust change). Commits: 61acc7d (skill), 8215175
-  (installer + tests), closing commit (docs + log).
+  (installer + tests), 0721ed6 (docs + log).
+- L5 (review): native assess over main..HEAD returned nativeRisk high
+  (process/shell signals on install.sh), reviewDue true. Ordinary START
+  (lenses risk/resilience/reliability) was declined at the consent gate
+  by the user — candidate-scoped decline, no lineage created, nothing
+  frozen. Native review therefore did not run for this candidate.
