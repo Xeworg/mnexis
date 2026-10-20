@@ -4,8 +4,14 @@
 #
 #   ./install.sh                 Build with cargo (release) and install
 #                                $HOME/.local/bin/mnexis.
+#   ./install.sh skills [--env <name>]
+#                                Install the shipped agent skills (skills/) to
+#                                the selected AI environment (pi first).
 #   ./install.sh uninstall       Remove the installed binary; profile data
 #                                is kept.
+#   ./install.sh uninstall --skills [--env <name>]
+#                                Remove the mnexis-installed agent skills
+#                                from the selected environment.
 #   ./install.sh uninstall --purge
 #                                Also remove the resolved profile data
 #                                directory after an interactive y/N prompt.
@@ -23,7 +29,8 @@ set -euo pipefail
 usage() {
   printf '%s\n' \
     'Usage: ./install.sh [install]' \
-    '       ./install.sh uninstall [--purge]' \
+    '       ./install.sh skills [--env <name>]' \
+    '       ./install.sh uninstall [--skills [--env <name>]|--purge]' \
     '       ./install.sh --help' \
     '' \
     'Builds the mnexis binary with cargo (release profile) and installs it' \
@@ -31,18 +38,29 @@ usage() {
     '' \
     'Commands:' \
     '  install            Build and install (the default when omitted).' \
+    '  skills             Install the agent skills shipped in ./skills to an' \
+    '                     AI environment. Interactive selection when run from' \
+    '                     a terminal; pass --env <name> to run unattended.' \
+    '                     Re-running overwrites the installed skills.' \
     '  uninstall          Remove $HOME/.local/bin/mnexis; profile data stays.' \
+    '  uninstall --skills Remove the mnexis-installed agent skills from an' \
+    '                     environment (interactive selection or --env <name>);' \
+    '                     skill directories mnexis does not ship are kept.' \
+    '                     Cannot be combined with --purge.' \
     '  uninstall --purge  Also remove the profile data directory' \
     '                     ($MNEXIS_DATA_DIR, or $HOME/.local/share/mnexis)' \
     '                     after an interactive y/N confirmation.' \
     '' \
     'Options:' \
+    '  --env <name>       Target AI environment for skills (default: pi).' \
+    '                     Supported: pi ($HOME/.pi/skills).' \
     '  -h, --help         Show this help and exit.' \
     '' \
     'Environment:' \
     '  CARGO_TARGET_DIR   Cargo target directory (default: <repo>/target).' \
     '  MNEXIS_DATA_DIR    Profile data directory used to resolve --purge.' \
-    '  HOME               The binary is installed under $HOME/.local/bin.'
+    '  HOME               The binary is installed under $HOME/.local/bin,' \
+    '                     skills under $HOME/.pi/skills.'
 }
 
 error() { printf 'install.sh: %s\n' "$*" >&2; }
@@ -55,6 +73,81 @@ if [[ -z "${HOME:-}" ]]; then
   die "HOME is not set; cannot resolve the install or profile directories"
 fi
 INSTALL_DIR="$HOME/.local/bin"
+
+# --- agent skills (skills/) --------------------------------------------
+# Supported AI environments and where each one discovers user skills.
+# Adding an environment is one entry in each function below.
+skills_envs() {
+  printf '%s\n' pi
+}
+
+skills_env_dir() {
+  case "$1" in
+    pi) printf '%s\n' "$HOME/.pi/skills" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Validate a --env value, dying with the supported list when unknown.
+require_known_env() {
+  local env="$1"
+  if ! skills_env_dir "$env" >/dev/null; then
+    error "unknown environment: '$env' (supported: $(skills_envs | tr '\n' ' '))"
+    exit 2
+  fi
+}
+
+# Every shipped skill name (directories with a SKILL.md inside skills/).
+shipped_skill_names() {
+  local dir name
+  for dir in "$SCRIPT_DIR"/skills/*/; do
+    [[ -f "$dir/SKILL.md" ]] || continue
+    name="${dir%/}"
+    printf '%s\n' "${name##*/}"
+  done
+}
+
+require_shipped_skills() {
+  if [[ -z "$(shipped_skill_names)" ]]; then
+    die "no skills found in $SCRIPT_DIR/skills (each skill is a directory with a SKILL.md)"
+  fi
+}
+
+# Interactive environment selection on a tty; refuses without one so
+# unattended runs must pass --env (mirrors the purge confirmation policy).
+select_env() {
+  if [[ ! -t 0 ]]; then
+    error "refusing to select an environment interactively: stdin is not a terminal."
+    error "Re-run './install.sh skills --env <name>' (supported: $(skills_envs | tr '\n' ' '))"
+    return 1
+  fi
+
+  local envs choice i
+  envs="$(skills_envs)"
+  printf 'AI environments:\n' >&2
+  i=1
+  while IFS= read -r env; do
+    printf '  %d) %s -> %s\n' "$i" "$env" "$(skills_env_dir "$env")" >&2
+    i=$((i + 1))
+  done <<<"$envs"
+  printf 'Select environment [1]: ' >&2
+  local answer=""
+  if ! read -r answer; then
+    answer=""
+  fi
+  [[ -n "$answer" ]] || answer=1
+  if [[ ! "$answer" =~ ^[0-9]+$ ]]; then
+    error "invalid selection: '$answer'"
+    return 1
+  fi
+  local total
+  total="$(skills_envs | wc -l)"
+  if ((answer < 1 || answer > total)); then
+    error "selection out of range: $answer (1..$total)"
+    return 1
+  fi
+  printf '%s\n' "$(skills_envs | sed -n "${answer}p")"
+}
 
 # Resolve the repository root without external tools so the missing
 # toolchain check works even with an empty PATH.
@@ -174,6 +267,42 @@ confirm_purge() {
   esac
 }
 
+cmd_skills() {
+  local env="$1" target name
+  require_known_env "$env"
+  require_shipped_skills
+  target="$(skills_env_dir "$env")"
+
+  mkdir -p -- "$target"
+  while IFS= read -r name; do
+    rm -rf -- "${target:?}/$name"
+    cp -R -- "$SCRIPT_DIR/skills/$name" "$target/$name"
+    printf 'Installed skill %s to %s\n' "$name" "$target"
+  done < <(shipped_skill_names)
+}
+
+cmd_uninstall_skills() {
+  local env="$1" target name removed=0
+  require_known_env "$env"
+  require_shipped_skills
+  target="$(skills_env_dir "$env")"
+
+  if [[ ! -d "$target" ]]; then
+    printf 'No mnexis skills are installed in %s.\n' "$target"
+    return 0
+  fi
+  while IFS= read -r name; do
+    if [[ -d "$target/$name" ]]; then
+      rm -rf -- "${target:?}/$name"
+      printf 'Removed skill %s from %s\n' "$name" "$target"
+      removed=1
+    fi
+  done < <(shipped_skill_names)
+  if ((removed == 0)); then
+    printf 'No mnexis skills are installed in %s.\n' "$target"
+  fi
+}
+
 cmd_uninstall() {
   local binary="$INSTALL_DIR/mnexis"
   if [[ -e "$binary" ]]; then
@@ -236,24 +365,68 @@ main() {
           ;;
       esac
       ;;
-    uninstall)
+    skills)
       shift
-      local purge=0
-      for arg in "$@"; do
-        case "$arg" in
-          --purge) purge=1 ;;
+      local env=""
+      while (($# > 0)); do
+        case "$1" in
+          --env)
+            (($# >= 2)) || die "--env requires a value"
+            env="$2"
+            shift 2
+            ;;
           -h | --help)
             usage
             return 0
             ;;
           *)
-            error "unknown option for 'uninstall': $arg"
+            error "unknown option for 'skills': $1"
             usage >&2
             return 2
             ;;
         esac
       done
-      if ((purge == 1)); then
+      if [[ -z "$env" ]]; then
+        env="$(select_env)" || exit 1
+      fi
+      require_known_env "$env"
+      cmd_skills "$env"
+      ;;
+    uninstall)
+      shift
+      local purge=0 skills=0 env=""
+      while (($# > 0)); do
+        case "$1" in
+          --purge) purge=1 ;;
+          --skills) skills=1 ;;
+          --env)
+            (($# >= 2)) || die "--env requires a value"
+            env="$2"
+            shift
+            ;;
+          -h | --help)
+            usage
+            return 0
+            ;;
+          *)
+            error "unknown option for 'uninstall': $1"
+            usage >&2
+            return 2
+            ;;
+        esac
+        shift
+      done
+      if ((skills == 1)); then
+        if ((purge == 1)); then
+          error "--skills and --purge are separate scopes; run them separately."
+          return 2
+        fi
+        if [[ -z "$env" ]]; then
+          env="$(select_env)" || exit 1
+        fi
+        require_known_env "$env"
+        cmd_uninstall_skills "$env"
+      elif ((purge == 1)); then
         cmd_uninstall_purge
       else
         cmd_uninstall
