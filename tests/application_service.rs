@@ -536,3 +536,30 @@ fn supersede_persists_the_reason_on_the_link() {
     let older = svc.get("r-old").unwrap().unwrap();
     assert_eq!(older.state, MemoryState::Superseded);
 }
+
+#[test]
+fn supersede_rejects_when_the_older_side_is_not_active() {
+    // Pre-existing gate, now pinned because supersede was rewritten around
+    // it (T5 durable probe): a non-active older side must be rejected
+    // before anything is written.
+    let (mut svc, _dir) = make_service();
+    let mut older = save_req("st-old", "older");
+    older.state = MemoryState::Proposed;
+    svc.save(older).unwrap();
+    svc.save(save_req("st-new", "newer")).unwrap();
+
+    let err = svc
+        .supersede(supersede_req("st-old", "st-new", 1, 1))
+        .unwrap_err();
+    match &err {
+        MnexisError::InvalidArgument { field, message } => {
+            assert_eq!(field, "older");
+            assert!(message.contains("must be active, is proposed"), "{message}");
+        }
+        other => panic!("expected InvalidArgument, got {other:?}"),
+    }
+    let mem = svc.get("st-old").unwrap().unwrap();
+    assert_eq!(mem.state, MemoryState::Proposed, "nothing written");
+    assert_eq!(mem.revision, 1);
+    assert!(svc.links("st-old").unwrap().is_empty());
+}
