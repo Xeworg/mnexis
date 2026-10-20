@@ -40,9 +40,25 @@ mnexis list
 mnexis search "first memory"
 ```
 
+## Projects
+
+A "project" is the user's current focus of work. mnexis scopes memories
+by **namespace**, and a binding ties a workspace to the namespace an
+agent writes into, so a project's memories stay together across
+sessions:
+
+```sh
+mnexis project bind mnexis --key git:github.com-Xeworg-mnexis
+mnexis config allow-namespace mnexis
+mnexis save --namespace mnexis "a fact worth keeping"
+```
+
+See [docs/projects.md](docs/projects.md) for the identity rules, the
+agent protocol, and the registry format.
+
 ## CLI
 
-The full surface (15 command groups; see `mnexis --help`):
+The full surface (16 command groups; see `mnexis --help`):
 
 ```
 version           print the version and exit
@@ -61,6 +77,10 @@ purge             hard-delete soft-deleted memories (dry-run by default)
 reindex           rebuild the FTS5 index from canonical data
 doctor            integrity checks; --repair rebuilds FTS5
 config show       print effective configuration and scope
+config allow-namespace
+                  authorize a namespace for read and write in the profile
+project bind/list/unbind
+                  manage workspace → namespace bindings (see docs/projects.md)
 import / export   JSONL round-trip with conflict policies
 context           budgeted memory_context pipeline (PRD §9)
 tui               browse and edit memories in a terminal UI
