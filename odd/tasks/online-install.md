@@ -48,7 +48,7 @@ cuando hay una versión nueva y ofrece instalarla.
 | T3 | S2, S3, S4, S5, S7 | `install.sh` servible por URL: detección de plataforma, descarga del artefacto, verificación del checksum, instalación atómica en `~/.local/bin`, pin de versión, fallback a compilar desde fuente | |
 | T4 | S3, S10 | El one-liner cierra lanzando la TUI; idempotencia, sin root, camino de desinstalación | |
 | T5 | S4, S8, S9 | `mnexis upgrade [--check]`: servicio de actualización (HEAD del redirect, caché diaria, descarga + verificación + reemplazo atómico) | |
-| T6 | S1, S8 | La TUI muestra en el menú la versión nueva y ofrece actualizarse | |
+| T6 | S1, S8 | La TUI muestra en el menú la versión nueva y ofrece actualizarse | 9701546 |
 
 ## Log
 
@@ -153,6 +153,25 @@ cuando hay una versión nueva y ofrece instalarla.
   y el comando funciona sin profile (lo que actualiza es el binario, no
   las memorias). Suite completa: 20 suites en verde; `cargo fmt` limpio y
   clippy de vuelta en 36 warnings (los 5 nuevos se corrigieron).
+- L20 (cierre): la feature `online-install` queda cerrada con sus seis
+  tareas. Verificación final sobre la rama: **20 suites cargo en verde**
+  (168 de lib + las de integración), **41 pruebas de node**, **262
+  aserciones del instalador** en verde (12 archivos), `cargo fmt --check`
+  limpio y clippy en 36 warnings (la línea de base). El camino completo
+  queda así: `git tag v0.1.0` publica los artefactos con sus checksums;
+  `curl … | bash` los instala; `mnexis upgrade` actualiza después; la
+  TUI avisa de cada versión nueva. Lo que **no** se pudo verificar local
+  es la corrida real de GitHub Actions (necesita un tag y la red): la
+  primera release la corta el usuario.
+- L21 (pendiente, decisión del usuario): la **firma** de los artefactos
+  queda como feature aparte, con la clave pública en el repo y su
+  comando de verificación. El checksum protege contra corrupción o
+  descarga truncada, no contra una release o un CI comprometidos; las
+  notas de la release lo dicen de entrada.
+- L22 (nota de proceso): las seis tareas se commitearon sobre `main`
+  por error y la rama se creó después; `main` (local y remoto) quedó
+  intacto en `5a046e9` y el trabajo vive en `feat/mnexis-online-install`.
+  La entrega es una cadena de PRs apilados, como la anterior.
 - L18 (T6, diseño): el chequeo y la instalación **nunca corren en el loop
   de eventos**: el chequeo arranca en un hilo cuando abre la TUI y el
   menú muestra lo que volvió; la instalación que pide el usuario corre
