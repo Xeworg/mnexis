@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeRemoteUrl, workspaceKey, deriveNamespaceName, selectNamespace } from "../lib/workspace.js";
+import {
+	deriveNamespaceName,
+	findMarkerNamespace,
+	normalizeRemoteUrl,
+	selectNamespace,
+	workspaceKey,
+} from "../lib/workspace.js";
 
 test("normalizeRemoteUrl strips https protocol, .git suffix and lowercases", () => {
 	assert.equal(
@@ -66,4 +72,39 @@ test("selectNamespace keeps an existing binding and never renames it", () => {
 test("selectNamespace derives a new namespace when the key is unknown", () => {
 	const selection = selectNamespace({ bindings: [], key: "path:/tmp/x", fallbackName: "derived" });
 	assert.deepEqual(selection, { namespace: "derived", bound: false });
+});
+
+test("findMarkerNamespace reads the nearest marker at or above the directory", () => {
+	const files = {
+		"/w/project/.mnexis-namespace": "ns-marcado\n",
+	};
+	const readFile = (file) => {
+		if (!(file in files)) {
+			throw new Error("ENOENT");
+		}
+		return files[file];
+	};
+	assert.equal(findMarkerNamespace("/w/project", { readFile }), "ns-marcado");
+	assert.equal(findMarkerNamespace("/w/project/sub", { readFile }), "ns-marcado");
+});
+
+test("findMarkerNamespace keeps walking when the marker is empty", () => {
+	const files = {
+		"/w/project/.mnexis-namespace": "   \n",
+		"/w/.mnexis-namespace": "ns-de-arriba\n",
+	};
+	const readFile = (file) => {
+		if (!(file in files)) {
+			throw new Error("ENOENT");
+		}
+		return files[file];
+	};
+	assert.equal(findMarkerNamespace("/w/project/sub", { readFile }), "ns-de-arriba");
+});
+
+test("findMarkerNamespace answers null when there is no marker", () => {
+	const readFile = () => {
+		throw new Error("ENOENT");
+	};
+	assert.equal(findMarkerNamespace("/w/project", { readFile }), null);
 });

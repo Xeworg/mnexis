@@ -33,17 +33,19 @@ working directory. mnexis never guesses it.
 | --- | --- |
 | Git repository with a remote | `git:<normalized remote url>` — e.g. `git:github.com-xeworg-mnexis` |
 | Git repository without a remote | `path:<absolute repository root>` |
-| Directory with a `.mnexis-namespace` marker | `path:<absolute directory holding the marker>` |
 | Plain directory | `path:<absolute working directory>` |
 
 Normalization of a remote: drop the protocol (`https://`, `ssh://`),
-drop a trailing `.git`, lowercase the host, and replace `/`, `:` and `.`
-with `-`. A git remote is preferred over a path because it survives
-clones, renames and moves between machines.
+drop a trailing `.git`, lowercase the whole URL, and replace `/` and `:`
+with `-` — the host's dots survive. A git remote is preferred over a path
+because it survives clones, renames and moves between machines.
 
 The marker (`.mnexis-namespace`, a one-line file) exists for workspaces
-that are not repositories: it marks the project root so a working
-directory nested inside it still resolves to the same project.
+that are not repositories: it names the namespace of the workspace, so a
+working directory nested inside it still resolves to the same project.
+The marker does not change the key, and it never overrides a binding: the
+binding for the key wins, and the marker is the fallback. The CLI and the
+pi extension resolve it the same way.
 
 ## Commands
 
@@ -124,6 +126,11 @@ update, supersede or delete a memory that lives in another one. The CLI
 enforces it for writes run from a bound workspace — the command fails
 with `FORBIDDEN` (exit 4) and names the namespace it accepts — and the
 pi extension refuses the same writes before they reach the CLI.
+
+A workspace resolves to a namespace in this order: the binding recorded
+for its key, then the nearest `.mnexis-namespace` marker at or above the
+working directory, then nothing — and "nothing" means the profile
+allowlist keeps deciding, as it always did.
 
 ## Example
 

@@ -155,8 +155,7 @@ test("list reads across projects unless a namespace is given", async () => {
 	);
 });
 
-test("a save targets the workspace namespace", async () => {
-	const { log } = setup();
+test("a save targets the workspace namespace", async () => {	const { log } = setup();
 	const { tools, pi } = fakeHost();
 	mnexisMemory(pi);
 	const save = tools.get("mnexis_save");
@@ -194,6 +193,24 @@ test("a supersede inside the workspace namespace goes through", async () => {
 
 	const call = calls(log).find((args) => args[0] === "supersede");
 	assert.ok(call, "supersede was called");
+});
+
+test("a marker names the namespace the extension binds", async () => {
+	const { log, dir } = setup();
+	writeFileSync(join(dir, ".mnexis-namespace"), "ns-marcado\n");
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+	assert.ok(save, "mnexis_save is registered");
+
+	await save.execute("t7", { content: "a fact" }, undefined, undefined, {
+		...context(),
+		cwd: dir,
+	});
+
+	const bind = calls(log).find((args) => args[0] === "project" && args[1] === "bind");
+	assert.ok(bind, "the workspace was bound");
+	assert.equal(bind[2], "ns-marcado", "the marker names the namespace");
 });
 
 test("a supersede of another project's memory is refused", async () => {

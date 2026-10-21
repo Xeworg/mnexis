@@ -44,10 +44,10 @@ recorded in the profile (`projects.toml`). Resolve it before saving:
      The key must be byte-identical across agents and sessions, so never
      keep the original letter case of the repository name. With no remote,
      use `path:<absolute repo root>`.
-   - Without git: walk up from the working directory looking for a
-     `.mnexis-namespace` marker; if one is found, the directory holding it
-     is the project root and the key is `path:<absolute root>`. With no
-     marker, the key is `path:<absolute working directory>`.
+   - Without git: the key is `path:<absolute working directory>`. A
+     `.mnexis-namespace` marker at or above the working directory names
+     the namespace of the workspace (both the CLI and this extension read
+     it); it does not change the key, and a binding always wins over it.
 2. **Look it up:** `mnexis project list` prints `key -> namespace`. If the
    key is listed, use that namespace — never rename it.
 3. **First visit (no binding):** choose a short, lowercase, hyphenated

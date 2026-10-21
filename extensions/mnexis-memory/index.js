@@ -13,7 +13,12 @@
 
 import { createClient, defaultExec } from "./lib/cli.js";
 import { decideAuthorization, describeFailure, allowNamespaceCommand } from "./lib/gate.js";
-import { deriveNamespaceName, selectNamespace, workspaceKey } from "./lib/workspace.js";
+import {
+	deriveNamespaceName,
+	findMarkerNamespace,
+	selectNamespace,
+	workspaceKey,
+} from "./lib/workspace.js";
 
 /** Read the write allowlist out of `mnexis config show --json`. */
 export function readWriteNamespaces(configData) {
@@ -160,7 +165,11 @@ export default function mnexisMemoryExtension(pi) {
 
 		const list = await client.projectList(cwd);
 		const bindings = list.code === 0 && list.data && Array.isArray(list.data.bindings) ? list.data.bindings : [];
-		const fallbackName = deriveNamespaceName(rootPath);
+		// A `.mnexis-namespace` marker names the namespace of the
+		// workspace; the mnexis CLI resolves it the same way, so both
+		// sides agree on which project a directory belongs to.
+		const marked = findMarkerNamespace(rootPath);
+		const fallbackName = marked ?? deriveNamespaceName(rootPath);
 		const selection = selectNamespace({ bindings, key, fallbackName });
 
 		if (!selection.bound) {
