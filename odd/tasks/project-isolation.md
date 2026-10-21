@@ -201,4 +201,12 @@ comparten componentes.
   otro proyecto se rechaza en vez de escribirse. `purge` queda fuera a
   propósito: es una operación administrativa sobre todo el profile, no
   sobre un namespace.
+- L22 (review nativa, declinada): con RDD habilitado, `inspect` sobre el
+  candidato (sha256:5f3fd90d…, 30 archivos, 2444 líneas) ofreció
+  `review.start`; el consentimiento lo resolvió el host y quedó
+  **declinado** para este candidato (`consent-declined-this-candidate`).
+  No se creó lineage y no hubo mutaciones. Una declinación es por
+  candidato: no apaga la review para otros candidatos ni autoriza
+  entrega. La verificación funcional de T6 (verificador independiente)
+  sigue siendo la prueba que acompaña a este cambio.
 
