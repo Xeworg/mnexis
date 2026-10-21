@@ -132,45 +132,12 @@ require_known_extension_env() {
   fi
 }
 
-# Every shipped extension name (directories with an extension entry point
-# inside extensions/).
-shipped_extension_names() {
-  local dir name
-  for dir in "$SCRIPT_DIR"/extensions/*/; do
-    [[ -f "$dir/index.js" || -f "$dir/index.ts" ]] || continue
-    name="${dir%/}"
-    printf '%s\n' "${name##*/}"
-  done
-}
-
-require_shipped_extensions() {
-  if [[ -z "$(shipped_extension_names)" ]]; then
-    die "no extensions found in $SCRIPT_DIR/extensions (each extension is a directory with an index.js)"
-  fi
-}
-
 # Validate a --env value, dying with the supported list when unknown.
 require_known_env() {
   local env="$1"
   if ! skills_env_dir "$env" >/dev/null; then
     error "unknown environment: '$env' (supported: $(skills_envs | tr '\n' ' '))"
     exit 2
-  fi
-}
-
-# Every shipped skill name (directories with a SKILL.md inside skills/).
-shipped_skill_names() {
-  local dir name
-  for dir in "$SCRIPT_DIR"/skills/*/; do
-    [[ -f "$dir/SKILL.md" ]] || continue
-    name="${dir%/}"
-    printf '%s\n' "${name##*/}"
-  done
-}
-
-require_shipped_skills() {
-  if [[ -z "$(shipped_skill_names)" ]]; then
-    die "no skills found in $SCRIPT_DIR/skills (each skill is a directory with a SKILL.md)"
   fi
 }
 

@@ -4,8 +4,6 @@
 //! The assets are embedded in the executable, so an installed `mnexis` can
 //! set up pi or opencode without a source checkout.
 
-use std::path::PathBuf;
-
 use serde_json::json;
 
 use crate::application::agents::{
@@ -48,10 +46,27 @@ fn resolve_filter(requested: Option<&String>) -> Result<AssetFilter, MnexisError
     }
 }
 
+/// An environment that cannot host a kind of asset is an error, not a
+/// silent no-op: asking for an extension in opencode must say so.
+fn ensure_applicable(
+    environment: AgentEnvironment,
+    filter: AssetFilter,
+) -> Result<(), MnexisError> {
+    if filter == AssetFilter::Extension && environment == AgentEnvironment::Opencode {
+        return Err(MnexisError::invalid_argument(
+            "only",
+            "opencode has no extension directory in the mnexis registry; \
+             install the skill instead (--only skill)",
+        ));
+    }
+    Ok(())
+}
+
 /// Install the integration for an environment.
 pub fn install(env: Option<&String>, only: Option<&String>) -> Result<CommandOutcome, MnexisError> {
     let environment = resolve_environment(env)?;
     let filter = resolve_filter(only)?;
+    ensure_applicable(environment, filter)?;
     let installer = AgentInstaller::from_env();
     let report = installer.install(environment, filter).map_err(io_error)?;
     Ok(CommandOutcome::new(
@@ -71,6 +86,7 @@ pub fn uninstall(
 ) -> Result<CommandOutcome, MnexisError> {
     let environment = resolve_environment(env)?;
     let filter = resolve_filter(only)?;
+    ensure_applicable(environment, filter)?;
     let installer = AgentInstaller::from_env();
     let report = installer.uninstall(environment, filter).map_err(io_error)?;
     Ok(CommandOutcome::new(
@@ -185,9 +201,4 @@ fn render_report(report: &InstallReport, action: &str) -> String {
 /// Map an IO error into the domain error type.
 fn io_error(error: std::io::Error) -> MnexisError {
     MnexisError::invalid_argument("io", format!("could not write the agent assets: {error}"))
-}
-
-/// The path an environment's skills live in, for the help text.
-pub fn skills_dir_hint(environment: AgentEnvironment) -> PathBuf {
-    AgentInstaller::from_env().skills_dir(environment)
 }

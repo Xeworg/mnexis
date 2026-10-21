@@ -210,7 +210,7 @@ fn render_agents(
     }
     frame.render_widget(
         Paragraph::new(Text::from(lines))
-            .block(pane_block("Agentes".into(), true))
+            .block(pane_block("Agents".into(), true))
             .wrap(Wrap { trim: false }),
         area,
     );

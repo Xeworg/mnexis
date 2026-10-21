@@ -243,10 +243,7 @@ impl AgentInstaller {
             let was_installed = self.is_installed(&target);
             for file in asset.files {
                 let path = target.directory.join(file.path);
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&path, file.contents)?;
+                write_file_atomically(&path, file.contents)?;
                 report.files.push(InstalledFile {
                     path,
                     action: FileAction::Written,
@@ -289,7 +286,9 @@ impl AgentInstaller {
             if let Some(asset) = asset_for(target.kind) {
                 for file in asset.files {
                     let path = target.directory.join(file.path);
-                    if path.is_file() {
+                    // symlink_metadata does not follow links: a symlink is
+                    // removed as a link, never as its target.
+                    if fs::symlink_metadata(&path).is_ok() {
                         fs::remove_file(&path)?;
                         report.files.push(InstalledFile {
                             path,
@@ -307,6 +306,30 @@ impl AgentInstaller {
             });
         }
         Ok(report)
+    }
+}
+
+/// Write a file by replacing it, never through a symlink.
+///
+/// Writing in place would follow a symlink and destroy the file it points
+/// to; renaming over it replaces the link itself and leaves the target
+/// alone.
+fn write_file_atomically(path: &Path, contents: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "asset".to_string());
+    let temporary = path.with_file_name(format!(".{file_name}.mnexis-tmp"));
+    fs::write(&temporary, contents)?;
+    match fs::rename(&temporary, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            fs::remove_file(&temporary).ok();
+            Err(error)
+        }
     }
 }
 
