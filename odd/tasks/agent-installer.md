@@ -84,3 +84,25 @@ TUI abre con un menú donde esa instalación se gestiona sin comandos.
   desde el harness con esa variable exportada instala en el agent dir del
   harness; con `HOME` aislado y la variable ausente, instala bajo
   `~/.pi/agent`.
+- L13 (review): la review nativa del candidato `sha256:d4a53a7b30117dde9b9220a133addf0ec8121e88d8e6ef91ba86ad0ef43af266`
+  (34 archivos / 3897 líneas, nativeRisk "high") fue declinada por el host:
+  `consent-declined-this-candidate`, `lineage_created: false`, sin mutación.
+  El riesgo declarado (item 1: el binario escribe fuera del profile; item 3:
+  cambia el contrato del instalador) se cubrió con verificación independiente,
+  que encontró tres defectos y un riesgo nuevo:
+  - el install escribía in situ: un `SKILL.md` symlinkado llevaba la
+    escritura al archivo destino y lo destruía. Ahora se escribe a un nombre
+    temporal y se renombra encima (reemplaza el enlace, no su destino).
+  - `mnexis agent install --env opencode --only extension` salía 0 con
+    "nothing to install"; ahora sale 2 y apunta a la skill.
+  - código muerto tras la delegación (`shipped_skill_names`,
+    `require_shipped_skills`, `shipped_extension_names`,
+    `require_shipped_extensions`, `skills_dir_hint`) y el título del bloque
+    de la vista de agentes en español.
+  - el verificador sobreescribió por error el `SKILL.md` del agent dir del
+    harness (el `PI_CODING_AGENT_DIR` del entorno); el archivo quedó
+    byte-idéntico al del repo, sin daño. Su scratch en /tmp (182 MB) fue
+    borrado.
+- L14 (evidence): 304 pruebas de cargo en verde (2 nuevas de fidelidad de
+  assets), 197 asserts del instalador (10 archivos; 57 nuevos en
+  `10_agent_cli_test.sh`) y `cargo fmt --check` limpio.
