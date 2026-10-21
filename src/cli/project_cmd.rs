@@ -7,15 +7,11 @@
 //! command never touches memories: unbinding a project leaves the
 //! memories exactly where they are.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::cli::output::CommandOutcome;
-use crate::config::projects::{BindOutcome, ProjectRegistry};
+use crate::config::projects::{BindOutcome, ProjectRegistry, registry_path};
 use crate::domain::error::MnexisError;
-
-fn registry_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("projects.toml")
-}
 
 /// `mnexis project bind <ns> --key <key> [--path <path>]` — record or
 /// update the binding for a workspace key.

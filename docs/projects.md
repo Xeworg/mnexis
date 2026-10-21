@@ -33,17 +33,19 @@ working directory. mnexis never guesses it.
 | --- | --- |
 | Git repository with a remote | `git:<normalized remote url>` — e.g. `git:github.com-xeworg-mnexis` |
 | Git repository without a remote | `path:<absolute repository root>` |
-| Directory with a `.mnexis-namespace` marker | `path:<absolute directory holding the marker>` |
 | Plain directory | `path:<absolute working directory>` |
 
 Normalization of a remote: drop the protocol (`https://`, `ssh://`),
-drop a trailing `.git`, lowercase the host, and replace `/`, `:` and `.`
-with `-`. A git remote is preferred over a path because it survives
-clones, renames and moves between machines.
+drop a trailing `.git`, lowercase the whole URL, and replace `/` and `:`
+with `-` — the host's dots survive. A git remote is preferred over a path
+because it survives clones, renames and moves between machines.
 
 The marker (`.mnexis-namespace`, a one-line file) exists for workspaces
-that are not repositories: it marks the project root so a working
-directory nested inside it still resolves to the same project.
+that are not repositories: it names the namespace of the workspace, so a
+working directory nested inside it still resolves to the same project.
+The marker does not change the key, and it never overrides a binding: the
+binding for the key wins, and the marker is the fallback. The CLI and the
+pi extension resolve it the same way.
 
 ## Commands
 
@@ -88,6 +90,14 @@ A namespace only accepts writes when it is in the profile's
 only ever grow — nothing is revoked — and the profile must already exist
 (`mnexis init`).
 
+Two permissions sit beside the allowlists and are moved with their own
+commands:
+
+```sh
+mnexis config allow-read-all [--revoke]   # reads across namespaces
+mnexis config allow-global [--revoke]     # the reserved 'global' namespace
+```
+
 The scope contract (v1) is unchanged: the scope object keeps the same
 fields and the same semantics. This command only populates the
 allowlists an operator already owns.
@@ -106,7 +116,22 @@ The `mnexis-memory` skill implements this for AI agents:
 
 Recall spans projects: `mnexis search "<query>"` without `--namespace`
 searches every namespace, which is what to use when the answer may live
-in a different project.
+in a different project. The profile decides how far a namespace-less
+read reaches: `allow_read_all` (on by default in a new profile) opens it
+to every project, and `mnexis config allow-read-all --revoke` scopes it
+to `read_namespaces`.
+
+Writes do not span projects: save into this project's namespace and never
+update, supersede or delete a memory that lives in another one. The CLI
+and the MCP server (`mnexis mcp serve`, the same binary) enforce it for
+writes run from a bound workspace — the command fails with `FORBIDDEN`
+(exit 4) and names the namespace it accepts — and the pi extension
+refuses the same writes before they reach the CLI.
+
+A workspace resolves to a namespace in this order: the binding recorded
+for its key, then the nearest `.mnexis-namespace` marker at or above the
+working directory, then nothing — and "nothing" means the profile
+allowlist keeps deciding, as it always did.
 
 ## Example
 

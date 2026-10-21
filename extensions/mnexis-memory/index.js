@@ -13,7 +13,12 @@
 
 import { createClient, defaultExec } from "./lib/cli.js";
 import { decideAuthorization, describeFailure, allowNamespaceCommand } from "./lib/gate.js";
-import { deriveNamespaceName, selectNamespace, workspaceKey } from "./lib/workspace.js";
+import {
+	deriveNamespaceName,
+	findMarkerNamespace,
+	selectNamespace,
+	workspaceKey,
+} from "./lib/workspace.js";
 
 /** Read the write allowlist out of `mnexis config show --json`. */
 export function readWriteNamespaces(configData) {
@@ -36,6 +41,58 @@ export function readItems(payload) {
 		return payload.items;
 	}
 	return [];
+}
+
+/**
+ * The namespace a read tool targets.
+ *
+ * Reads are open across projects: without an explicit namespace the tool
+ * does not narrow the search, so the agent sees what other projects
+ * recorded. An explicit namespace narrows it to that one project.
+ *
+ * @param {unknown} value
+ * @returns {string | undefined}
+ */
+export function readNamespace(value) {
+	const namespace = typeof value === "string" ? value.trim() : "";
+	return namespace === "" ? undefined : namespace;
+}
+
+/**
+ * Check that every memory a write touches lives in the workspace
+ * namespace.
+ *
+ * A write that crosses a project boundary is refused before it reaches
+ * the CLI: this workspace writes only into its own namespace. A memory
+ * that cannot be read cannot be checked either, and a write whose target
+ * is unknown is refused too.
+ *
+ * @returns {Promise<{ message: string, details: Record<string, unknown> } | null>}
+ */
+export async function checkProjectBoundary(client, uuids, namespace, cwd) {
+	for (const uuid of uuids) {
+		const result = await client.show(uuid, cwd);
+		if (result.code !== 0) {
+			return {
+				message:
+					`Cannot read the memory ${uuid} to check which project it belongs to, ` +
+					`so nothing was changed. This workspace writes only into '${namespace}'.`,
+				details: { uuid, namespace },
+			};
+		}
+		const owner =
+			result.data && typeof result.data === "object" ? result.data.namespace : undefined;
+		if (owner !== namespace) {
+			return {
+				message:
+					`The memory ${uuid} lives in namespace '${owner ?? "unknown"}' and this ` +
+					`workspace writes only into '${namespace}'. Saving a memory for another project ` +
+					`is the human's decision, not the agent's.`,
+				details: { uuid, namespace: owner ?? null, workspace: namespace },
+			};
+		}
+	}
+	return null;
 }
 
 /** Build the tool result shape pi expects. */
@@ -108,7 +165,11 @@ export default function mnexisMemoryExtension(pi) {
 
 		const list = await client.projectList(cwd);
 		const bindings = list.code === 0 && list.data && Array.isArray(list.data.bindings) ? list.data.bindings : [];
-		const fallbackName = deriveNamespaceName(rootPath);
+		// A `.mnexis-namespace` marker names the namespace of the
+		// workspace; the mnexis CLI resolves it the same way, so both
+		// sides agree on which project a directory belongs to.
+		const marked = findMarkerNamespace(rootPath);
+		const fallbackName = marked ?? deriveNamespaceName(rootPath);
 		const selection = selectNamespace({ bindings, key, fallbackName });
 
 		if (!selection.bound) {
@@ -291,30 +352,35 @@ export default function mnexisMemoryExtension(pi) {
 
 	pi.registerTool({
 		name: "mnexis_search",
-		label: "Search project memories",
-		promptSnippet: "Recall what was recorded about this project.",
+		label: "Search memories",
+		promptSnippet: "Recall what was recorded, across projects.",
 		description:
-			"Search stored memories of this project (full-text, ranked). Use it before answering " +
-			"from scratch when prior context may exist, and to check what was already recorded.",
+			"Search stored memories (full-text, ranked). Use it before answering " +
+			"from scratch when prior context may exist, and to check what was already recorded. " +
+			"The search reaches every project by default, because projects share components; " +
+			"pass `namespace` to narrow it to one project.",
 		parameters: {
 			type: "object",
 			properties: {
 				query: { type: "string", description: "Search terms." },
 				limit: { type: "number", description: "Maximum number of hits (default: 10)." },
-				namespace: { type: "string", description: "Optional other namespace to search." },
+				namespace: {
+					type: "string",
+					description: "Optional namespace to narrow the search to one project.",
+				},
 			},
 			required: ["query"],
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const workspace = await resolveWorkspace(ctx.cwd);
+			const namespace = readNamespace(params.namespace);
 			const result = await client.search(
-				{ query: params.query, namespace: params.namespace || workspace.namespace, limit: params.limit },
+				{ query: params.query, namespace, limit: params.limit },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
 				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
-					namespace: params.namespace || workspace.namespace,
+					namespace: namespace ?? null,
 				});
 			}
 			const hits = readItems(result.data);
@@ -323,41 +389,45 @@ export default function mnexisMemoryExtension(pi) {
 						.map((hit, index) => `${index + 1}. ${JSON.stringify(hit)}`)
 						.join("\n")
 				: `No memories matched '${params.query ?? ""}'.`;
-			return ok(text, { namespace: params.namespace || workspace.namespace, count: hits.length, hits });
+			return ok(text, { namespace: namespace ?? null, count: hits.length, hits });
 		},
 	});
 
 	pi.registerTool({
 		name: "mnexis_list",
-		label: "List project memories",
-		promptSnippet: "List the memories recorded for this project.",
+		label: "List memories",
+		promptSnippet: "List the memories recorded, across projects.",
 		description:
-			"List the memories stored for this project, newest first. Use it to review what is " +
-			"already recorded before saving something new.",
+			"List the memories stored, newest first. Use it to review what is " +
+			"already recorded before saving something new. The list reaches every " +
+			"project by default; pass `namespace` to narrow it to one project.",
 		parameters: {
 			type: "object",
 			properties: {
-				namespace: { type: "string", description: "Optional other namespace to list." },
+				namespace: {
+					type: "string",
+					description: "Optional namespace to narrow the list to one project.",
+				},
 				limit: { type: "number", description: "Maximum number of memories." },
 			},
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const workspace = await resolveWorkspace(ctx.cwd);
+			const namespace = readNamespace(params.namespace);
 			const result = await client.list(
-				{ namespace: params.namespace || workspace.namespace, limit: params.limit },
+				{ namespace, limit: params.limit },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
 				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
-					namespace: params.namespace || workspace.namespace,
+					namespace: namespace ?? null,
 				});
 			}
 			const items = readItems(result.data);
 			const text = items.length
 				? items.map((item, index) => `${index + 1}. ${JSON.stringify(item)}`).join("\n")
-				: "No memories stored in this namespace yet.";
-			return ok(text, { namespace: params.namespace || workspace.namespace, count: items.length, memories: items });
+				: "No memories stored yet.";
+			return ok(text, { namespace: namespace ?? null, count: items.length, memories: items });
 		},
 	});
 
@@ -389,7 +459,9 @@ export default function mnexisMemoryExtension(pi) {
 		promptSnippet: "Replace an outdated memory with a newer one, keeping the history.",
 		description:
 			"Replace an outdated memory with a newer one, keeping the history. Use it when a fact " +
-			"changed: save the new fact first, then link both records with this tool.",
+			"changed: save the new fact first, then link both records with this tool. Both memories " +
+			"must live in this project's namespace: the tool refuses to touch a memory that belongs " +
+			"to another project.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -404,6 +476,19 @@ export default function mnexisMemoryExtension(pi) {
 			const { workspace, gate } = await prepareWrite(ctx);
 			if (!gate.authorized) {
 				return fail(gate.message, { namespace: workspace.namespace, authorized: false });
+			}
+			const boundary = await checkProjectBoundary(
+				client,
+				[params.older, params.newer],
+				workspace.namespace,
+				ctx.cwd,
+			);
+			if (boundary) {
+				return fail(boundary.message, {
+					namespace: workspace.namespace,
+					authorized: false,
+					...boundary.details,
+				});
 			}
 			const result = await client.supersede(
 				{ older: params.older, newer: params.newer, reason: params.reason },

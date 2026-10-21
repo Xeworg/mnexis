@@ -229,18 +229,43 @@ impl<R: MemoryRepository> MemoryService<R> {
         Ok(mem)
     }
 
+    // --- target of a write ---
+    /// The namespace a memory lives in, read without the scope's read check.
+    ///
+    /// A caller that must decide about a *write* before the service
+    /// authorizes it needs the target namespace, and its own read allowlist
+    /// may not cover that namespace. Identity only: no content, and no
+    /// authorization — the write itself still goes through
+    /// [`MemoryService::update`], [`MemoryService::supersede`],
+    /// [`MemoryService::soft_delete`] or [`MemoryService::restore`], which
+    /// run the scope check.
+    pub fn namespace_of(&self, uuid: &str) -> Result<Option<String>, MnexisError> {
+        Ok(self
+            .repo
+            .get_by_uuid_including_deleted(uuid)?
+            .map(|m| m.namespace))
+    }
+
     // --- list ---
     pub fn list(&self, filter: ListFilter) -> Result<Vec<Memory>, MnexisError> {
-        if let Some(ref ns) = filter.namespace {
-            self.scope.authorize_read(ns)?;
-        }
         let state_str = filter.state.as_ref().map(|s| s.as_str());
-        self.repo.list(
-            filter.namespace.as_deref(),
-            state_str,
-            filter.limit,
-            filter.offset,
-        )
+        match filter.namespace.as_deref() {
+            Some(ns) => {
+                self.scope.authorize_read(ns)?;
+                self.repo
+                    .list(Some(ns), state_str, filter.limit, filter.offset)
+            }
+            // Without a namespace the read covers every namespace the
+            // scope reads: all of them when the reads are open, only its
+            // read namespaces when they are scoped.
+            None => self.repo.list_in(
+                &self.scope.read_scope(),
+                state_str,
+                filter.limit,
+                filter.offset,
+                false,
+            ),
+        }
     }
 
     // --- list deleted ---
@@ -253,10 +278,15 @@ impl<R: MemoryRepository> MemoryService<R> {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Memory>, MnexisError> {
-        if let Some(ns) = namespace {
-            self.scope.authorize_read(ns)?;
+        match namespace {
+            Some(ns) => {
+                self.scope.authorize_read(ns)?;
+                self.repo.list_deleted(Some(ns), limit, offset)
+            }
+            None => self
+                .repo
+                .list_in(&self.scope.read_scope(), None, limit, offset, true),
         }
-        self.repo.list_deleted(namespace, limit, offset)
     }
 
     // --- update ---
@@ -650,10 +680,15 @@ impl<R: MemoryRepository> MemoryService<R> {
         limit: usize,
     ) -> Result<Vec<SearchHit>, MnexisError> {
         validate_query(query, self.config.max_query_bytes)?;
-        if let Some(ns) = namespace {
-            self.scope.authorize_read(ns)?;
+        match namespace {
+            Some(ns) => {
+                self.scope.authorize_read(ns)?;
+                self.repo.search(query, Some(ns), limit)
+            }
+            // The cross-namespace recall is bounded by the scope: open
+            // reads reach every project, scoped reads only their own.
+            None => self.repo.search_in(&self.scope.read_scope(), query, limit),
         }
-        self.repo.search(query, namespace, limit)
     }
 }
 

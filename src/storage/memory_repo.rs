@@ -9,6 +9,7 @@ use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyRecord;
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
 use crate::domain::repository::MemoryRepository;
+use crate::domain::scope::NamespaceScope;
 // SearchHit is defined in the spike's retrieval module for T17; T18 will
 // define the production retrieval type in src/retrieval/fts5.rs.
 use crate::retrieval::SearchHit;
@@ -69,27 +70,44 @@ impl SqliteMemoryRepository {
         })
     }
 
-    /// Shared implementation of [`MemoryRepository::list`] and
+    /// Shared implementation of [`MemoryRepository::list_in`] and
     /// [`MemoryRepository::list_deleted`]; `deleted` selects which side of
     /// the soft-delete flag the query returns.
     fn list_filtered(
         &self,
-        namespace: Option<&str>,
+        namespaces: &NamespaceScope,
         state: Option<&str>,
         limit: usize,
         offset: usize,
         deleted: bool,
     ) -> Result<Vec<Memory>, MnexisError> {
-        let namespace = namespace.map(String::from);
         let state = state.map(String::from);
         let mut sql = format!(
             "SELECT {SELECT_COLUMNS} FROM memories WHERE deleted = {}",
             if deleted { 1 } else { 0 }
         );
         let mut param_refs: Vec<&dyn ToSql> = Vec::new();
-        if let Some(ns) = namespace.as_ref() {
-            sql.push_str(" AND namespace = ?");
-            param_refs.push(ns as &dyn ToSql);
+        match namespaces {
+            NamespaceScope::All => {}
+            NamespaceScope::AllExcept(list) => {
+                if !list.is_empty() {
+                    let placeholders = vec!["?"; list.len()].join(",");
+                    sql.push_str(&format!(" AND namespace NOT IN ({placeholders})"));
+                    for ns in list {
+                        param_refs.push(ns as &dyn ToSql);
+                    }
+                }
+            }
+            NamespaceScope::Only(list) => {
+                if list.is_empty() {
+                    return Ok(Vec::new());
+                }
+                let placeholders = vec!["?"; list.len()].join(",");
+                sql.push_str(&format!(" AND namespace IN ({placeholders})"));
+                for ns in list {
+                    param_refs.push(ns as &dyn ToSql);
+                }
+            }
         }
         if let Some(st) = state.as_ref() {
             sql.push_str(" AND state = ?");
@@ -225,7 +243,11 @@ impl MemoryRepository for SqliteMemoryRepository {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Memory>, MnexisError> {
-        self.list_filtered(namespace, state, limit, offset, false)
+        let scope = match namespace {
+            Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
+            None => NamespaceScope::All,
+        };
+        self.list_filtered(&scope, state, limit, offset, false)
     }
 
     fn list_deleted(
@@ -234,7 +256,22 @@ impl MemoryRepository for SqliteMemoryRepository {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Memory>, MnexisError> {
-        self.list_filtered(namespace, None, limit, offset, true)
+        let scope = match namespace {
+            Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
+            None => NamespaceScope::All,
+        };
+        self.list_filtered(&scope, None, limit, offset, true)
+    }
+
+    fn list_in(
+        &self,
+        namespaces: &NamespaceScope,
+        state: Option<&str>,
+        limit: usize,
+        offset: usize,
+        deleted: bool,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        self.list_filtered(namespaces, state, limit, offset, deleted)
     }
 
     fn update(&mut self, mem: &Memory, expected_revision: i32) -> Result<Memory, MnexisError> {
@@ -748,9 +785,25 @@ impl MemoryRepository for SqliteMemoryRepository {
         namespace: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SearchHit>, MnexisError> {
-        let ns_filter = match namespace {
-            Some(ns) => crate::retrieval::NamespaceFilter::Namespace(ns.to_string()),
-            None => crate::retrieval::NamespaceFilter::Any,
+        let scope = match namespace {
+            Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
+            None => NamespaceScope::All,
+        };
+        self.search_in(&scope, query, limit)
+    }
+
+    fn search_in(
+        &self,
+        namespaces: &NamespaceScope,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, MnexisError> {
+        let ns_filter = match namespaces {
+            NamespaceScope::All => crate::retrieval::NamespaceFilter::Any,
+            NamespaceScope::AllExcept(list) => {
+                crate::retrieval::NamespaceFilter::AnyExcept(list.clone())
+            }
+            NamespaceScope::Only(list) => crate::retrieval::NamespaceFilter::Many(list.clone()),
         };
         crate::retrieval::search(
             &self.conn,

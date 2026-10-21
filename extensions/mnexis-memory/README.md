@@ -19,12 +19,24 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 | --- | --- |
 | `mnexis_save` | Store a durable, self-contained memory about the project. |
 | `mnexis_search` | Full-text search over the stored memories (ranked). |
-| `mnexis_list` | List what is already stored for the project. |
+| `mnexis_list` | List what is already stored. |
 | `mnexis_show` | Read one memory by UUID. |
 | `mnexis_supersede` | Replace an outdated memory with a newer one, keeping history. |
 
 Every tool is declared to the model in every session: availability does not
 depend on the model discovering a skill.
+
+## Read across projects, write inside one
+
+Reads are open: `mnexis_search` and `mnexis_list` reach every project
+(projects share components) unless the model narrows them with a
+`namespace` argument, and `mnexis_show` reads any memory the profile
+allows.
+
+Writes are not: `mnexis_save` always targets the workspace namespace, and
+`mnexis_supersede` refuses a memory that lives in another project. The
+mnexis CLI enforces the same boundary for writes run from a bound
+workspace, so the rule holds even when the agent uses the shell.
 
 ## How the namespace is resolved
 

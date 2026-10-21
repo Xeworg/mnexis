@@ -64,6 +64,26 @@ pub fn explain(
             sql.push_str(" AND m.namespace = ?");
             params.push(ns);
         }
+        NamespaceFilter::Many(namespaces) => {
+            if namespaces.is_empty() {
+                sql.push_str(" AND 0");
+            } else {
+                let placeholders = vec!["?"; namespaces.len()].join(", ");
+                sql.push_str(&format!(" AND m.namespace IN ({placeholders})"));
+                for ns in namespaces {
+                    params.push(ns);
+                }
+            }
+        }
+        NamespaceFilter::AnyExcept(namespaces) => {
+            if !namespaces.is_empty() {
+                let placeholders = vec!["?"; namespaces.len()].join(", ");
+                sql.push_str(&format!(" AND m.namespace NOT IN ({placeholders})"));
+                for ns in namespaces {
+                    params.push(ns);
+                }
+            }
+        }
     }
     if let Some(window) = &valid_window {
         if let Some(vf) = &window.valid_from {

@@ -33,6 +33,11 @@ use crate::storage::sqlite::open_sqlite;
 pub struct McpServer {
     service: Arc<Mutex<ApplicationService>>,
     default_namespace: String,
+    /// The namespace the workspace this server runs in writes into, and
+    /// the key that identifies it. `None` means the server runs outside
+    /// any known project: the profile allowlist keeps deciding.
+    workspace_namespace: Option<String>,
+    workspace_key: String,
 }
 impl McpServer {
     /// Build a McpServer from a data directory.
@@ -61,10 +66,53 @@ impl McpServer {
             settings.to_access_scope()?,
             settings.to_service_config(),
         );
+        // The workspace this server runs in: the same rule the CLI uses
+        // for its own writes (project-isolation S5, S9).
+        let workspace = crate::application::workspace::current_workspace(&data_dir)?;
+        let (workspace_namespace, workspace_key) = match workspace {
+            Some(workspace) => (workspace.namespace, workspace.key),
+            None => (None, String::new()),
+        };
         Ok(Self {
             service: Arc::new(Mutex::new(service)),
             default_namespace,
+            workspace_namespace,
+            workspace_key,
         })
+    }
+
+    /// Refuse a write that leaves the workspace this server runs in.
+    ///
+    /// The scope check still applies on top of this one: this guard
+    /// answers FORBIDDEN with the namespace the workspace accepts, and
+    /// the service still authorizes the write itself.
+    fn authorize_write(&self, namespace: &str) -> Result<(), McpError> {
+        let Some(allowed) = self.workspace_namespace.as_deref() else {
+            return Ok(());
+        };
+        if allowed == namespace {
+            return Ok(());
+        }
+        Err(MnexisError::forbidden(
+            "write",
+            format!(
+                "this workspace writes only into namespace '{allowed}'; \
+                 run `mnexis project bind <namespace> --key {} --force` to change it",
+                self.workspace_key
+            ),
+        )
+        .into())
+    }
+
+    /// Refuse a write whose target is the namespace of `uuid`.
+    ///
+    /// An unknown uuid is left to the service, which answers NOT_FOUND on
+    /// its own.
+    fn authorize_write_memory(&self, svc: &ApplicationService, uuid: &str) -> Result<(), McpError> {
+        match svc.namespace_of(uuid)? {
+            Some(namespace) => self.authorize_write(&namespace),
+            None => Ok(()),
+        }
     }
 
     /// Access the service for direct use (e.g. in tests).
@@ -81,12 +129,14 @@ impl McpServer {
         let uuid = uuid_v4_mcp()?;
         let now = now_rfc3339_mcp();
         let state = parse_state(args.state.clone())?;
+        let namespace = args
+            .namespace
+            .unwrap_or_else(|| self.default_namespace.clone());
+        self.authorize_write(&namespace)?;
         let req = crate::application::SaveRequest {
             uuid: uuid.clone(),
             topic_key: args.topic_key.unwrap_or_default(),
-            namespace: args
-                .namespace
-                .unwrap_or_else(|| self.default_namespace.clone()),
+            namespace,
             memory_type: args.memory_type.unwrap_or_else(|| "fact".to_string()),
             content: args.content,
             actor: "mcp".to_string(),
@@ -178,6 +228,7 @@ impl McpServer {
             .service
             .lock()
             .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        self.authorize_write_memory(&svc, &args.uuid)?;
         let updated = svc.update(req)?;
         drop(svc);
         let json = serde_json::json!({
@@ -238,6 +289,8 @@ impl McpServer {
             .service
             .lock()
             .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        self.authorize_write_memory(&svc, &args.older_uuid)?;
+        self.authorize_write_memory(&svc, &args.newer_uuid)?;
         svc.supersede(req)?;
         drop(svc);
         let json = serde_json::json!({
@@ -253,6 +306,7 @@ impl McpServer {
             .service
             .lock()
             .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        self.authorize_write_memory(&svc, &args.uuid)?;
         svc.soft_delete(&args.uuid, args.expected_revision)?;
         drop(svc);
         let json = serde_json::json!({
@@ -267,6 +321,7 @@ impl McpServer {
             .service
             .lock()
             .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        self.authorize_write_memory(&svc, &args.uuid)?;
         svc.restore(&args.uuid)?;
         drop(svc);
         let json = serde_json::json!({

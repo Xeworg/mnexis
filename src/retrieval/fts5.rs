@@ -15,6 +15,10 @@ pub enum NamespaceFilter {
     Any,
     /// Match memories in exactly this namespace.
     Namespace(String),
+    /// Match memories in any of these namespaces.
+    Many(Vec<String>),
+    /// Match memories in every namespace except these.
+    AnyExcept(Vec<String>),
 }
 
 /// State predicate. The PRD §9 default excludes proposed/disputed/superseded/archived.
@@ -111,6 +115,26 @@ pub fn search(
         NamespaceFilter::Namespace(ns) => {
             sql.push_str(" AND m.namespace = ?");
             params.push(ns);
+        }
+        NamespaceFilter::Many(namespaces) => {
+            if namespaces.is_empty() {
+                sql.push_str(" AND 0");
+            } else {
+                let placeholders = vec!["?"; namespaces.len()].join(", ");
+                sql.push_str(&format!(" AND m.namespace IN ({placeholders})"));
+                for ns in namespaces {
+                    params.push(ns);
+                }
+            }
+        }
+        NamespaceFilter::AnyExcept(namespaces) => {
+            if !namespaces.is_empty() {
+                let placeholders = vec!["?"; namespaces.len()].join(", ");
+                sql.push_str(&format!(" AND m.namespace NOT IN ({placeholders})"));
+                for ns in namespaces {
+                    params.push(ns);
+                }
+            }
         }
     }
 
