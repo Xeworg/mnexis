@@ -184,4 +184,13 @@ comparten componentes.
   subiendo, el binding manda sobre el marker) y la documentación decía
   que el marker formaba parte de la clave: no es así, la clave identifica
   el workspace y el marker nombra su namespace. 41 pruebas de node.
+- L20 (T3-bis, c1ab61f): el guard del CLI no cubría el servidor MCP, que
+  es el mismo binario bajo otro subcomando y el camino que usa un agente
+  cuando el host habla MCP. El servidor resuelve ahora el mismo
+  workspace y rechaza con FORBIDDEN una escritura hacia otro namespace
+  (`memory_save`, `memory_update`, `memory_supersede`, `memory_delete`,
+  `memory_restore`), antes de que el servicio autorice. La prueba nueva
+  (`the_server_refuses_a_write_into_another_namespace`) levanta el
+  servidor con un marker de workspace y comprueba el rechazo y el
+  namespace propio admitido.
 
