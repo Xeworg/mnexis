@@ -39,6 +39,15 @@ asked to, and without choosing a namespace itself:
 ./install.sh uninstall --extensions --env pi
 ```
 
+An installed `mnexis` can do it too — the assets travel inside the binary —
+and the TUI offers the same operation (`mnexis tui` → *Install for agents*):
+
+```sh
+mnexis agent status
+mnexis agent install --env pi
+mnexis agent install --env opencode
+```
+
 On a fresh profile, `mnexis init` creates the default data directory
 (`~/.local/share/mnexis`) with `mnexis.db` and `mnexis.toml`; copy those two
 files to migrate the profile to another machine.

@@ -92,6 +92,25 @@ Behaviour:
   pipe it aborts (exit `1`) with the supported environment list, mirroring
   the `--purge` confirmation policy. An unknown environment exits `2`.
 
+## Installing from the binary
+
+The binary carries the agent assets inside itself, so an installed `mnexis`
+can set up the integration without a source checkout:
+
+```sh
+mnexis agent status                  # what is installed, per environment
+mnexis agent install --env pi        # skill + pi extension
+mnexis agent install --env opencode  # skill only
+mnexis agent uninstall --env pi
+```
+
+`--only skill|extension|all` narrows what an operation touches. The same
+operations are available from the TUI (`mnexis tui` → *Install for agents*),
+which reports what it installed.
+
+This is the only implementation: `install.sh skills|extensions` forwards to
+`mnexis agent install`, so both paths write the same embedded assets.
+
 ## Agent extensions
 
 The repository ships agent extensions in [`extensions/`](../extensions): each
