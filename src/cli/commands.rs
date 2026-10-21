@@ -873,6 +873,17 @@ pub fn import(
 ) -> Result<CommandOutcome, MnexisError> {
     let policy = ConflictPolicy::from_str(policy)?;
     let body = read_input(input.as_deref())?;
+    // The workspace boundary applies to a bulk import as well: a record
+    // that belongs to another project is not written here. The records
+    // are read once more inside the service; this pass only looks at the
+    // namespaces.
+    let guard = WorkspaceGuard::resolve(profile)?;
+    if guard.namespace.is_some() {
+        let max_content_bytes = profile.service_ref().config().max_content_bytes;
+        for record in crate::application::io::parse_jsonl(&body, max_content_bytes)? {
+            guard.authorize(&record.namespace)?;
+        }
+    }
     let summary = profile.service_mut().import(&body, policy, dry_run)?;
     let conflicts: Vec<serde_json::Value> = summary
         .conflicts

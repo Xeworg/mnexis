@@ -1265,6 +1265,61 @@ fn context_with_no_candidates_returns_empty_with_reason() {
     assert!(json["empty_reason"].is_string());
 }
 
+#[test]
+fn a_bulk_import_cannot_write_into_another_workspace() {
+    let source = guard_profile();
+    save(
+        &source,
+        "from another project",
+        &["--namespace", OTHER_NAMESPACE],
+    );
+    let export_path = write_tmp("foreign.jsonl", "");
+    source
+        .run_silent(&["export", "--output", export_path.to_str().expect("utf8")])
+        .unwrap_status("export");
+
+    let p = guard_profile();
+    let workspace = Workspace::marked(MARKER_NAMESPACE);
+    let out = p.run_in_dir(
+        workspace.path(),
+        &["import", "--input", export_path.to_str().expect("utf8")],
+    );
+    assert_eq!(out.status.code(), Some(4));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(MARKER_NAMESPACE),
+        "the message names the allowed namespace: {stderr}"
+    );
+    assert_eq!(
+        count_in(&p, OTHER_NAMESPACE),
+        0,
+        "the foreign record was not written"
+    );
+}
+
+#[test]
+fn a_bulk_import_into_the_own_workspace_is_accepted() {
+    let source = guard_profile();
+    save(
+        &source,
+        "from this project",
+        &["--namespace", MARKER_NAMESPACE],
+    );
+    let export_path = write_tmp("own.jsonl", "");
+    source
+        .run_silent(&["export", "--output", export_path.to_str().expect("utf8")])
+        .unwrap_status("export");
+
+    let p = guard_profile();
+    let workspace = Workspace::marked(MARKER_NAMESPACE);
+    p.run_in_dir(
+        workspace.path(),
+        &["import", "--input", export_path.to_str().expect("utf8")],
+    )
+    .unwrap_status("import");
+    assert_eq!(count_in(&p, MARKER_NAMESPACE), 1);
+}
+
 // --- workspace write isolation (project-isolation S5, S9) ---
 
 /// A working directory the binary runs in, so a test can place a
