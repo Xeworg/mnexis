@@ -124,6 +124,8 @@ pub enum Action {
     AgentUninstall,
     /// Re-read the installation state of every environment (`r`).
     AgentRefresh,
+    /// Install the newer release, when the menu says there is one (`u`).
+    Update,
 }
 
 /// The options of the initial menu (S3, S4).
@@ -239,6 +241,8 @@ pub struct App {
     pub form: Option<Form>,
     /// The highlighted option of the initial menu (`Mode::Menu`).
     pub menu_index: usize,
+    /// The update work of the TUI, when it can check for a new release.
+    pub update: Option<std::sync::Arc<crate::tui::update::UpdateController>>,
     /// The installer of the agent integration (S1, S10). The TUI never
     /// writes agent files itself: every operation goes through this
     /// application service.
@@ -276,6 +280,7 @@ impl App {
             status: None,
             form: None,
             menu_index: 0,
+            update: None,
             agents: AgentInstaller::from_env(),
             agent_status: Vec::new(),
             agent_index: 0,
@@ -297,6 +302,14 @@ impl App {
         let mut app = Self::new(service);
         app.mode = Mode::Menu;
         app
+    }
+
+    /// What the menu shows about a newer release.
+    pub fn update_notice(&self) -> crate::tui::update::UpdateNotice {
+        self.update
+            .as_ref()
+            .map(|controller| controller.notice())
+            .unwrap_or(crate::tui::update::UpdateNotice::None)
     }
 
     pub fn selected_namespace(&self) -> Option<&str> {
@@ -422,6 +435,9 @@ impl App {
             Action::StartSupersede => self.start_supersede(service),
             Action::StartDelete => self.start_delete(service),
             Action::StartRestore => self.start_restore(),
+            // The update is handled by the menu; in the other modes the
+            // key does nothing.
+            Action::Update => {}
             Action::ToggleDeleted => self.toggle_deleted(service),
             Action::Input(c) if self.mode == Mode::Search => {
                 self.query.push(c);
@@ -520,6 +536,15 @@ impl App {
                 self.menu_index = shift(self.menu_index, -1, MenuOption::ALL.len());
             }
             Action::MenuSelect => self.select_menu_option(service),
+            Action::Update => {
+                // Only when the menu announced a release: the key does
+                // nothing when there is nothing to install.
+                if let (Some(controller), crate::tui::update::UpdateNotice::Available { .. }) =
+                    (&self.update, self.update_notice())
+                {
+                    controller.start_install();
+                }
+            }
             _ => {}
         }
     }

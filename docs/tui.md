@@ -37,6 +37,17 @@ The TUI opens on a **menu** with the available actions:
   the pi extension are installed for the supported environments.
 - **Quit** ends the TUI.
 
+When a newer release is published, the menu says so and `u` installs it:
+
+```
+│  mnexis 0.2.0 is published · press u to install it │
+```
+
+The check runs in the background when the TUI opens (its answer is cached
+for a day, so the network is not touched on every start) and the
+installation runs the same way: the interface never freezes while a
+binary is downloaded. The new binary waits for a restart.
+
 ## Agents view
 
 The agents view lists every supported environment (`pi`, `opencode`) with

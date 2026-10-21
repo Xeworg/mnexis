@@ -84,7 +84,7 @@ fn draw_menu(frame: &mut Frame, app: &App) {
         Constraint::Length(1),
     ])
     .areas(frame.area());
-    render_menu(frame, app.menu_index, main);
+    render_menu(frame, app.menu_index, app.update_notice(), main);
     frame.render_widget(
         Paragraph::new(app.status.as_deref().unwrap_or_default()),
         status,
@@ -110,7 +110,12 @@ fn draw_agents(frame: &mut Frame, app: &App) {
 }
 
 /// The menu popup: the options, the highlighted one, and the key hints.
-fn render_menu(frame: &mut Frame, selected: usize, area: Rect) {
+fn render_menu(
+    frame: &mut Frame,
+    selected: usize,
+    notice: crate::tui::update::UpdateNotice,
+    area: Rect,
+) {
     let area = popup_area(area, 70, MENU_HEIGHT);
     frame.render_widget(Clear, area);
     let inner = area.width.saturating_sub(2) as usize;
@@ -122,6 +127,10 @@ fn render_menu(frame: &mut Frame, selected: usize, area: Rect) {
         lines.extend(menu_option_lines(*option, index == selected, inner));
     }
     lines.push(Line::from(""));
+    if let Some(line) = update_notice_line(notice) {
+        lines.push(line);
+        lines.push(Line::from(""));
+    }
     lines.push(Line::from(Span::styled(
         "↑/↓ or j/k move · Enter choose · Esc/q quit",
         Style::new().fg(Color::DarkGray),
@@ -132,6 +141,27 @@ fn render_menu(frame: &mut Frame, selected: usize, area: Rect) {
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+/// The line the menu shows about a newer release, when there is
+/// something to say.
+fn update_notice_line(notice: crate::tui::update::UpdateNotice) -> Option<Line<'static>> {
+    use crate::tui::update::UpdateNotice;
+    let (text, color) = match notice {
+        UpdateNotice::Checking => return None,
+        UpdateNotice::Available { version } => (
+            format!("mnexis {version} is published · press u to install it"),
+            Color::Yellow,
+        ),
+        UpdateNotice::Installing => ("Installing the newer release…".to_string(), Color::Yellow),
+        UpdateNotice::Installed { version } => (
+            format!("mnexis {version} is installed · restart to use it"),
+            Color::Green,
+        ),
+        UpdateNotice::Failed { reason } => (format!("The update failed: {reason}"), Color::Red),
+        UpdateNotice::None => return None,
+    };
+    Some(Line::from(Span::styled(text, Style::new().fg(color))))
 }
 
 /// The two lines of one menu option: the title (in reverse video when it
@@ -631,12 +661,57 @@ mod tests {
     }
 
     #[test]
+    fn the_menu_announces_a_newer_release() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_menu(
+                    frame,
+                    0,
+                    crate::tui::update::UpdateNotice::Available {
+                        version: "0.2.0".to_string(),
+                    },
+                    area,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(
+            text.contains("0.2.0"),
+            "the menu names the published version: {text}"
+        );
+        assert!(
+            text.contains("press u"),
+            "the menu says how to install it: {text}"
+        );
+    }
+
+    #[test]
+    fn the_menu_says_nothing_about_the_update_when_there_is_none() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_menu(frame, 0, crate::tui::update::UpdateNotice::None, area);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(
+            !text.contains("press u"),
+            "the menu stays quiet when there is no update: {text}"
+        );
+    }
+
+    #[test]
     fn the_menu_renders_every_option_with_its_description() {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal
             .draw(|frame| {
                 let area = frame.area();
-                render_menu(frame, 1, area);
+                render_menu(frame, 1, crate::tui::update::UpdateNotice::None, area);
             })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();

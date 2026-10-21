@@ -1,8 +1,53 @@
 # Installing mnexis
 
+There are two ways to install mnexis on Linux:
+
+- **from a link**: the installer published in every release downloads the
+  binary for your platform, verifies it against the checksum the release
+  publishes and installs it;
+- **from the sources**: the same script builds the working tree with
+  cargo.
+
+Both paths install the same binary to `~/.local/bin/mnexis` and both are
+the same `install.sh` — the mode follows the script itself, not the
+working directory.
+
+## From a link
+
+```sh
+curl -fsSL https://github.com/Xeworg/mnexis/releases/latest/download/install.sh | bash
+```
+
+The script needs `bash` (it is a bash script), `curl`, `sha256sum` and
+`tar`. It downloads the artifact for your platform
+(`mnexis-linux-x86_64.tar.gz` or `mnexis-linux-aarch64.tar.gz`), verifies
+it against the `SHA256SUMS` the release publishes, installs it and opens
+the TUI.
+
+Pin a version with the environment (the script installs the version you
+ask for, and refuses an artifact that carries another one):
+
+```sh
+MNEXIS_VERSION=0.1.0 \
+  curl -fsSL https://github.com/Xeworg/mnexis/releases/latest/download/install.sh | bash
+```
+
+You can also fetch the script first and read it before running it:
+
+```sh
+curl -fsSLO https://github.com/Xeworg/mnexis/releases/latest/download/install.sh
+less install.sh
+bash install.sh
+```
+
+The release artifacts are **not signed**: the checksum proves the file is
+the one that was published, not that the release was not tampered with.
+See [release.md](release.md).
+
+## From the sources
+
 `install.sh` builds the `mnexis` binary from source with cargo and installs
-it for the current user. There is no binary-download path: the script only
-uses the local Rust toolchain (S1 non-goal: no GitHub Releases / `curl | sh`).
+it for the current user.
 
 ## Requirements
 
@@ -13,6 +58,7 @@ uses the local Rust toolchain (S1 non-goal: no GitHub Releases / `curl | sh`).
 - A C toolchain for the bundled SQLite (`rusqlite` builds SQLite from
   source).
 - `bash` plus the usual coreutils (`mkdir`, `cp`, `chmod`, `rm`).
+- For the online path: `curl`, `sha256sum` and `tar`.
 
 ## Install
 
@@ -43,6 +89,10 @@ Re-running the script overwrites the installed binary cleanly, so it is the
 normal way to upgrade after pulling new sources. `./install.sh install` is
 the explicit spelling of the default action; `./install.sh --help` prints
 usage.
+
+The online path does the same thing with the published artifact instead
+of a local build, and it opens the TUI when the output is a terminal (it
+is not: in a script nobody is watching, and `MNEXIS_NO_TUI=1` turns it off).
 
 ### Verify
 

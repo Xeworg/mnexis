@@ -1,0 +1,122 @@
+name: release
+
+# A tag cuts a release: the workflow runs the whole suite, builds the
+# artifacts for every supported platform and publishes them with their
+# checksums. The tag is the version (v0.1.0 -> 0.1.0).
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        # The repository carries a warning baseline (36 on `main`), so
+        # clippy reports instead of gating: `-D warnings` would fail every
+        # release on code that is not this feature's.
+        run: cargo clippy --all-targets
+      - name: Tests
+        run: cargo test --locked
+      - name: Installer suite
+        run: bash scripts/test-installer.sh
+
+  build:
+    name: build ${{ matrix.arch }}
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: bash scripts/package-release.sh --version "${GITHUB_REF_NAME}" --arch "${{ matrix.arch }}" --outdir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mnexis-${{ matrix.arch }}
+          path: |
+            dist/mnexis-linux-${{ matrix.arch }}.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Merge the checksums
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp artifacts/*/mnexis-linux-*.tar.gz release/
+          cat artifacts/*/SHA256SUMS >release/SHA256SUMS
+          # The installer itself travels with the release and is covered by
+          # the same checksum file.
+          cp install.sh release/install.sh
+          (cd release && sha256sum -- install.sh >>SHA256SUMS)
+          # The sort happens inside `release/`: the job's working
+          # directory does not hold the file.
+          (cd release && sort -k2 -- SHA256SUMS >SHA256SUMS.sorted && mv SHA256SUMS.sorted SHA256SUMS)
+      - name: Verify the checksums
+        run: cd release && sha256sum -c SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          notes="$(mktemp)"
+          cat >"$notes" <<NOTES
+          mnexis ${TAG#v}
+
+          Install it with:
+
+              curl -fsSL https://github.com/Xeworg/mnexis/releases/latest/download/install.sh | bash
+
+          Pin a version with MNEXIS_VERSION:
+
+              curl -fsSL https://github.com/Xeworg/mnexis/releases/download/${TAG}/install.sh | bash
+
+          The artifacts in this release are covered by SHA256SUMS, which you
+          can verify with:
+
+              sha256sum -c SHA256SUMS
+
+          This release is not signed yet: the checksum protects against a
+          corrupted or truncated download, not against a compromised
+          release. Signature verification is on the roadmap.
+          NOTES
+          gh release create "$TAG" \
+            release/mnexis-linux-*.tar.gz \
+            release/install.sh \
+            release/SHA256SUMS \
+            --title "mnexis ${TAG#v}" \
+            --notes-file "$notes" \
+            --verify-tag

@@ -5,7 +5,29 @@ binary, no daemon, no cloud. Linux-first MVP.
 
 ## Install
 
-Linux, Rust 1.95+ (`rust-toolchain.toml`), and a C toolchain (bundled SQLite).
+Linux. The quick way — a published binary, verified against the checksum
+the release publishes:
+
+```sh
+curl -fsSL https://github.com/Xeworg/mnexis/releases/latest/download/install.sh | bash
+```
+
+It downloads the release artifact for your platform, checks it against
+`SHA256SUMS`, installs it to `~/.local/bin/mnexis` and opens the TUI. Pin
+a version with `MNEXIS_VERSION`:
+
+```sh
+MNEXIS_VERSION=0.1.0 \
+  curl -fsSL https://github.com/Xeworg/mnexis/releases/latest/download/install.sh | bash
+```
+
+The releases are **not signed yet**: the checksum protects against a
+corrupted or truncated download, not against a compromised release. See
+[docs/release.md](docs/release.md) for what that means and for how a
+release is cut.
+
+From the sources — Rust 1.95+ (`rust-toolchain.toml`) and a C toolchain
+(bundled SQLite):
 
 ```sh
 git clone <this-repo> mnexis
@@ -18,6 +40,13 @@ The script builds the release binary with cargo and installs it to
 your PATH. Re-running it overwrites the installed binary. See
 [docs/install.md](docs/install.md) for requirements, uninstall, and
 `uninstall --purge` semantics.
+
+An installed mnexis can update itself:
+
+```sh
+mnexis upgrade --check   # is there a newer release?
+mnexis upgrade           # install it
+```
 
 To install the shipped agent skills (`skills/`, starting with
 `mnexis-memory`) into an AI environment — `pi`
@@ -122,6 +151,7 @@ restore           restore a soft-deleted memory
 purge             hard-delete soft-deleted memories (dry-run by default)
 reindex           rebuild the FTS5 index from canonical data
 doctor            integrity checks; --repair rebuilds FTS5
+upgrade           check for a newer release and install it
 config show       print effective configuration and scope
 config allow-namespace
                   authorize a namespace for read and write in the profile
