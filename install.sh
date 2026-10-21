@@ -209,8 +209,11 @@ select_env() {
 
 # Resolve the repository root without external tools so the missing
 # toolchain check works even with an empty PATH.
-SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
-if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
+# A script piped from the network has no file of its own, and BASH_SOURCE
+# is then empty: reading it unbound would abort the script under `set -u`.
+SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+SCRIPT_DIR="${SCRIPT_PATH%/*}"
+if [[ -z "$SCRIPT_PATH" || "$SCRIPT_DIR" == "$SCRIPT_PATH" ]]; then
   SCRIPT_DIR="."
 fi
 SCRIPT_DIR="$(cd -- "$SCRIPT_DIR" && pwd -P)"
@@ -309,24 +312,28 @@ install_from_release() {
   local version="${1:-}"
   local platform asset base tmp expected actual found
   platform="$(release_platform)" || {
-    error "mnexis publishes binaries for linux-x86_64 and linux-aarch64 only."
-    error "This machine reports: $(uname -s) $(uname -m)."
-    error "Build it from source instead:"
-    error "  git clone $REPO_URL && cd mnexis && ./install.sh"
-    return 1
+    error "mnexis publishes binaries for linux-x86_64 and linux-aarch64 only;"
+    error "this machine reports: $(uname -s) $(uname -m)."
+    error "Building it from the published sources instead."
+    install_from_source_clone "$version"
+    return $?
   }
   require_download_tools
 
   asset="mnexis-$platform.tar.gz"
   base="$(release_base_url "$version")"
-  tmp="$(mktemp -d)"
+  # The working directory lives inside $HOME: the installer writes
+  # nothing outside it.
+  tmp="$(mktemp -d "$HOME/.mnexis-install.XXXXXX")"
   # shellcheck disable=SC2064  # the path is expanded now, on purpose.
   trap "rm -rf -- '$tmp'" RETURN
 
   printf 'Downloading %s\n' "$base/$asset"
   if ! curl -fsSL --retry 3 --retry-delay 1 -o "$tmp/$asset" "$base/$asset"; then
     error "the download failed: $base/$asset"
-    return 1
+    error "Building it from the published sources instead."
+    install_from_source_clone "$version"
+    return $?
   fi
   if ! curl -fsSL --retry 3 --retry-delay 1 -o "$tmp/SHA256SUMS" "$base/SHA256SUMS"; then
     error "the checksum file could not be downloaded: $base/SHA256SUMS"
@@ -377,7 +384,7 @@ install_from_source_clone() {
     error "git was not found on PATH."
     return 1
   fi
-  tmp="$(mktemp -d)"
+  tmp="$(mktemp -d "$HOME/.mnexis-install.XXXXXX")"
   # shellcheck disable=SC2064  # the path is expanded now, on purpose.
   trap "rm -rf -- '$tmp'" RETURN
   if [[ -n "$version" ]]; then
@@ -450,7 +457,7 @@ cmd_install() {
     maybe_open_tui "$INSTALL_DIR/mnexis"
     return 0
   fi
-  if [[ -f "${BASH_SOURCE[0]}" && -f "$SCRIPT_DIR/Cargo.toml" ]]; then
+  if [[ -f "$SCRIPT_PATH" && -f "$SCRIPT_DIR/Cargo.toml" ]]; then
     install_from_source_repo
     return 0
   fi
@@ -618,7 +625,9 @@ cmd_uninstall_purge() {
 
 main() {
   if (($# == 0)); then
-    cmd_install
+    # `MNEXIS_VERSION` pins the version here too: the documented one-liner
+    # passes no subcommand at all.
+    cmd_install "${MNEXIS_VERSION:-}" 0
     return 0
   fi
 
