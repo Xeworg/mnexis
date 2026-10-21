@@ -50,7 +50,7 @@ sha256sum -c SHA256SUMS
 
 # The installer, in a throwaway HOME.
 export HOME="$(mktemp -d)"
-curl -fsSL https://github.com/Xeworg/mnexis/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/Xeworg/mnexis/releases/latest/download/install.sh | bash
 mnexis --version
 ```
 
