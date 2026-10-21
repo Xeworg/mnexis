@@ -9,11 +9,25 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
+use crate::application::agents::EnvironmentStatus;
 use crate::domain::memory::MemoryLink;
-use crate::tui::app::{App, MemoryRow, Mode, Pane, PendingConfirm};
+use crate::tui::app::{App, MemoryRow, MenuOption, Mode, Pane, PendingConfirm};
 use crate::tui::form::{Field, Form};
 
+/// Rows the menu popup needs: a blank line, two lines per option, a blank
+/// line between the options, the key hints, and the block borders.
+const MENU_HEIGHT: u16 = 13;
+
 pub fn draw(frame: &mut Frame, app: &App) {
+    match app.mode {
+        Mode::Menu => draw_menu(frame, app),
+        Mode::Agents => draw_agents(frame, app),
+        _ => draw_panes(frame, app),
+    }
+}
+
+/// The three-pane memory surface.
+fn draw_panes(frame: &mut Frame, app: &App) {
     let [main, status, footer] = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(1),
@@ -59,6 +73,147 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if app.mode == Mode::Pick {
         render_pick(frame, app);
     }
+}
+
+/// The initial menu: the options with their description, the active one in
+/// reverse video, and the key hints.
+fn draw_menu(frame: &mut Frame, app: &App) {
+    let [main, status, footer] = Layout::vertical([
+        Constraint::Min(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+    render_menu(frame, app.menu_index, main);
+    frame.render_widget(
+        Paragraph::new(app.status.as_deref().unwrap_or_default()),
+        status,
+    );
+    frame.render_widget(Paragraph::new(footer_text(Mode::Menu)), footer);
+}
+
+/// The agent-installation view: one block per environment with the state
+/// of every asset, plus the status line and the key hints.
+fn draw_agents(frame: &mut Frame, app: &App) {
+    let [main, status, footer] = Layout::vertical([
+        Constraint::Min(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+    render_agents(frame, &app.agent_status, app.agent_index, main);
+    frame.render_widget(
+        Paragraph::new(app.status.as_deref().unwrap_or_default()),
+        status,
+    );
+    frame.render_widget(Paragraph::new(footer_text(Mode::Agents)), footer);
+}
+
+/// The menu popup: the options, the highlighted one, and the key hints.
+fn render_menu(frame: &mut Frame, selected: usize, area: Rect) {
+    let area = popup_area(area, 70, MENU_HEIGHT);
+    frame.render_widget(Clear, area);
+    let inner = area.width.saturating_sub(2) as usize;
+    let mut lines: Vec<Line> = vec![Line::from("")];
+    for (index, option) in MenuOption::ALL.iter().enumerate() {
+        if index > 0 {
+            lines.push(Line::from(""));
+        }
+        lines.extend(menu_option_lines(*option, index == selected, inner));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "↑/↓ or j/k move · Enter choose · Esc/q quit",
+        Style::new().fg(Color::DarkGray),
+    )));
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(pane_block("mnexis".into(), true))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+/// The two lines of one menu option: the title (in reverse video when it
+/// is the active option) and its description.
+fn menu_option_lines(option: MenuOption, selected: bool, width: usize) -> Vec<Line<'static>> {
+    let marker = if selected { "▸ " } else { "  " };
+    let mut title = format!("{marker}{}", option.label());
+    title.push_str(&" ".repeat(width.saturating_sub(title.chars().count())));
+    let title_style = if selected {
+        Style::new().add_modifier(Modifier::REVERSED)
+    } else {
+        Style::new()
+    };
+    let description_style = if selected {
+        Style::new().fg(Color::Yellow)
+    } else {
+        Style::new().fg(Color::DarkGray)
+    };
+    vec![
+        Line::from(Span::styled(title, title_style)),
+        Line::from(Span::styled(
+            format!("  {}", option.description()),
+            description_style,
+        )),
+    ]
+}
+
+/// The agent view: one row per environment, with the state of every asset
+/// and where the asset lives.
+fn render_agents(
+    frame: &mut Frame,
+    environments: &[EnvironmentStatus],
+    selected: usize,
+    area: Rect,
+) {
+    let inner = area.width.saturating_sub(2) as usize;
+    let mut lines: Vec<Line> = Vec::new();
+    if environments.is_empty() {
+        lines.push(Line::from("no agent environment available"));
+    }
+    for (index, environment) in environments.iter().enumerate() {
+        if index > 0 {
+            lines.push(Line::from(""));
+        }
+        let states = environment
+            .assets
+            .iter()
+            .map(|asset| {
+                format!(
+                    "{}: {}",
+                    asset.kind.label(),
+                    if asset.installed {
+                        "installed"
+                    } else {
+                        "not installed"
+                    }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut header = format!("{} — {states}", environment.environment.display_name());
+        header.push_str(&" ".repeat(inner.saturating_sub(header.chars().count())));
+        let header_style = if index == selected {
+            Style::new().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::new()
+        };
+        lines.push(Line::from(Span::styled(header, header_style)));
+        for asset in &environment.assets {
+            lines.push(Line::from(format!(
+                "    {} → {}",
+                asset.kind.label(),
+                asset.directory.display()
+            )));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(pane_block("Agentes".into(), true))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn render_namespaces(frame: &mut Frame, app: &App, area: Rect) {
@@ -252,6 +407,8 @@ fn footer_text(mode: Mode) -> &'static str {
         }
         Mode::Pick => "select the newer memory: j/k or arrows, Enter chooses it, Esc cancels",
         Mode::Confirm => "y confirm  n/Esc cancel (nothing is written until y)",
+        Mode::Menu => "↑/↓ or j/k move  Enter choose  Esc/q quit",
+        Mode::Agents => "i install  u uninstall  r refresh  j/k environment  Esc menu  q quit",
         _ => {
             "n save  e update  s supersede  d delete  r restore  x deleted view  \
              Tab panes  j/k rows  / search  Enter select  Esc clear  q quit"
@@ -366,8 +523,10 @@ fn field_line(field: &Field, focused: bool) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::agents::{AgentEnvironment, AssetKind, AssetStatus};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use std::path::PathBuf;
 
     fn render(form: &Form, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -457,6 +616,127 @@ mod tests {
             footer_text(Mode::Search).contains("q quit"),
             "search keeps quit visible after Enter"
         );
+        assert!(
+            footer_text(Mode::Menu).contains("Enter choose"),
+            "the menu footer names the keys: {}",
+            footer_text(Mode::Menu)
+        );
+        assert!(
+            footer_text(Mode::Agents).contains("i install")
+                && footer_text(Mode::Agents).contains("u uninstall")
+                && footer_text(Mode::Agents).contains("r refresh"),
+            "the agents footer names the keys: {}",
+            footer_text(Mode::Agents)
+        );
+    }
+
+    #[test]
+    fn the_menu_renders_every_option_with_its_description() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_menu(frame, 1, area);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(text.contains("mnexis"), "the title renders: {text}");
+        assert!(
+            text.contains("Memories"),
+            "the first option renders: {text}"
+        );
+        assert!(
+            text.contains("Install for agents"),
+            "the second option renders: {text}"
+        );
+        assert!(text.contains("Quit"), "the third option renders: {text}");
+        assert!(
+            text.contains("Browse and edit your memories"),
+            "the descriptions render: {text}"
+        );
+        assert!(
+            text.contains("Esc/q quit"),
+            "the key hints render without clipping: {text}"
+        );
+
+        // The active option is the one in reverse video.
+        let highlighted: String = buffer
+            .content()
+            .iter()
+            .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            highlighted.contains("Install for agents"),
+            "the active option is highlighted: {highlighted}"
+        );
+        assert!(
+            !highlighted.contains("Memories"),
+            "only the active option is highlighted: {highlighted}"
+        );
+    }
+
+    #[test]
+    fn the_agents_view_renders_every_environment_and_its_assets() {
+        let statuses = agent_statuses();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_agents(frame, &statuses, 0, area);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(
+            text.contains("pi — skill: installed, extension: not installed"),
+            "the pi row renders its asset states: {text}"
+        );
+        assert!(
+            text.contains("opencode — skill: not installed"),
+            "the opencode row renders its asset states: {text}"
+        );
+        assert!(
+            text.contains("/home/tester/.pi/agent/skills/mnexis-memory"),
+            "the destination renders: {text}"
+        );
+        assert!(
+            text.contains("/home/tester/.config/opencode/skills/mnexis-memory"),
+            "the opencode destination renders: {text}"
+        );
+    }
+
+    /// Two environments with the assets mnexis installs in them.
+    fn agent_statuses() -> Vec<EnvironmentStatus> {
+        vec![
+            EnvironmentStatus {
+                environment: AgentEnvironment::Pi,
+                assets: vec![
+                    AssetStatus {
+                        kind: AssetKind::Skill,
+                        name: "mnexis-memory",
+                        directory: PathBuf::from("/home/tester/.pi/agent/skills/mnexis-memory"),
+                        installed: true,
+                    },
+                    AssetStatus {
+                        kind: AssetKind::Extension,
+                        name: "mnexis-memory",
+                        directory: PathBuf::from("/home/tester/.pi/agent/extensions/mnexis-memory"),
+                        installed: false,
+                    },
+                ],
+            },
+            EnvironmentStatus {
+                environment: AgentEnvironment::Opencode,
+                assets: vec![AssetStatus {
+                    kind: AssetKind::Skill,
+                    name: "mnexis-memory",
+                    directory: PathBuf::from("/home/tester/.config/opencode/skills/mnexis-memory"),
+                    installed: false,
+                }],
+            },
+        ]
     }
 
     #[test]
