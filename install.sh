@@ -53,14 +53,17 @@ usage() {
     '' \
     'Options:' \
     '  --env <name>       Target AI environment for skills (default: pi).' \
-    '                     Supported: pi ($HOME/.pi/skills).' \
+    '                     Supported: pi ($PI_CODING_AGENT_DIR or' \
+    '                     $HOME/.pi/agent/skills),' \
+    '                     opencode ($HOME/.config/opencode/skills).' \
     '  -h, --help         Show this help and exit.' \
     '' \
     'Environment:' \
     '  CARGO_TARGET_DIR   Cargo target directory (default: <repo>/target).' \
     '  MNEXIS_DATA_DIR    Profile data directory used to resolve --purge.' \
     '  HOME               The binary is installed under $HOME/.local/bin,' \
-    '                     skills under $HOME/.pi/skills.'
+    '                     pi skills under $HOME/.pi/agent/skills.' \
+    '  PI_CODING_AGENT_DIR  pi agent directory (default: $HOME/.pi/agent).'
 }
 
 error() { printf 'install.sh: %s\n' "$*" >&2; }
@@ -78,12 +81,17 @@ INSTALL_DIR="$HOME/.local/bin"
 # Supported AI environments and where each one discovers user skills.
 # Adding an environment is one entry in each function below.
 skills_envs() {
-  printf '%s\n' pi
+  printf '%s\n' pi opencode
 }
 
 skills_env_dir() {
   case "$1" in
-    pi) printf '%s\n' "$HOME/.pi/skills" ;;
+    # pi advertises user skills from its agent directory (<agent-dir>/skills/),
+    # which defaults to ~/.pi/agent and can be relocated with
+    # PI_CODING_AGENT_DIR. ~/.pi/skills is a *project* location for pi, so
+    # installing there would leave the skill invisible to the model.
+    pi) printf '%s\n' "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/skills" ;;
+    opencode) printf '%s\n' "$HOME/.config/opencode/skills" ;;
     *) return 1 ;;
   esac
 }

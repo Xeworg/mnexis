@@ -7,7 +7,7 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 . "$TESTS_DIR/helpers.sh"
 
-PI_SKILLS="$HOME/.pi/skills"
+PI_SKILLS="$HOME/.pi/agent/skills"
 
 run_installer skills --env pi
 assert_status "seeding: skills --env pi exits 0" 0
