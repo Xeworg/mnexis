@@ -21,6 +21,15 @@ the later `mnexis config allow-namespace` failing with
 `NOT_FOUND: not found: profile ... (run 'mnexis init' first)`.
 Every command accepts `--data-dir <DIR>` to target a different profile.
 
+## If the pi extension is installed
+
+The `mnexis-memory` pi extension (see `extensions/mnexis-memory/`) exposes
+the same operations as native tools — `mnexis_save`, `mnexis_search`,
+`mnexis_list`, `mnexis_show`, `mnexis_supersede` — and resolves the
+namespace and the permission gate by itself. When those tools are available
+in the session, prefer them: the CLI below is the fallback for hosts
+without the extension.
+
 ## Scope to the current project (do this once per session)
 
 Memories are namespaced, and the namespace for the current project is
