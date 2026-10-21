@@ -421,6 +421,24 @@ install_from_source_repo() {
   esac
 }
 
+# The one-liner closes with the TUI: it is the menu that shows what to do
+# next (browse the memories, install the agent integration). The TUI needs
+# a terminal on stdin, which a piped script does not have, so it reads
+# /dev/tty instead. It only runs when the output is a terminal: in a
+# script or in CI nobody is watching.
+maybe_open_tui() {
+  local binary="$1"
+  [[ -x "$binary" ]] || return 0
+  [[ "${MNEXIS_NO_TUI:-0}" != "1" ]] || return 0
+  [[ -t 1 ]] || return 0
+  [[ -r /dev/tty ]] || return 0
+  printf 'Starting the mnexis TUI...\n'
+  # The profile may not exist yet: the TUI needs it to browse, and `init`
+  # is idempotent.
+  "$binary" init >/dev/null 2>&1 || true
+  "$binary" tui </dev/tty || true
+}
+
 # Install: from the repository it builds, standalone it downloads the
 # published binary. The mode follows the script itself, not the working
 # directory: a piped script has no file of its own.
@@ -428,14 +446,20 @@ cmd_install() {
   local version="${1:-}"
   local from_source="${2:-0}"
   if [[ "$from_source" == "1" ]]; then
-    install_from_source_clone "$version"
-    return $?
+    install_from_source_clone "$version" || return $?
+    maybe_open_tui "$INSTALL_DIR/mnexis"
+    return 0
   fi
   if [[ -f "${BASH_SOURCE[0]}" && -f "$SCRIPT_DIR/Cargo.toml" ]]; then
     install_from_source_repo
-    return $?
+    return 0
   fi
-  install_from_release "$version"
+  install_from_release "$version" || return $?
+  maybe_open_tui "$INSTALL_DIR/mnexis"
+  printf 'Next steps:\n'
+  printf '  mnexis init                    create the profile\n'
+  printf '  mnexis agent install --env pi  install the agent integration\n'
+  printf '  mnexis tui                     browse the memories\n'
 }
 
 # Exact resolution order of src/cli/profile.rs:74-90 (the installer has no

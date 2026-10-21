@@ -126,3 +126,17 @@ cuando hay una versión nueva y ofrece instalarla.
   dejando. La suite completa del instalador queda en **258
   aserciones en verde** (12 archivos), con el modo repo intacto. El
   fallback "clonar y compilar" no tiene prueba: necesita git y red.
+- L13 (T4, diseño): el one-liner cierra con la TUI, que es el menú que
+  muestra qué hacer después (memorias, integración de agentes). La TUI
+  necesita una terminal en stdin y un script por pipe no la tiene: lee de
+  `/dev/tty`. **Sólo arranca si la salida es una terminal**: en un script
+  o en CI nadie está mirando, y colgar la instalación ahí sería un
+  desastre. Antes abre el profile (`mnexis init`, idempotente) porque la
+  TUI necesita la base de datos para navegar. `MNEXIS_NO_TUI=1` lo
+  desactiva.
+- L14 (T4, evidencia): 31 aserciones en
+  `tests/installer/12_online_install_test.sh` (4 nuevas): sin terminal la
+  TUI no arranca; con terminal (pty de util-linux `script`) la
+  instalación crea el profile y abre la TUI, verificado con un binario
+  falso que registra cómo fue invocado. Suite del instalador completa:
+  **262 aserciones en verde** (12 archivos).

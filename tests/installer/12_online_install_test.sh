@@ -19,13 +19,16 @@ ASSET="mnexis-linux-x86_64.tar.gz"
 
 mkdir -p "$RELEASE_DIR" "$FAKE_BIN_DIR" "$STANDALONE_DIR"
 
-# The artifact: a stand-in binary that reports its version, plus the files
-# the packaging script puts in the archive.
+# The artifact: a stand-in binary that reports its version and records how
+# it was called, plus the files the packaging script puts in the archive.
 STAGE="$SCRATCH/stage"
 mkdir -p "$STAGE"
 cat >"$STAGE/mnexis" <<'FAKE'
 #!/usr/bin/env bash
 printf 'mnexis 0.1.0\n'
+if [[ -n "${MNEXIS_FAKE_BIN_LOG:-}" ]]; then
+  printf '%s\n' "$*" >>"$MNEXIS_FAKE_BIN_LOG"
+fi
 FAKE
 chmod 0755 "$STAGE/mnexis"
 printf '0.1.0\n' >"$STAGE/VERSION"
@@ -179,5 +182,43 @@ rm -f -- "$FAKE_BIN_DIR/uname"
 run_standalone install
 assert_status "the second install exits 0" 0
 assert_file "the binary is still installed" "$HOME/.local/bin/mnexis"
+
+# --- the one-liner closes with the TUI ------------------------------------
+
+export MNEXIS_FAKE_BIN_LOG="$SCRATCH/bin.log"
+
+# Without a terminal on stdout nobody is watching: the TUI must not start
+# (and the script must not hang).
+: >"$MNEXIS_FAKE_BIN_LOG"
+run_standalone install
+if grep -q '^tui$' "$MNEXIS_FAKE_BIN_LOG" 2>/dev/null; then
+  not_ok "the TUI must not start when the output is not a terminal"
+else
+  ok "the TUI does not start when the output is not a terminal"
+fi
+
+# With a terminal, the install opens the TUI (and creates the profile it
+# needs).
+if ((HAVE_PTY == 1)); then
+  : >"$MNEXIS_FAKE_BIN_LOG"
+  quoted=""
+  printf -v quoted '%q ' "$BASH_BIN" "$STANDALONE_DIR/install.sh" install
+  printf '%s\n' "$quoted" | script -qec "env PATH='$FAKE_BIN_DIR:$PATH' $quoted" /dev/null >"$SCRATCH/tui.out" 2>&1
+  RUN_STATUS=$?
+  RUN_OUT="$(cat -- "$SCRATCH/tui.out")"
+  assert_status "the install with a terminal exits 0" 0
+  if grep -q '^init$' "$MNEXIS_FAKE_BIN_LOG" 2>/dev/null; then
+    ok "the install creates the profile before the TUI"
+  else
+    not_ok "the install did not create the profile (calls: $(cat -- "$MNEXIS_FAKE_BIN_LOG"))"
+  fi
+  if grep -q '^tui$' "$MNEXIS_FAKE_BIN_LOG" 2>/dev/null; then
+    ok "the install opens the TUI"
+  else
+    not_ok "the install did not open the TUI (calls: $(cat -- "$MNEXIS_FAKE_BIN_LOG"))"
+  fi
+else
+  skip "the TUI launch needs util-linux script for a pty"
+fi
 
 finish
