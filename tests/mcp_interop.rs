@@ -1046,6 +1046,78 @@ async fn list_reaches_another_namespace_when_reads_are_open()
 }
 
 // ---------------------------------------------------------------------------
+// S5: the server refuses writes that leave the workspace
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_server_refuses_a_write_into_another_namespace()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    // The workspace names its namespace with a marker, and the human
+    // authorized that namespace for writes.
+    let workspace = tempfile::tempdir_in("target")?;
+    std::fs::write(workspace.path().join(".mnexis-namespace"), "ns-marcado\n")?;
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    std::process::Command::new(&binary)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .arg("config")
+        .arg("allow-namespace")
+        .arg("ns-marcado")
+        .output()?;
+
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir")
+                .arg(data_dir)
+                .arg("mcp")
+                .arg("serve")
+                .current_dir(workspace.path());
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let denied = client
+        .call_tool(
+            CallToolRequestParams::new("memory_save").with_arguments(
+                serde_json::json!({ "content": "into another project", "namespace": "otro-proyecto" })
+                    .as_object()
+                    .expect("static object")
+                    .clone(),
+            ),
+        )
+        .await
+        .expect_err("a write outside the workspace must be refused");
+    let text = format!("{denied}");
+    assert!(
+        text.contains("FORBIDDEN"),
+        "the error must be FORBIDDEN: {text}"
+    );
+    assert!(
+        text.contains("ns-marcado"),
+        "the message names the allowed namespace: {text}"
+    );
+
+    // The workspace's own namespace is accepted.
+    let allowed = client
+        .call_tool(
+            CallToolRequestParams::new("memory_save").with_arguments(
+                serde_json::json!({ "content": "in its own project", "namespace": "ns-marcado" })
+                    .as_object()
+                    .expect("static object")
+                    .clone(),
+            ),
+        )
+        .await?;
+    assert!(!allowed.is_error.unwrap_or(false));
+
+    client.cancel().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Graceful shutdown (S6)
 // ---------------------------------------------------------------------------
 

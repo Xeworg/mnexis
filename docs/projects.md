@@ -123,9 +123,10 @@ to `read_namespaces`.
 
 Writes do not span projects: save into this project's namespace and never
 update, supersede or delete a memory that lives in another one. The CLI
-enforces it for writes run from a bound workspace — the command fails
-with `FORBIDDEN` (exit 4) and names the namespace it accepts — and the
-pi extension refuses the same writes before they reach the CLI.
+and the MCP server (`mnexis mcp serve`, the same binary) enforce it for
+writes run from a bound workspace — the command fails with `FORBIDDEN`
+(exit 4) and names the namespace it accepts — and the pi extension
+refuses the same writes before they reach the CLI.
 
 A workspace resolves to a namespace in this order: the binding recorded
 for its key, then the nearest `.mnexis-namespace` marker at or above the

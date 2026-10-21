@@ -61,7 +61,7 @@ comparten componentes.
 |----|------|-------|--------|
 | T1 | S3, S4, S10 | Scope y profile: clave `allow_read_all`, `allow_global` por defecto en false, `can_read` con lectura abierta salvo `"global"`, comandos `config allow-global` / `config allow-read-all` (con `--revoke`), `config show`, `scope.schema.json` | a639e30 |
 | T2 | S6 | Lecturas abiertas: la extensión lee entre proyectos por defecto (search/list sin namespace, show por UUID) y el CLI las sostiene | 7dfeeb3 |
-| T3 | S5, S9 | Aislamiento de escritura en el CLI: resolución del namespace del workspace actual (binding por clave, marker `.mnexis-namespace`) y guard de escritura en save/update/supersede/delete/restore | |
+| T3 | S5, S9 | Aislamiento de escritura en el CLI: resolución del namespace del workspace actual (binding por clave, marker `.mnexis-namespace`) y guard de escritura en save/update/supersede/delete/restore | 559668a, da9f12a |
 | T4 | S7, S8 | Extensión acotada al proyecto: supersede rechaza objetivos fuera del namespace del workspace; descripciones de las tools y protocolo de la skill | ac03d95 |
 | T5 | S3, S5, S6 | Documentación: README, `docs/`, contrato v1 | |
 | T6 | S1, S2, S5, S9 | Verificación independiente del cambio de permisos + suite completa | |
@@ -150,4 +150,38 @@ comparten componentes.
   comandos de permiso), `docs/contracts/v1/README.md` (`allow_read_all`
   en el contrato) y `docs/PRD-Mnexis.md` §7 (la decisión de producto:
   lecturas abiertas entre proyectos, escrituras cerradas al proyecto).
+- L16 (T3, delegado a `gentle-ai-worker`, revisado por el padre):
+  `src/application/workspace.rs` resuelve el workspace con la misma clave
+  byte a byte que la extensión (`git:<remote normalizado>` >
+  `path:<repo root>` > `path:<cwd>`), y el namespace sale del binding de
+  esa clave, si no del marker `.mnexis-namespace` más cercano, si no nada
+  (la allowlist del profile sigue decidiendo). El guard vive en
+  `src/cli/commands.rs`: `save`, `update`, `supersede`, `delete` y
+  `restore` fallan con FORBIDDEN (exit 4) y un mensaje que nombra el
+  namespace permitido y el `project bind` que lo cambia; para los
+  comandos por UUID el blanco es el namespace de la memoria
+  (`MemoryService::namespace_of`, sólo identidad: ni contenido ni
+  autorización) y el supersede chequea los dos lados.
+- L17 (T3, evidencia): RED del worker: tres tests de integración
+  fallando con `left: Some(0) right: Some(4)` (el guard no existía) y
+  12 pruebas unitarias en rojo con el módulo stub. GREEN: 15 unitarias
+  del módulo, 57 en `cli_commands` (6 nuevas) y 346 en la suite completa.
+  Diferencial contra una copia del árbol base (`git archive`): fase sin
+  marker → 16 pasos con stdout/stderr/código de salida idénticos; fase
+  con marker → sólo cambian las cinco escrituras que salen del proyecto
+  (exit 4). `cargo fmt --check` limpio y clippy en 36 warnings (la línea
+  base). El padre volvió a correr la suite completa: 346 en verde.
+- L18 (T3, riesgo aceptado): en un workspace que resuelve, un UUID que
+  vive en otro namespace responde FORBIDDEN (exit 4) en lugar del
+  NOT_FOUND del profile: se confirma que esa memoria existe. Es el
+  precio de S9 ("nombrar el namespace permitido"), sólo aplica cuando el
+  guard dispara, y con las lecturas abiertas por defecto el agente puede
+  leer esa memoria igual. Queda anotado para T6.
+- L19 (coherencia, 5f5e119): la extensión resolvía el namespace a partir
+  del nombre del directorio y la CLI a partir del marker: podían
+  discrepar sobre qué proyecto era un directorio. La extensión lee ahora
+  el marker con la misma regla (el más cercano gana, uno vacío sigue
+  subiendo, el binding manda sobre el marker) y la documentación decía
+  que el marker formaba parte de la clave: no es así, la clave identifica
+  el workspace y el marker nombra su namespace. 41 pruebas de node.
 
