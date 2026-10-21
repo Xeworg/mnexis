@@ -106,3 +106,21 @@ TUI abre con un menú donde esa instalación se gestiona sin comandos.
 - L14 (evidence): 304 pruebas de cargo en verde (2 nuevas de fidelidad de
   assets), 197 asserts del instalador (10 archivos; 57 nuevos en
   `10_agent_cli_test.sh`) y `cargo fmt --check` limpio.
+- L15 (review): la review nativa del candidato `sha256:258496fcf4dc7ec4eeeb7134cb6c1c0f3adc9790281ad84a0a050ac233a713b9`
+  (36 archivos / 4230 líneas, nativeRisk "high") fue declinada por el host:
+  `consent-declined-this-candidate`, `lineage_created: false`, sin mutación.
+  Una verificación focalizada del delta (la escritura atómica y el guard de
+  peticiones imposibles) confirmó el comportamiento y encontró tres
+  consecuencias del diseño de la escritura atómica, ya corregidas:
+  - el nombre temporal era determinista: un symlink preexistente con ese
+    nombre hacía que la escritura lo siguiera y destruyera su destino. Ahora
+    el nombre es único y el archivo se crea con `create_new`, que nunca
+    sigue un enlace.
+  - el rename crea un inode nuevo, así que reinstalar perdía el modo del
+    archivo reemplazado; ahora se preservan los permisos anteriores.
+  - un uninstall que encontraba un directorio real en la ruta de un archivo
+    distribuido fallaba y quedaba parcial; ahora lo salta.
+- L16 (evidence): 308 pruebas de cargo en verde (4 nuevas de regresión:
+  symlink, temporal huérfano, modo preservado y directorio en el camino) y
+  208 asserts del instalador (68 en `10_agent_cli_test.sh`, con los filtros
+  `--only` cubiertos), `cargo fmt --check` limpio y 0 warnings en release.
