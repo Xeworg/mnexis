@@ -8,6 +8,7 @@
 pub mod app;
 pub mod form;
 mod ui;
+pub mod update;
 
 use std::io::{self, Stdout};
 
@@ -38,6 +39,11 @@ pub fn run(profile: &mut Profile) -> Result<(), MnexisError> {
     }));
 
     let mut app = App::new_at_menu(profile.service_ref());
+    // The version check is a network call: it runs in a thread and the
+    // menu shows what came back.
+    let controller = std::sync::Arc::new(update::UpdateController::new(profile.data_dir.clone()));
+    controller.start_check();
+    app.update = Some(std::sync::Arc::clone(&controller));
     let loop_result = event_loop(&mut terminal, &mut app, profile);
 
     let _ = std::panic::take_hook(); // drop our hook, restore the default
@@ -53,11 +59,15 @@ fn event_loop(
         terminal
             .draw(|frame| ui::draw(frame, app))
             .map_err(term_err)?;
-        match event::read().map_err(term_err)? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => {
-                app.apply(map_key(key, app.mode), profile.service_mut());
+        // The screen is redrawn even when nothing happens, so the update
+        // notice appears as soon as the check answers.
+        if event::poll(std::time::Duration::from_millis(200)).map_err(term_err)? {
+            match event::read().map_err(term_err)? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    app.apply(map_key(key, app.mode), profile.service_mut());
+                }
+                _ => {}
             }
-            _ => {}
         }
         if app.should_quit() {
             return Ok(());
@@ -94,6 +104,8 @@ fn map_key(key: KeyEvent, mode: Mode) -> Action {
             KeyCode::Char('j') | KeyCode::Down => Action::MenuNext,
             KeyCode::Char('k') | KeyCode::Up => Action::MenuPrev,
             KeyCode::Enter => Action::MenuSelect,
+            // `u` installs the newer release the menu announces.
+            KeyCode::Char('u') => Action::Update,
             _ => Action::Noop,
         };
     }
@@ -343,6 +355,7 @@ mod tests {
             Action::MenuPrev
         );
         assert_eq!(map_key(key(KeyCode::Enter), Mode::Menu), Action::MenuSelect);
+        assert_eq!(map_key(key(KeyCode::Char('u')), Mode::Menu), Action::Update);
         assert_eq!(map_key(key(KeyCode::Char('q')), Mode::Menu), Action::Quit);
         assert_eq!(map_key(key(KeyCode::Esc), Mode::Menu), Action::Quit);
         assert_eq!(

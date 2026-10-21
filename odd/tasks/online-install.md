@@ -153,6 +153,19 @@ cuando hay una versión nueva y ofrece instalarla.
   y el comando funciona sin profile (lo que actualiza es el binario, no
   las memorias). Suite completa: 20 suites en verde; `cargo fmt` limpio y
   clippy de vuelta en 36 warnings (los 5 nuevos se corrigieron).
+- L18 (T6, diseño): el chequeo y la instalación **nunca corren en el loop
+  de eventos**: el chequeo arranca en un hilo cuando abre la TUI y el
+  menú muestra lo que volvió; la instalación que pide el usuario corre
+  igual, así que la interfaz no se congela mientras baja un binario. El
+  loop ahora usa `event::poll` con 200 ms, para que el aviso aparezca
+  solo (sin tocar una tecla). El menú anuncia la versión publicada y `u`
+  la instala; el aviso dice que el binario nuevo espera un reinicio
+  (el proceso corriendo sigue con su inode viejo).
+- L19 (T6, evidencia): 32 pruebas de TUI en verde (2 nuevas: el menú
+  nombra la versión publicada y dice cómo instalarla; el menú se queda
+  callado cuando no hay actualización), más la del keymap (`u` en el
+  menú → `Action::Update`). Suite completa: 20 suites en verde, fmt
+  limpio y clippy en 36 warnings.
 - L14 (T4, evidencia): 31 aserciones en
   `tests/installer/12_online_install_test.sh` (4 nuevas): sin terminal la
   TUI no arranca; con terminal (pty de util-linux `script`) la
