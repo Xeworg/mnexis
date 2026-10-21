@@ -174,9 +174,15 @@ impl UpdateService {
     /// report, and that is not an error.
     pub fn latest_version(&self) -> Result<Option<String>, MnexisError> {
         let url = format!("{}/releases/latest", self.repo_url);
-        let output = self
+        // No curl, no network, no published release: there is nothing to
+        // report, and that is not an error. A machine without curl simply
+        // never learns about a new version.
+        let Ok(output) = self
             .system
-            .run("curl", &["-fsSI", "--max-time", "10", &url])?;
+            .run("curl", &["-fsSI", "--max-time", "10", &url])
+        else {
+            return Ok(None);
+        };
         if output.code != 0 {
             return Ok(None);
         }
@@ -226,7 +232,7 @@ impl UpdateService {
         let expected = expected_checksum(&checksums, &asset)?;
         let actual = self.sha256(&archive)?;
         if expected != actual {
-            let _ = std::fs::remove_dir_all(&work);
+            self.clean_work_dir();
             return Err(MnexisError::invalid_argument(
                 "checksum",
                 format!("{asset} does not match the published checksum; nothing was installed"),
@@ -248,7 +254,7 @@ impl UpdateService {
         )?;
         let unpacked = extract.join("mnexis");
         if !unpacked.exists() {
-            let _ = std::fs::remove_dir_all(&work);
+            self.clean_work_dir();
             return Err(MnexisError::not_found(format!("mnexis in {asset}")));
         }
         // The artifact has to be the version that was asked for.
@@ -267,7 +273,7 @@ impl UpdateService {
         }
 
         let binary = self.replace_binary(&unpacked, &exe)?;
-        let _ = std::fs::remove_dir_all(&work);
+        self.clean_work_dir();
 
         Ok(UpdateOutcome {
             updated: true,
@@ -276,6 +282,12 @@ impl UpdateService {
             binary,
             note: "restart the terminal (or the agent) to run the new version".to_string(),
         })
+    }
+
+    /// Remove the working directory (and the directory that holds it), so
+    /// the profile does not keep the leftovers of an update.
+    fn clean_work_dir(&self) {
+        let _ = std::fs::remove_dir_all(&self.work_dir);
     }
 
     /// Put the new binary in place of the running one.

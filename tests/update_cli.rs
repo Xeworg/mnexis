@@ -174,6 +174,23 @@ fn a_network_failure_is_reported_as_no_update() {
 }
 
 #[test]
+fn a_machine_without_curl_reports_no_update_instead_of_failing() {
+    // The service drives the system tools; a machine without curl simply
+    // never learns about a new release (S4). It is not an error.
+    let scratch = tempdir_in("target").expect("tempdir");
+    let empty = scratch.path().join("empty");
+    std::fs::create_dir_all(&empty).expect("create the empty dir");
+    let p = Profile::new();
+
+    let out = p
+        .run_with_path(&empty, &["upgrade", "--check"])
+        .unwrap_status("the check without curl");
+    let json = stdout_json(&out);
+    assert_eq!(json["latest_version"], serde_json::Value::Null);
+    assert_eq!(json["update_available"], false);
+}
+
+#[test]
 fn the_check_does_not_need_a_profile() {
     // The command updates the binary, not the memories: it works without
     // an initialised profile.
