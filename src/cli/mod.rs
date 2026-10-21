@@ -4,6 +4,7 @@
 //! loaded from `mnexis.toml`. Exit codes 2–10 map to the stable error set
 //! (e2-core §8); `--json` switches output to structured envelopes.
 
+pub mod agent_cmd;
 pub mod commands;
 pub mod config_cmd;
 pub mod output;
@@ -226,6 +227,12 @@ pub enum Command {
         action: ProjectAction,
     },
 
+    /// Install the agent integration (skill and pi extension) from the binary
+    Agent {
+        #[command(subcommand)]
+        action: AgentAction,
+    },
+
     /// Export memories as JSONL (excludes deleted by default)
     Export {
         /// Also include soft-deleted records
@@ -290,6 +297,31 @@ pub enum ProjectAction {
         /// Namespace to unbind
         namespace: String,
     },
+}
+
+/// The `mnexis agent` actions.
+#[derive(Debug, Subcommand)]
+pub enum AgentAction {
+    /// Install the skill (and the extension, where supported) for an environment
+    Install {
+        /// Target environment (pi, opencode)
+        #[arg(long, value_name = "NAME")]
+        env: Option<String>,
+        /// Which assets to install (all, skill, extension)
+        #[arg(long, value_name = "WHAT")]
+        only: Option<String>,
+    },
+    /// Remove the installed assets for an environment
+    Uninstall {
+        /// Target environment (pi, opencode)
+        #[arg(long, value_name = "NAME")]
+        env: Option<String>,
+        /// Which assets to remove (all, skill, extension)
+        #[arg(long, value_name = "WHAT")]
+        only: Option<String>,
+    },
+    /// Show what is installed for every environment
+    Status,
 }
 
 /// Parse and run. Returns the process exit code.
@@ -528,6 +560,15 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             path.clone(),
             *force,
         ),
+        Command::Agent {
+            action: AgentAction::Install { env, only },
+        } => agent_cmd::install(env.as_ref(), only.as_ref()),
+        Command::Agent {
+            action: AgentAction::Uninstall { env, only },
+        } => agent_cmd::uninstall(env.as_ref(), only.as_ref()),
+        Command::Agent {
+            action: AgentAction::Status,
+        } => agent_cmd::show(),
         Command::Project {
             action: ProjectAction::List,
         } => project_cmd::list(data_dir),
