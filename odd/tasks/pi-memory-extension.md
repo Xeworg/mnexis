@@ -111,3 +111,14 @@ permisos (autorización humana explícita **una vez por namespace**).
 - L17 (evidence): 31 pruebas unitarias (`node --test`) en verde y 140 asserts
   de la suite del instalador en verde, incluido `09_extensions_test.sh`
   (RED verificado: 9 fallos sin el soporte de extensiones en `install.sh`).
+- L18 (review): la review nativa fue declinada por el host para este
+  candidato (`sha256:301cd355ee01a42cc5b17acb195df8557a2ecf0b451db4be2bcded55030f40c2`,
+  22 archivos / 1625 líneas, nativeRisk "high" por señalización de proceso):
+  `consent-declined-this-candidate`, `lineage_created: false`, sin mutación.
+  Como el riesgo declarado es item 2 (permisos y guards), se ejecutó verificación
+  independiente: 6/6 puntos OK, sin defectos; 31/31 pruebas unitarias y 140/140
+  asserts del instalador en verde, sin mutación del repo. Puntos verificados:
+  gate (allow silencioso / confirm una vez / headless nunca autoriza), guard
+  anti-bypass (bloquea grants y edición del profile; no toca `user_bash` ni las
+  tools propias), flags del CLI contra `src/cli/{mod,commands,output}.rs`, forma
+  del sobre JSON, normalización de la key e instalador de extensiones.
