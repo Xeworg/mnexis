@@ -537,7 +537,11 @@ impl App {
             }
             Action::MenuSelect => self.select_menu_option(service),
             Action::Update => {
-                if let Some(controller) = &self.update {
+                // Only when the menu announced a release: the key does
+                // nothing when there is nothing to install.
+                if let (Some(controller), crate::tui::update::UpdateNotice::Available { .. }) =
+                    (&self.update, self.update_notice())
+                {
                     controller.start_install();
                 }
             }
