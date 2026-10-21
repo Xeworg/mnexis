@@ -19,7 +19,8 @@ bash-installer test-first.
   entorno a instalar" — `./install.sh skills` offers interactive
   environment selection; `./install.sh skills --env <name>` is the
   non-interactive form. Re-running overwrites cleanly. The environment
-  registry starts with `pi -> $HOME/.pi/skills` and is extensible.
+  registry starts with `pi -> <agent-dir>/skills` (default
+  `$HOME/.pi/agent/skills`) and is extensible.
 - S4: "y tambie pueda desinstalar" — `./install.sh uninstall --skills`
   removes the mnexis-installed skill directories for the selected
   environment (interactive select or `--env <name>`), never touching
@@ -50,9 +51,12 @@ bash-installer test-first.
   untouched — skills are not profile data). Ownership rule for uninstall:
   only directories whose names match skills shipped in the repo `skills/`
   are removed.
-- L3 (evidence): pi user skills dir confirmed as `<agent-dir>/skills/`
-  (`~/.pi/skills`) from pi docs (configuration.md, skills.md); project
-  dir `.pi/skills/` exists but user-level is the install target.
+- L3 (evidence, corrected by L6): pi user skills dir is
+  `<agent-dir>/skills/` — `$HOME/.pi/agent/skills` by default, and
+  `$PI_CODING_AGENT_DIR/skills` when that variable is set. `~/.pi/skills/`
+  is NOT a user skills location for pi: it is the *project*-level
+  `.pi/skills/` equivalent, and pi never advertises skills installed
+  there. The original reading of the pi docs conflated both.
 - L4 (evidence): test-first held. RED observed (05: 13, 06: 10, 07: 8
   failing assertions against the pre-change script). GREEN: 44/44 new
   assertions; full `scripts/test-installer.sh` suite green (01-07).
@@ -71,3 +75,41 @@ bash-installer test-first.
   (lenses risk/resilience/reliability) was declined at the consent gate
   by the user — candidate-scoped decline, no lineage created, nothing
   frozen. Native review therefore did not run for this candidate.
+- L6 (user, verbatim): "si la skill se usa unicamente cuando se le pide al
+  agente puede ser tambien por falta de un harness ya que pi viene vacio
+  complemetamente, igual intentemos reforzar y luego probaremos con opencode"
+- L7 (defect found by live test): the installer put pi skills in
+  `~/.pi/skills/`, which pi never scans. Plain pi (no harness) therefore
+  did not advertise `mnexis-memory` in its system prompt — the transcript
+  showed 0 occurrences of the skill name, and the agent fell back to
+  `AGENTS.md`. Empirical proof in the test container: with the skill under
+  `/root/.pi/agent/skills/`, pi emits it in `<available_skills>` with name,
+  description and location; under `/root/.pi/skills/` it emits nothing.
+  Fix: `pi` resolves to `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/skills`.
+- L8 (decision): the gate in `skills/mnexis-memory/SKILL.md` was hardened
+  (explicit confirmation required, a request to "set up memory" is not
+  consent, headless sessions must stop instead of self-authorizing, and
+  hand-editing `mnexis.toml`/`projects.toml` is forbidden). The workspace
+  key rule was also made unambiguous (replace `/` and `:`, keep the host's
+  dots) because the doc contradicted its own example.
+- L9 (scope): `opencode` added to the installer registry
+  (`opencode -> ~/.config/opencode/skills`, per the opencode skills
+  docs), with installer test `08_skills_opencode_test.sh`.
+- L10 (evidence): live test with plain pi (no harness) and plain opencode,
+  both inside an isolated podman container (`node:22-trixie-slim`, pi 1.2.0,
+  opencode 2.x, mnexis 0.1.0), workspace AegisPI, isolated profile.
+  Both environments now discover the skill on their own (pi advertises it in
+  `<available_skills>`; opencode lists it via `opencode debug skill`), bind
+  the workspace with the canonical key `git:github.com-xeworg-aegispi`, stop
+  before `mnexis config allow-namespace` asking for explicit confirmation,
+  and — after the operator grants it — save one memory with
+  `--topic-key`/`--tags` and recover it with `mnexis search` + `mnexis show`.
+  Routing note: opencode competes with its own built-in `customize-opencode`
+  skill, so the skill description must state the memory intent explicitly
+  ("use mnexis rather than ad-hoc notes or AGENTS.md files").
+- L11 (defect found by live test): `mnexis project bind` does not require a
+  profile, so an agent could bind first and leave the profile uninitialized;
+  the later `mnexis config allow-namespace` then fails with `NOT_FOUND`.
+  The skill now requires `mnexis init` before any other command.
+- L12 (defect found by live test): FTS5 token semantics — a multi-word query
+  is a phrase, so queries must use terms that appear in the stored content.
