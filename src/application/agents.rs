@@ -16,6 +16,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::assets::{ALL_ASSETS, EmbeddedAsset};
 
@@ -287,13 +288,19 @@ impl AgentInstaller {
                 for file in asset.files {
                     let path = target.directory.join(file.path);
                     // symlink_metadata does not follow links: a symlink is
-                    // removed as a link, never as its target.
-                    if fs::symlink_metadata(&path).is_ok() {
-                        fs::remove_file(&path)?;
-                        report.files.push(InstalledFile {
-                            path,
-                            action: FileAction::Removed,
-                        });
+                    // removed as a link, never as its target. A directory in
+                    // the way is not ours to remove: skip it instead of
+                    // failing the whole uninstall.
+                    match fs::symlink_metadata(&path) {
+                        Ok(metadata) if metadata.is_dir() => {}
+                        Ok(_) => {
+                            fs::remove_file(&path)?;
+                            report.files.push(InstalledFile {
+                                path,
+                                action: FileAction::Removed,
+                            });
+                        }
+                        Err(_) => {}
                     }
                 }
             }
@@ -314,6 +321,10 @@ impl AgentInstaller {
 /// Writing in place would follow a symlink and destroy the file it points
 /// to; renaming over it replaces the link itself and leaves the target
 /// alone.
+///
+/// The temporary name is unique and created with `create_new`, so it can
+/// never be a pre-existing symlink either, and the permissions of the file
+/// being replaced are preserved (a rename creates a new inode).
 fn write_file_atomically(path: &Path, contents: &str) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -322,8 +333,33 @@ fn write_file_atomically(path: &Path, contents: &str) -> io::Result<()> {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "asset".to_string());
-    let temporary = path.with_file_name(format!(".{file_name}.mnexis-tmp"));
-    fs::write(&temporary, contents)?;
+    let unique = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let temporary = path.with_file_name(format!(
+        ".{file_name}.{}.{unique}.mnexis-tmp",
+        std::process::id()
+    ));
+
+    let previous_mode = fs::symlink_metadata(path)
+        .ok()
+        .filter(|metadata| metadata.is_file())
+        .map(|metadata| metadata.permissions());
+
+    let write_result = (|| -> io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        std::io::Write::write_all(&mut file, contents.as_bytes())?;
+        if let Some(mode) = previous_mode {
+            fs::set_permissions(&temporary, mode)?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = write_result {
+        fs::remove_file(&temporary).ok();
+        return Err(error);
+    }
+
     match fs::rename(&temporary, path) {
         Ok(()) => Ok(()),
         Err(error) => {
@@ -332,6 +368,9 @@ fn write_file_atomically(path: &Path, contents: &str) -> io::Result<()> {
         }
     }
 }
+
+/// Counter that makes the temporary file names unique.
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Remove the directories under `root` that are empty, deepest first.
 ///
@@ -668,6 +707,127 @@ mod tests {
         let opencode = &report.environments[1];
         assert!(!opencode.assets[0].installed);
 
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn install_replaces_a_symlinked_file_without_touching_its_target() {
+        let home = temp_home();
+        let installer = AgentInstaller::new(&home);
+        let skills = installer.targets(AgentEnvironment::Pi)[0].directory.clone();
+        fs::create_dir_all(&skills).expect("skills dir");
+        let target = home.join("dotfile");
+        fs::write(&target, "my own dotfile").expect("write target");
+        std::os::unix::fs::symlink(&target, skills.join("SKILL.md")).expect("link");
+
+        installer
+            .install(AgentEnvironment::Pi, AssetFilter::All)
+            .expect("install");
+
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "my own dotfile",
+            "install must never write through a symlink"
+        );
+        let installed = skills.join("SKILL.md");
+        assert!(
+            fs::symlink_metadata(&installed)
+                .unwrap()
+                .file_type()
+                .is_file(),
+            "the symlink itself is replaced by a regular file"
+        );
+        let leftovers: Vec<String> = fs::read_dir(&skills)
+            .expect("read dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.ends_with(".mnexis-tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "no temporary file is left behind: {leftovers:?}"
+        );
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn uninstall_removes_a_symlink_as_a_link() {
+        let home = temp_home();
+        let installer = AgentInstaller::new(&home);
+        let skills = installer.targets(AgentEnvironment::Pi)[0].directory.clone();
+        fs::create_dir_all(&skills).expect("skills dir");
+        let target = home.join("dotfile");
+        fs::write(&target, "my own dotfile").expect("write target");
+        std::os::unix::fs::symlink(&target, skills.join("SKILL.md")).expect("link");
+
+        installer
+            .uninstall(AgentEnvironment::Pi, AssetFilter::All)
+            .expect("uninstall");
+
+        assert!(
+            fs::symlink_metadata(skills.join("SKILL.md")).is_err(),
+            "the link is gone"
+        );
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "my own dotfile",
+            "uninstall must not delete the symlink target"
+        );
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_failed_write_leaves_no_temporary_file() {
+        let home = temp_home();
+        let installer = AgentInstaller::new(&home);
+        let skills = installer.targets(AgentEnvironment::Pi)[0].directory.clone();
+        fs::create_dir_all(skills.join("SKILL.md")).expect("dir in the way");
+
+        assert!(
+            installer
+                .install(AgentEnvironment::Pi, AssetFilter::All)
+                .is_err(),
+            "renaming over a directory must fail"
+        );
+        let leftovers: Vec<String> = fs::read_dir(&skills)
+            .expect("read dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.ends_with(".mnexis-tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "no temporary file may survive a failed write: {leftovers:?}"
+        );
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn reinstalling_preserves_the_mode_of_the_replaced_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = temp_home();
+        let installer = AgentInstaller::new(&home);
+        let skills = installer.targets(AgentEnvironment::Pi)[0].directory.clone();
+        installer
+            .install(AgentEnvironment::Pi, AssetFilter::All)
+            .expect("install");
+        let installed = skills.join("SKILL.md");
+        fs::set_permissions(&installed, fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        installer
+            .install(AgentEnvironment::Pi, AssetFilter::All)
+            .expect("reinstall");
+
+        let mode = fs::metadata(&installed)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o777,
+            0o755,
+            "the mode of the replaced file survives the reinstall"
+        );
         fs::remove_dir_all(&home).ok();
     }
 

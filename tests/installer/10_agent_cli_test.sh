@@ -164,6 +164,26 @@ run_agent agent install --env opencode --only extension
 assert_status "an extension in opencode exits 2" 2
 assert_contains "the opencode extension error names the skill" "--only skill"
 
+# --- --only installs exactly what was asked for -------------------------
+run_agent agent install --env pi --only skill
+assert_status "install --env pi --only skill exits 0" 0
+assert_file "--only skill writes the skill" "$PI_SKILLS/SKILL.md"
+assert_dir_missing "--only skill does not create the extension" "$PI_EXTENSIONS"
+run_agent agent install --env pi --only extension
+assert_status "install --env pi --only extension exits 0" 0
+assert_file "--only extension writes the extension" "$PI_EXTENSIONS/index.js"
+run_agent agent uninstall --env pi --only skill
+assert_status "uninstall --env pi --only skill exits 0" 0
+assert_dir_missing "--only skill removes only the skill" "$PI_SKILLS"
+assert_file "--only skill leaves the extension alone" "$PI_EXTENSIONS/index.js"
+run_agent agent uninstall --env pi
+assert_dir_missing "the tree is clean after the filters" "$PI_EXTENSIONS"
+
+# uninstall for opencode cannot take an extension either
+run_agent agent uninstall --env opencode --only extension
+assert_status "removing an extension in opencode exits 2" 2
+assert_contains "the uninstall error names the skill" "--only skill"
+
 # --- unknown values ------------------------------------------------------
 run_agent agent install --env claude
 assert_status "an unknown --env exits 2" 2
