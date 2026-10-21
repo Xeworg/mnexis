@@ -62,7 +62,7 @@ comparten componentes.
 | T1 | S3, S4, S10 | Scope y profile: clave `allow_read_all`, `allow_global` por defecto en false, `can_read` con lectura abierta salvo `"global"`, comandos `config allow-global` / `config allow-read-all` (con `--revoke`), `config show`, `scope.schema.json` | a639e30 |
 | T2 | S6 | Lecturas abiertas: la extensión lee entre proyectos por defecto (search/list sin namespace, show por UUID) y el CLI las sostiene | 7dfeeb3 |
 | T3 | S5, S9 | Aislamiento de escritura en el CLI: resolución del namespace del workspace actual (binding por clave, marker `.mnexis-namespace`) y guard de escritura en save/update/supersede/delete/restore | |
-| T4 | S7, S8 | Extensión acotada al proyecto: supersede rechaza objetivos fuera del namespace del workspace; descripciones de las tools y protocolo de la skill | |
+| T4 | S7, S8 | Extensión acotada al proyecto: supersede rechaza objetivos fuera del namespace del workspace; descripciones de las tools y protocolo de la skill | ac03d95 |
 | T5 | S3, S5, S6 | Documentación: README, `docs/`, contrato v1 | |
 | T6 | S1, S2, S5, S9 | Verificación independiente del cambio de permisos + suite completa | |
 
@@ -139,4 +139,15 @@ comparten componentes.
   `extensions/mnexis-memory/test/tools.test.js`, que manejan la extensión
   con un `mnexis` falso que registra sus argumentos), clippy en 36
   warnings.
+- L14 (T4, RED→GREEN): `mnexis_supersede` comprueba que las dos memorias
+  viven en el namespace del workspace antes de tocar nada; si una no se
+  puede leer, tampoco se toca (no se puede verificar su proyecto). El
+  mensaje nombra el namespace ajeno y el namespace permitido. La skill y
+  las descripciones de las tools enuncian la regla: se lee entre
+  proyectos, se escribe sólo en el propio. 37 pruebas de node en verde.
+- L15 (T5): documentación actualizada en README (sección de permisos y
+  lista de la CLI), `docs/projects.md` (protocolo del agente y los
+  comandos de permiso), `docs/contracts/v1/README.md` (`allow_read_all`
+  en el contrato) y `docs/PRD-Mnexis.md` §7 (la decisión de producto:
+  lecturas abiertas entre proyectos, escrituras cerradas al proyecto).
 

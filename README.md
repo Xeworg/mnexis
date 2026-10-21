@@ -75,6 +75,33 @@ mnexis save --namespace mnexis "a fact worth keeping"
 See [docs/projects.md](docs/projects.md) for the identity rules, the
 agent protocol, and the registry format.
 
+## Permissions
+
+Two permissions sit next to the namespace allowlists, and both belong to
+the human:
+
+| Permission | Default in a new profile | What it opens |
+| --- | --- | --- |
+| `allow_read_all` | `true` | Reading memories from any project. |
+| `allow_global` | `false` | The reserved `global` namespace, for reads and writes. |
+
+```sh
+mnexis config allow-read-all --revoke   # scope the reads to the allowlist
+mnexis config allow-read-all             # open them again
+mnexis config allow-global               # open the reserved 'global' namespace
+mnexis config allow-global --revoke
+```
+
+A profile that does not mention these keys keeps both permissions closed:
+nothing opens itself silently, and `mnexis init` is what writes them
+open (reads) or closed (the reserved namespace).
+
+Reads are open across projects because projects share components, and
+writes are not: the CLI refuses to write outside the namespace of the
+current workspace, so an agent working in one project cannot modify
+another project's memories. See
+[docs/projects.md](docs/projects.md#the-agent-protocol).
+
 ## CLI
 
 The full surface (16 command groups; see `mnexis --help`):
@@ -98,6 +125,10 @@ doctor            integrity checks; --repair rebuilds FTS5
 config show       print effective configuration and scope
 config allow-namespace
                   authorize a namespace for read and write in the profile
+config allow-global
+                  open (or --revoke) the reserved 'global' namespace
+config allow-read-all
+                  open (or --revoke) reads across namespaces
 project bind/list/unbind
                   manage workspace → namespace bindings (see docs/projects.md)
 import / export   JSONL round-trip with conflict policies

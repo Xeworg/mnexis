@@ -153,6 +153,12 @@ Cada proceso MCP se inicia con configuración de ámbito controlada por el usuar
 - Operaciones permitidas; purga, importación y configuración son CLI administrativa en MVP.
 - Namespace predeterminado obligatorio.
 - Permiso separado para incluir `global`; no se añade implícitamente.
+- Las lecturas pueden abrirse entre proyectos (`allow_read_all`, activo por
+  defecto en los perfiles nuevos): el agente necesita ver las memorias de
+  otros proyectos porque los proyectos comparten componentes. Las
+  escrituras no se abren: un proyecto escribe sólo en su namespace, y el
+  CLI rechaza con `FORBIDDEN` la escritura a otro namespace cuando el
+  workspace actual está vinculado a uno.
 
 `all` significa **todos los namespaces autorizados para ese proceso**, nunca todo el perfil. Una herramienta no puede ampliar su ámbito pasando un `client_id` o modificando parámetros. Solicitudes fuera del ámbito se rechazan sin revelar contenido ni existencia de IDs.
 

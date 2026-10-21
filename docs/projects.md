@@ -88,6 +88,14 @@ A namespace only accepts writes when it is in the profile's
 only ever grow — nothing is revoked — and the profile must already exist
 (`mnexis init`).
 
+Two permissions sit beside the allowlists and are moved with their own
+commands:
+
+```sh
+mnexis config allow-read-all [--revoke]   # reads across namespaces
+mnexis config allow-global [--revoke]     # the reserved 'global' namespace
+```
+
 The scope contract (v1) is unchanged: the scope object keeps the same
 fields and the same semantics. This command only populates the
 allowlists an operator already owns.
@@ -106,7 +114,16 @@ The `mnexis-memory` skill implements this for AI agents:
 
 Recall spans projects: `mnexis search "<query>"` without `--namespace`
 searches every namespace, which is what to use when the answer may live
-in a different project.
+in a different project. The profile decides how far a namespace-less
+read reaches: `allow_read_all` (on by default in a new profile) opens it
+to every project, and `mnexis config allow-read-all --revoke` scopes it
+to `read_namespaces`.
+
+Writes do not span projects: save into this project's namespace and never
+update, supersede or delete a memory that lives in another one. The CLI
+enforces it for writes run from a bound workspace — the command fails
+with `FORBIDDEN` (exit 4) and names the namespace it accepts — and the
+pi extension refuses the same writes before they reach the CLI.
 
 ## Example
 

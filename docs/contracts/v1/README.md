@@ -9,6 +9,7 @@ A server process receives an immutable `AccessScope` from trusted configuration,
 - `read_namespaces`: exact namespace allowlist; `write_namespaces`: exact namespace allowlist.
 - `default_namespace`: required and must be in the relevant allowlist.
 - `allow_global`: explicit separate permission; global is never implicitly included.
+- `allow_read_all`: optional. When present and `true`, a read without an explicit namespace reaches every namespace except the reserved `global` literal; when it is absent or `false`, such a read reaches only `read_namespaces`. It never opens a write.
 - `allowed_operations`: operation allowlist. Administrative purge/import/configuration are CLI-only in the MVP.
 - `all` resolves to the process's allowed namespaces, not the whole profile.
 
