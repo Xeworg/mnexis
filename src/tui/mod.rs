@@ -37,7 +37,7 @@ pub fn run(profile: &mut Profile) -> Result<(), MnexisError> {
         default_hook(info);
     }));
 
-    let mut app = App::new(profile.service_ref());
+    let mut app = App::new_at_menu(profile.service_ref());
     let loop_result = event_loop(&mut terminal, &mut app, profile);
 
     let _ = std::panic::take_hook(); // drop our hook, restore the default
@@ -83,6 +83,31 @@ fn map_key(key: KeyEvent, mode: Mode) -> Action {
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Enter | KeyCode::Esc => {
                 Action::ConfirmNo
             }
+            _ => Action::Noop,
+        };
+    }
+    // The menu owns its keys: nothing else reaches a pane until an option
+    // is chosen. `q` and Esc leave the TUI.
+    if mode == Mode::Menu {
+        return match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
+            KeyCode::Char('j') | KeyCode::Down => Action::MenuNext,
+            KeyCode::Char('k') | KeyCode::Up => Action::MenuPrev,
+            KeyCode::Enter => Action::MenuSelect,
+            _ => Action::Noop,
+        };
+    }
+    // The agents view owns its keys too: the environment selection, the
+    // install/uninstall actions, the refresh, and the way back to the menu.
+    if mode == Mode::Agents {
+        return match key.code {
+            KeyCode::Char('q') => Action::Quit,
+            KeyCode::Char('j') | KeyCode::Down => Action::AgentNext,
+            KeyCode::Char('k') | KeyCode::Up => Action::AgentPrev,
+            KeyCode::Char('i') => Action::AgentInstall,
+            KeyCode::Char('u') => Action::AgentUninstall,
+            KeyCode::Char('r') => Action::AgentRefresh,
+            KeyCode::Esc => Action::Escape,
             _ => Action::Noop,
         };
     }
@@ -301,5 +326,100 @@ mod tests {
             ),
             Action::Quit
         );
+    }
+
+    #[test]
+    fn keymap_covers_the_initial_menu() {
+        // The menu owns its keys: the arrows and j/k move the highlight,
+        // Enter activates the option, q/Esc leave the TUI.
+        assert_eq!(map_key(key(KeyCode::Down), Mode::Menu), Action::MenuNext);
+        assert_eq!(
+            map_key(key(KeyCode::Char('j')), Mode::Menu),
+            Action::MenuNext
+        );
+        assert_eq!(map_key(key(KeyCode::Up), Mode::Menu), Action::MenuPrev);
+        assert_eq!(
+            map_key(key(KeyCode::Char('k')), Mode::Menu),
+            Action::MenuPrev
+        );
+        assert_eq!(map_key(key(KeyCode::Enter), Mode::Menu), Action::MenuSelect);
+        assert_eq!(map_key(key(KeyCode::Char('q')), Mode::Menu), Action::Quit);
+        assert_eq!(map_key(key(KeyCode::Esc), Mode::Menu), Action::Quit);
+        assert_eq!(
+            map_key(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                Mode::Menu
+            ),
+            Action::Quit
+        );
+        // No other key reaches a pane while the menu is open.
+        for code in [
+            KeyCode::Char('n'),
+            KeyCode::Char('e'),
+            KeyCode::Char('s'),
+            KeyCode::Char('d'),
+            KeyCode::Char('r'),
+            KeyCode::Char('x'),
+            KeyCode::Char('/'),
+            KeyCode::Tab,
+        ] {
+            assert_eq!(
+                map_key(key(code), Mode::Menu),
+                Action::Noop,
+                "the menu ignores {code:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keymap_covers_the_agents_view() {
+        assert_eq!(map_key(key(KeyCode::Down), Mode::Agents), Action::AgentNext);
+        assert_eq!(
+            map_key(key(KeyCode::Char('j')), Mode::Agents),
+            Action::AgentNext
+        );
+        assert_eq!(map_key(key(KeyCode::Up), Mode::Agents), Action::AgentPrev);
+        assert_eq!(
+            map_key(key(KeyCode::Char('k')), Mode::Agents),
+            Action::AgentPrev
+        );
+        assert_eq!(
+            map_key(key(KeyCode::Char('i')), Mode::Agents),
+            Action::AgentInstall
+        );
+        assert_eq!(
+            map_key(key(KeyCode::Char('u')), Mode::Agents),
+            Action::AgentUninstall
+        );
+        assert_eq!(
+            map_key(key(KeyCode::Char('r')), Mode::Agents),
+            Action::AgentRefresh
+        );
+        assert_eq!(map_key(key(KeyCode::Esc), Mode::Agents), Action::Escape);
+        assert_eq!(map_key(key(KeyCode::Char('q')), Mode::Agents), Action::Quit);
+        assert_eq!(
+            map_key(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                Mode::Agents
+            ),
+            Action::Quit
+        );
+        // The memory keys are inert in the agents view.
+        for code in [
+            KeyCode::Char('n'),
+            KeyCode::Char('e'),
+            KeyCode::Char('s'),
+            KeyCode::Char('d'),
+            KeyCode::Char('x'),
+            KeyCode::Char('/'),
+            KeyCode::Enter,
+            KeyCode::Tab,
+        ] {
+            assert_eq!(
+                map_key(key(code), Mode::Agents),
+                Action::Noop,
+                "the agents view ignores {code:?}"
+            );
+        }
     }
 }

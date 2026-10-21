@@ -22,15 +22,20 @@ assert_status "plain uninstall exits 0" 0
 assert_file "plain uninstall keeps the installed skill" \
   "$PI_SKILLS/mnexis-memory/SKILL.md"
 
+# The plain uninstall removed the binary, and the assets are uninstalled by
+# that binary: put it back before removing them.
+cp -f -- "$PREBUILT_BINARY" "$HOME/.local/bin/mnexis"
+chmod 0755 -- "$HOME/.local/bin/mnexis"
+
 run_installer uninstall --skills --env pi
 assert_status "uninstall --skills --env pi exits 0" 0
 assert_dir_missing "mnexis-memory removed from pi skills" "$PI_SKILLS/mnexis-memory"
 assert_file "foreign skill survives the uninstall" "$PI_SKILLS/foreign-skill/SKILL.md"
-assert_contains "uninstall names the removed skill" "Removed skill mnexis-memory"
+assert_contains "uninstall names the removed skill" "Removed skill 'mnexis-memory'"
 
 run_installer uninstall --skills --env pi
 assert_status "second uninstall --skills is a quiet success" 0
-assert_contains "second uninstall reports nothing to do" "No mnexis skills"
+assert_contains "second uninstall reports nothing to do" "Nothing to remove"
 
 # Interactive selection through the pty after reseeding.
 run_installer skills --env pi

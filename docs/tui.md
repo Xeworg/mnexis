@@ -12,6 +12,66 @@ scope enforcement.
 mnexis tui
 ```
 
+The TUI opens on a **menu** with the available actions:
+
+```
+┌mnexis──────────────────────────────────────────┐
+│                                              │
+│  Memories                                    │
+│  Browse and edit your memories               │
+│                                              │
+│▸ Install for agents                         │
+│  Install the mnexis skill and extension      │
+│                                              │
+│  Quit                                        │
+│  Close the TUI                               │
+│                                              │
+│↑/↓ or j/k move · Enter choose · Esc/q quit    │
+└──────────────────────────────────────────────┘
+```
+
+- `↑`/`↓` (or `j`/`k`) move between the options, `Enter` opens the
+  highlighted one, `Esc`/`q` leaves the TUI.
+- **Memories** opens the three-pane view described below, unchanged.
+- **Install for agents** opens the agents view, where the mnexis skill and
+  the pi extension are installed for the supported environments.
+- **Quit** ends the TUI.
+
+## Agents view
+
+The agents view lists every supported environment (`pi`, `opencode`) with
+the state of each asset — the skill and, where the host supports it, the
+extension — and the directory each one lives in:
+
+```
+┌Agents────────────────────────────────────────────────────────┐
+│pi — skill: installed, extension: not installed              │
+│    skill → ~/.pi/agent/skills/mnexis-memory                 │
+│    extension → ~/.pi/agent/extensions/mnexis-memory         │
+│                                                            │
+│opencode — skill: not installed                             │
+│    skill → ~/.config/opencode/skills/mnexis-memory         │
+└────────────────────────────────────────────────────────────┘
+```
+
+| Key           | Action                                                  |
+| ------------- | ------------------------------------------------------- |
+| `j` / `Down`  | next environment                                        |
+| `k` / `Up`    | previous environment                                    |
+| `i`           | install the integration for the selected environment     |
+| `u`           | uninstall it                                            |
+| `r`           | refresh the installation state                           |
+| `Esc`         | back to the menu                                        |
+| `q` / `Ctrl-C`| quit                                                    |
+
+The status line reports what the last operation did (the assets and the
+files it wrote or removed). The installation is the same operation the CLI
+performs (`mnexis agent install`): the assets are embedded in the binary,
+only what mnexis ships is replaced, and foreign skills or extensions are
+never touched. Installing never grants the agent write permissions by
+itself — that decision belongs to you, and the agent asks for it once per
+namespace when it first writes.
+
 The profile resolves exactly like every other command: `mnexis init` must
 have run first (or `--data-dir DIR` points at an initialised profile);
 otherwise the command fails with the same `NOT_FOUND` error (exit 3) as

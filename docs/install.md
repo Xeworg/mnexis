@@ -92,6 +92,56 @@ Behaviour:
   pipe it aborts (exit `1`) with the supported environment list, mirroring
   the `--purge` confirmation policy. An unknown environment exits `2`.
 
+## Installing from the binary
+
+The binary carries the agent assets inside itself, so an installed `mnexis`
+can set up the integration without a source checkout:
+
+```sh
+mnexis agent status                  # what is installed, per environment
+mnexis agent install --env pi        # skill + pi extension
+mnexis agent install --env opencode  # skill only
+mnexis agent uninstall --env pi
+```
+
+`--only skill|extension|all` narrows what an operation touches. The same
+operations are available from the TUI (`mnexis tui` → *Install for agents*),
+which reports what it installed.
+
+This is the only implementation: `install.sh skills|extensions` forwards to
+`mnexis agent install`, so both paths write the same embedded assets.
+
+## Agent extensions
+
+The repository ships agent extensions in [`extensions/`](../extensions): each
+subdirectory is one installable extension for an agent that supports them.
+The first one, `mnexis-memory`, exposes the memory engine as native tools
+(`mnexis_save`, `mnexis_search`, `mnexis_list`, `mnexis_show`,
+`mnexis_supersede`) and resolves the workspace → namespace binding itself,
+so the agent never has to be told to remember anything.
+
+```sh
+./install.sh extensions --env pi   # → <agent-dir>/extensions/mnexis-memory/
+```
+
+Behaviour:
+
+- `pi` → `<agent-dir>/extensions/<extension-name>/`, where `<agent-dir>` is
+  `$PI_CODING_AGENT_DIR` or `$HOME/.pi/agent` by default. `--env` is
+  optional here and defaults to `pi`; an unknown environment exits `2`.
+- Like `skills`, this is a pure file copy: no build step, no toolchain. The
+  extension's `test/` directory is not shipped.
+- Extension directories that mnexis does not ship are never touched.
+- `--skills`, `--extensions` and `--purge` are separate scopes and cannot be
+  combined in one `uninstall` run.
+
+The extension resolves the workspace key canonically
+(`git:github.com-xeworg-mnexis`), binds a namespace on first use, and asks
+for your confirmation **once per namespace** before it may write there. After
+that grant the agent stores memories on its own. In a headless session
+(`pi -p`) it never authorizes anything by itself: it reports that
+authorization is pending and which command to run.
+
 ## Uninstall
 
 ```sh

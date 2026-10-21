@@ -7,11 +7,17 @@
 #   ./install.sh skills [--env <name>]
 #                                Install the shipped agent skills (skills/) to
 #                                the selected AI environment (pi first).
+#   ./install.sh extensions [--env <name>]
+#                                Install the shipped agent extensions
+#                                (extensions/) to the selected environment.
 #   ./install.sh uninstall       Remove the installed binary; profile data
 #                                is kept.
 #   ./install.sh uninstall --skills [--env <name>]
 #                                Remove the mnexis-installed agent skills
 #                                from the selected environment.
+#   ./install.sh uninstall --extensions [--env <name>]
+#                                Remove the mnexis-installed agent
+#                                extensions from the selected environment.
 #   ./install.sh uninstall --purge
 #                                Also remove the resolved profile data
 #                                directory after an interactive y/N prompt.
@@ -30,7 +36,8 @@ usage() {
   printf '%s\n' \
     'Usage: ./install.sh [install]' \
     '       ./install.sh skills [--env <name>]' \
-    '       ./install.sh uninstall [--skills [--env <name>]|--purge]' \
+    '       ./install.sh extensions [--env <name>]' \
+    '       ./install.sh uninstall [--skills [--env <name>]|--extensions [--env <name>]|--purge]' \
     '       ./install.sh --help' \
     '' \
     'Builds the mnexis binary with cargo (release profile) and installs it' \
@@ -46,7 +53,13 @@ usage() {
     '  uninstall --skills Remove the mnexis-installed agent skills from an' \
     '                     environment (interactive selection or --env <name>);' \
     '                     skill directories mnexis does not ship are kept.' \
-    '                     Cannot be combined with --purge.' \
+    '                     Cannot be combined with --extensions or --purge.' \
+    '  extensions         Install the agent extensions shipped in ./extensions' \
+    '                     into an AI environment (default: pi).' \
+    '  uninstall --extensions' \
+    '                     Remove the mnexis-installed agent extensions;' \
+    '                     extension directories mnexis does not ship are kept.' \
+    '                     Cannot be combined with --skills or --purge.' \
     '  uninstall --purge  Also remove the profile data directory' \
     '                     ($MNEXIS_DATA_DIR, or $HOME/.local/share/mnexis)' \
     '                     after an interactive y/N confirmation.' \
@@ -96,28 +109,35 @@ skills_env_dir() {
   esac
 }
 
+# --- agent extensions (extensions/) -------------------------------------
+# Environments that can load an extension, and where each one looks for
+# them. pi loads extensions from <agent-dir>/extensions; the directory is
+# created by the installer when it does not exist yet.
+extensions_envs() {
+  printf '%s\n' pi
+}
+
+extensions_env_dir() {
+  case "$1" in
+    pi) printf '%s\n' "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions" ;;
+    *) return 1 ;;
+  esac
+}
+
+require_known_extension_env() {
+  local env="$1"
+  if ! extensions_env_dir "$env" >/dev/null; then
+    error "unknown environment: '$env' (supported: $(extensions_envs | tr '\n' ' '))"
+    exit 2
+  fi
+}
+
 # Validate a --env value, dying with the supported list when unknown.
 require_known_env() {
   local env="$1"
   if ! skills_env_dir "$env" >/dev/null; then
     error "unknown environment: '$env' (supported: $(skills_envs | tr '\n' ' '))"
     exit 2
-  fi
-}
-
-# Every shipped skill name (directories with a SKILL.md inside skills/).
-shipped_skill_names() {
-  local dir name
-  for dir in "$SCRIPT_DIR"/skills/*/; do
-    [[ -f "$dir/SKILL.md" ]] || continue
-    name="${dir%/}"
-    printf '%s\n' "${name##*/}"
-  done
-}
-
-require_shipped_skills() {
-  if [[ -z "$(shipped_skill_names)" ]]; then
-    die "no skills found in $SCRIPT_DIR/skills (each skill is a directory with a SKILL.md)"
   fi
 }
 
@@ -275,40 +295,68 @@ confirm_purge() {
   esac
 }
 
-cmd_skills() {
-  local env="$1" target name
-  require_known_env "$env"
-  require_shipped_skills
-  target="$(skills_env_dir "$env")"
+# The binary owns the installation: the assets are embedded in it, so the
+# shell script only forwards the request. One implementation, one source of
+# truth.
+#
+#   ./install.sh skills --env pi  ->  mnexis agent install --env pi --only skill
+#   ./install.sh extensions --env pi -> mnexis agent install --env pi --only extension
+ensure_mnexis_binary() {
+  if [[ -x "$INSTALL_DIR/mnexis" ]]; then
+    return 0
+  fi
+  printf 'The mnexis binary is required to install the agent assets; building it now.\n'
+  cmd_install
+}
 
-  mkdir -p -- "$target"
-  while IFS= read -r name; do
-    rm -rf -- "${target:?}/$name"
-    cp -R -- "$SCRIPT_DIR/skills/$name" "$target/$name"
-    printf 'Installed skill %s to %s\n' "$name" "$target"
-  done < <(shipped_skill_names)
+mnexis_binary() {
+  if [[ -x "$INSTALL_DIR/mnexis" ]]; then
+    printf '%s\n' "$INSTALL_DIR/mnexis"
+    return 0
+  fi
+  return 1
+}
+
+cmd_skills() {
+  local env="$1" only="$2"
+  require_known_env "$env"
+  ensure_mnexis_binary
+  local binary
+  binary="$(mnexis_binary)" || die "the mnexis binary is not available at $INSTALL_DIR"
+  "$binary" agent install --env "$env" --only "$only"
 }
 
 cmd_uninstall_skills() {
-  local env="$1" target name removed=0
+  local env="$1" only="$2"
   require_known_env "$env"
-  require_shipped_skills
-  target="$(skills_env_dir "$env")"
+  local binary
+  binary="$(mnexis_binary)" || {
+    error "the mnexis binary is not installed, so the agent assets cannot be removed."
+    error "Install mnexis again (./install.sh) and re-run this command."
+    return 1
+  }
+  "$binary" agent uninstall --env "$env" --only "$only"
+}
 
-  if [[ ! -d "$target" ]]; then
-    printf 'No mnexis skills are installed in %s.\n' "$target"
-    return 0
-  fi
-  while IFS= read -r name; do
-    if [[ -d "$target/$name" ]]; then
-      rm -rf -- "${target:?}/$name"
-      printf 'Removed skill %s from %s\n' "$name" "$target"
-      removed=1
-    fi
-  done < <(shipped_skill_names)
-  if ((removed == 0)); then
-    printf 'No mnexis skills are installed in %s.\n' "$target"
-  fi
+cmd_extensions() {
+  local env="$1" only="$2"
+  require_known_extension_env "$env"
+  ensure_mnexis_binary
+  local binary
+  binary="$(mnexis_binary)" || die "the mnexis binary is not available at $INSTALL_DIR"
+  "$binary" agent install --env "$env" --only "$only"
+}
+
+cmd_uninstall_extensions() {
+  local env="$1" only="$2"
+  require_known_extension_env "$env"
+  local binary
+  binary="$(mnexis_binary)" || {
+    error "the mnexis binary is not installed, so the agent assets cannot be removed."
+    error "Install mnexis again (./install.sh) and re-run this command."
+    return 1
+  }
+  "$binary" agent uninstall --env "$env" --only "$only"
 }
 
 cmd_uninstall() {
@@ -398,15 +446,40 @@ main() {
         env="$(select_env)" || exit 1
       fi
       require_known_env "$env"
-      cmd_skills "$env"
+      cmd_skills "$env" skill
+      ;;
+    extensions)
+      shift
+      local env=""
+      while (($# > 0)); do
+        case "$1" in
+          --env)
+            (($# >= 2)) || die "--env requires a value"
+            env="$2"
+            shift 2
+            ;;
+          -h | --help)
+            usage
+            return 0
+            ;;
+          *)
+            error "unknown option for 'extensions': $1"
+            usage >&2
+            return 2
+            ;;
+        esac
+      done
+      env="${env:-pi}"
+      cmd_extensions "$env" extension
       ;;
     uninstall)
       shift
-      local purge=0 skills=0 env=""
+      local purge=0 skills=0 extensions=0 env=""
       while (($# > 0)); do
         case "$1" in
           --purge) purge=1 ;;
           --skills) skills=1 ;;
+          --extensions) extensions=1 ;;
           --env)
             (($# >= 2)) || die "--env requires a value"
             env="$2"
@@ -425,15 +498,21 @@ main() {
         shift
       done
       if ((skills == 1)); then
-        if ((purge == 1)); then
-          error "--skills and --purge are separate scopes; run them separately."
+        if ((purge == 1 || extensions == 1)); then
+          error "--skills, --extensions and --purge are separate scopes; run them separately."
           return 2
         fi
         if [[ -z "$env" ]]; then
           env="$(select_env)" || exit 1
         fi
         require_known_env "$env"
-        cmd_uninstall_skills "$env"
+        cmd_uninstall_skills "$env" skill
+      elif ((extensions == 1)); then
+        if ((purge == 1)); then
+          error "--extensions and --purge are separate scopes; run them separately."
+          return 2
+        fi
+        cmd_uninstall_extensions "${env:-pi}" extension
       elif ((purge == 1)); then
         cmd_uninstall_purge
       else

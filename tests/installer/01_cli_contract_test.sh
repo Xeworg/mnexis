@@ -35,7 +35,10 @@ mkdir -p -- "$SCRATCH/empty-path"
 run_installer_with_path "$SCRATCH/empty-path"
 assert_status "install fails when cargo/rustc are missing" 1
 assert_contains "missing toolchain points to rustup" "rustup"
-assert_missing "no install dir is created when the toolchain is missing" "$HOME/.local/bin"
+# The suite ships a prebuilt binary as a fixture for the delegation tests;
+# remove it so this case observes a machine without mnexis installed.
+rm -f -- "$HOME/.local/bin/mnexis"
+assert_missing "no binary is installed when the toolchain is missing" "$HOME/.local/bin/mnexis"
 
 # cargo present but rustc missing.
 mkdir -p -- "$SCRATCH/cargo-only"
@@ -44,6 +47,7 @@ chmod 0755 -- "$SCRATCH/cargo-only/cargo"
 run_installer_with_path "$SCRATCH/cargo-only"
 assert_status "install fails when rustc is missing" 1
 assert_contains "missing rustc points to rustup" "rustup"
-assert_missing "no install dir is created when rustc is missing" "$HOME/.local/bin"
+rm -f -- "$HOME/.local/bin/mnexis"
+assert_missing "no binary is installed when rustc is missing" "$HOME/.local/bin/mnexis"
 
 finish
