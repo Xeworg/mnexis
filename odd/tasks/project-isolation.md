@@ -63,7 +63,7 @@ comparten componentes.
 | T2 | S6 | Lecturas abiertas: la extensión lee entre proyectos por defecto (search/list sin namespace, show por UUID) y el CLI las sostiene | 7dfeeb3 |
 | T3 | S5, S9 | Aislamiento de escritura en el CLI: resolución del namespace del workspace actual (binding por clave, marker `.mnexis-namespace`) y guard de escritura en save/update/supersede/delete/restore | 559668a, da9f12a |
 | T4 | S7, S8 | Extensión acotada al proyecto: supersede rechaza objetivos fuera del namespace del workspace; descripciones de las tools y protocolo de la skill | ac03d95 |
-| T5 | S3, S5, S6 | Documentación: README, `docs/`, contrato v1 | |
+| T5 | S3, S5, S6 | Documentación: README, `docs/`, contrato v1 | 35b68fa |
 | T6 | S1, S2, S5, S9 | Verificación independiente del cambio de permisos + suite completa | |
 
 ## Log
@@ -209,4 +209,25 @@ comparten componentes.
   candidato: no apaga la review para otros candidatos ni autoriza
   entrega. La verificación funcional de T6 (verificador independiente)
   sigue siendo la prueba que acompaña a este cambio.
+- L23 (T6, verificación independiente): `gentle-ai-verify` revisó el
+  árbol contra S1–S10 **sin copiar el repo a `/tmp`** (la restricción
+  del host: la vez anterior ese copiado con un build en frío tumbó la
+  máquina por cuota). Veredicto: **las diez specs, satisfechas**, sin
+  bloqueos; 349 pruebas cargo en verde (159 lib + 189 integración) y 41 de
+  node; `cargo fmt --check` limpio y clippy sin warnings nuevos. Comprobó
+  en el binario real el rechazo FORBIDDEN/exit 4 desde un workspace con
+  marker (los cinco comandos de escritura y el servidor MCP), que fuera
+  de un workspace manda la allowlist, que las lecturas cruzan proyectos
+  con `allow_read_all = true` y no lo hacen con `false`, y que el filtro
+  `global` se aplica en SQL (`namespace NOT IN (...)`).
+- L24 (L23, advertencias revisadas por el padre): (1) el verificador
+  afirmó que `config show` reescribe el `mnexis.toml`; comprobado y es
+  falso: el md5 y el mtime del archivo no cambian tras ejecutarlo (el que
+  reescribe es `config allow-global`/`allow-read-all`, por diseño).
+  (2) Las tres pruebas sugeridas ya existen: el camino verde del MCP
+  está en `the_server_refuses_a_write_into_another_namespace`, las
+  escrituras por UUID en los dos tests de update/delete y
+  supersede/restore, y el save de la extensión en "a save targets the
+  workspace namespace" (además el tool no acepta un namespace como
+  argumento). (3) El riesgo L18 queda anotado y aceptado por S9.
 
