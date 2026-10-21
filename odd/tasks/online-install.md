@@ -47,7 +47,7 @@ cuando hay una versión nueva y ofrece instalarla.
 | T2 | S3, S5 | `.github/workflows/release.yml`: tag `v*` → suite completa → artefactos → Release con `SHA256SUMS` e `install.sh`; `docs/release.md` con el procedimiento de corte | |
 | T3 | S2, S3, S4, S5, S7 | `install.sh` servible por URL: detección de plataforma, descarga del artefacto, verificación del checksum, instalación atómica en `~/.local/bin`, pin de versión, fallback a compilar desde fuente | |
 | T4 | S3, S10 | El one-liner cierra lanzando la TUI; idempotencia, sin root, camino de desinstalación | |
-| T5 | S4, S8, S9 | `mnexis update [--check]`: servicio de actualización (HEAD del redirect, caché diaria, descarga + verificación + reemplazo atómico) | |
+| T5 | S4, S8, S9 | `mnexis upgrade [--check]`: servicio de actualización (HEAD del redirect, caché diaria, descarga + verificación + reemplazo atómico) | |
 | T6 | S1, S8 | La TUI muestra en el menú la versión nueva y ofrece actualizarse | |
 
 ## Log
@@ -134,6 +134,25 @@ cuando hay una versión nueva y ofrece instalarla.
   desastre. Antes abre el profile (`mnexis init`, idempotente) porque la
   TUI necesita la base de datos para navegar. `MNEXIS_NO_TUI=1` lo
   desactiva.
+- L15 (T5, nombre): el comando se llama **`upgrade`** y no `update`:
+  `mnexis update` ya actualiza una memoria en su lugar. La comprobación
+  es `mnexis upgrade --check` y la actualización `mnexis upgrade`.
+- L16 (T5, diseño): el servicio vive en `src/application/update.rs` y
+  habla con el exterior a través de un trait `System`, así que las
+  pruebas no tocan la red. No hay cliente HTTP en el binario: el servicio
+  usa `curl` (HEAD para la versión, descarga para el artefacto),
+  `sha256sum` (el checksum) y `tar` (el desempaquetado), los mismos
+  comandos del instalador. La versión se lee del `Location` del redirect
+  de `releases/latest` y **no** de la API de GitHub (60 req/h por IP).
+- L17 (T5, evidencia): 11 pruebas unitarias del módulo (parseo del
+  `Location`, comparación de versiones con pre-release, caché fresca y
+  vencida, fallo de red que no es error) y 4 de integración en
+  `tests/update_cli.rs` (con un `curl` falso en el PATH): la comprobación
+  informa la versión nueva, la caché evita la segunda llamada, `--force`
+  vuelve a preguntar, un fallo de red se reporta como "sin actualización"
+  y el comando funciona sin profile (lo que actualiza es el binario, no
+  las memorias). Suite completa: 20 suites en verde; `cargo fmt` limpio y
+  clippy de vuelta en 36 warnings (los 5 nuevos se corrigieron).
 - L14 (T4, evidencia): 31 aserciones en
   `tests/installer/12_online_install_test.sh` (4 nuevas): sin terminal la
   TUI no arranca; con terminal (pty de util-linux `script`) la

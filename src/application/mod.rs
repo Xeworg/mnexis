@@ -7,6 +7,7 @@ pub mod budget;
 pub mod context;
 pub mod io;
 pub mod service;
+pub mod update;
 pub mod workspace;
 
 /// Convenient alias for the concrete service used by both CLI and MCP.

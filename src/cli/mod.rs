@@ -10,6 +10,7 @@ pub mod config_cmd;
 pub mod output;
 pub mod profile;
 pub mod project_cmd;
+pub mod update_cmd;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -215,6 +216,22 @@ pub enum Command {
 
     /// Browse and search memories in a terminal UI
     Tui,
+
+    /// Check for a newer release and install it
+    ///
+    /// The name is `upgrade` and not `update`: `mnexis update` already
+    /// updates a memory in place.
+    Upgrade {
+        /// Only report whether a newer release exists
+        #[arg(long)]
+        check: bool,
+        /// Install that version instead of the latest one
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+        /// Ask again even when the check is cached
+        #[arg(long)]
+        force: bool,
+    },
 
     /// Show effective configuration and scope
     Config {
@@ -604,6 +621,11 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 "tui closed",
             ))
         }
+        Command::Upgrade {
+            check,
+            version,
+            force,
+        } => update_cmd::update(data_dir, *check, version.clone(), *force),
     }
 }
 
