@@ -26,6 +26,71 @@ pub fn clamp_limit(limit: usize) -> usize {
     limit.min(MAX_LIMIT)
 }
 
+// --- workspace write isolation (project-isolation S5, S9) ---
+
+/// The namespace the current workspace writes into.
+///
+/// The workspace comes from the binding recorded for this directory (see
+/// [`crate::application::workspace`]) and, when no binding exists, from the
+/// nearest `.mnexis-namespace` marker. `None` means this process runs
+/// outside any known project: the profile allowlist keeps deciding, which is
+/// the behaviour every other command still has.
+struct WorkspaceGuard {
+    /// Workspace key, so the refusal can name the exact `project bind` call.
+    key: String,
+    /// The only namespace this workspace may write into, if any.
+    namespace: Option<String>,
+}
+
+impl WorkspaceGuard {
+    fn resolve(profile: &Profile) -> Result<Self, MnexisError> {
+        let workspace = crate::application::workspace::current_workspace(&profile.data_dir)?;
+        Ok(match workspace {
+            Some(workspace) => Self {
+                key: workspace.key,
+                namespace: workspace.namespace,
+            },
+            None => Self {
+                key: String::new(),
+                namespace: None,
+            },
+        })
+    }
+
+    /// Refuse a write into any namespace but the workspace's own.
+    ///
+    /// This runs on top of the service's scope check: both apply, and this
+    /// one answers FORBIDDEN (exit 4) with the namespace the workspace is
+    /// allowed to write into and the command that changes it.
+    fn authorize(&self, target: &str) -> Result<(), MnexisError> {
+        let Some(allowed) = self.namespace.as_deref() else {
+            return Ok(());
+        };
+        if allowed == target {
+            return Ok(());
+        }
+        Err(MnexisError::forbidden(
+            "write",
+            format!(
+                "this workspace writes only into namespace '{allowed}'; \
+                 run `mnexis project bind <namespace> --key {} --force` to change it",
+                self.key
+            ),
+        ))
+    }
+
+    /// Refuse a write whose target is the namespace of `uuid`.
+    ///
+    /// An unknown uuid is left to the service, which answers NOT_FOUND on
+    /// its own: a refusal here would claim a memory exists that does not.
+    fn authorize_memory(&self, profile: &Profile, uuid: &str) -> Result<(), MnexisError> {
+        match profile.service_ref().namespace_of(uuid)? {
+            Some(namespace) => self.authorize(&namespace),
+            None => Ok(()),
+        }
+    }
+}
+
 pub fn parse_state(value: &str) -> Result<MemoryState, MnexisError> {
     MemoryState::from_db(value)
 }
@@ -95,9 +160,11 @@ pub fn save(
     state: Option<String>,
     content: String,
 ) -> Result<CommandOutcome, MnexisError> {
+    let namespace = namespace.unwrap_or_else(|| profile.default_namespace());
+    WorkspaceGuard::resolve(profile)?.authorize(&namespace)?;
     let req = save_request(
         "cli",
-        namespace.unwrap_or_else(|| profile.default_namespace()),
+        namespace,
         memory_type,
         basis,
         topic_key,
@@ -155,6 +222,7 @@ pub fn update(
     expected_revision: i32,
     reason: String,
 ) -> Result<CommandOutcome, MnexisError> {
+    WorkspaceGuard::resolve(profile)?.authorize_memory(profile, &uuid)?;
     let req = update_request(uuid, content, state, tags, basis, expected_revision, reason)?;
     let updated = profile.service_mut().update(req)?;
     Ok(CommandOutcome::new(
@@ -204,6 +272,11 @@ pub fn supersede(
     expected_new_revision: Option<i32>,
     reason: String,
 ) -> Result<CommandOutcome, MnexisError> {
+    // Both sides of a supersession are written, so both have to live in the
+    // namespace this workspace writes into.
+    let guard = WorkspaceGuard::resolve(profile)?;
+    guard.authorize_memory(profile, &older)?;
+    guard.authorize_memory(profile, &newer)?;
     // Omitted revision flags resolve to the current revisions; the service
     // still enforces the optimistic check against them.
     let old_rev = match expected_old_revision {
@@ -481,6 +554,9 @@ pub fn delete(
     force: bool,
     expected_revision: Option<i32>,
 ) -> Result<CommandOutcome, MnexisError> {
+    // Before the prompt: never ask the human to confirm a write this
+    // workspace is not allowed to make.
+    WorkspaceGuard::resolve(profile)?.authorize_memory(profile, &uuid)?;
     let current = profile
         .service_ref()
         .get(&uuid)?
@@ -511,6 +587,7 @@ fn confirm(prompt: &str) -> Result<bool, MnexisError> {
 }
 
 pub fn restore(profile: &mut Profile, uuid: String) -> Result<CommandOutcome, MnexisError> {
+    WorkspaceGuard::resolve(profile)?.authorize_memory(profile, &uuid)?;
     profile.service_mut().restore(&uuid)?;
     Ok(CommandOutcome::new(
         json!({ "restored": uuid }),

@@ -80,6 +80,22 @@ impl Profile {
             .output()
             .expect("spawn mnexis binary")
     }
+
+    /// Run with an explicit working directory. The workspace guard reads the
+    /// `.mnexis-namespace` marker (and git) from there, so a test that
+    /// exercises it has to choose the directory instead of inheriting the
+    /// one cargo runs the test binary in.
+    fn run_in_dir(&self, dir: &std::path::Path, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_mnexis"))
+            .current_dir(dir)
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+            .arg("--json")
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn mnexis binary")
+    }
 }
 
 fn stdout_json(out: &Output) -> serde_json::Value {
@@ -1247,4 +1263,242 @@ fn context_with_no_candidates_returns_empty_with_reason() {
     let json = stdout_json(&out);
     assert_eq!(json["items"].as_array().expect("items").len(), 0);
     assert!(json["empty_reason"].is_string());
+}
+
+// --- workspace write isolation (project-isolation S5, S9) ---
+
+/// A working directory the binary runs in, so a test can place a
+/// `.mnexis-namespace` marker (or leave the directory bare) and drive the
+/// workspace guard end to end.
+struct Workspace {
+    dir: tempfile::TempDir,
+}
+
+impl Workspace {
+    /// The repository tree, `target/`, and `$HOME` carry no marker, so a bare
+    /// directory resolves to no namespace. If a marker ever appears above
+    /// this tempdir the "no workspace" tests fail loudly instead of passing
+    /// for the wrong reason.
+    fn bare() -> Self {
+        Self {
+            dir: tempdir_in("target").expect("tempdir under target/"),
+        }
+    }
+
+    /// The same directory, plus a marker naming `namespace`. The content is
+    /// deliberately padded: the marker reader trims it.
+    fn marked(namespace: &str) -> Self {
+        let workspace = Self::bare();
+        std::fs::write(
+            workspace.dir.path().join(".mnexis-namespace"),
+            format!("  {namespace}\n"),
+        )
+        .expect("write .mnexis-namespace");
+        workspace
+    }
+
+    fn path(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+}
+
+const MARKER_NAMESPACE: &str = "proyecto-marcado";
+const OTHER_NAMESPACE: &str = "otro-proyecto";
+
+fn guard_profile() -> Profile {
+    namespaced_profile(&[MARKER_NAMESPACE, OTHER_NAMESPACE])
+}
+
+/// Save through an explicit working directory and return the uuid.
+fn save_in(profile: &Profile, dir: &std::path::Path, namespace: &str, content: &str) -> String {
+    let out = profile.run_in_dir(dir, &["save", "--namespace", namespace, content]);
+    assert!(
+        out.status.success(),
+        "save failed ({:?}): {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    stdout_json(&out)["uuid"]
+        .as_str()
+        .expect("uuid in save output")
+        .to_string()
+}
+
+fn count_in(profile: &Profile, namespace: &str) -> u64 {
+    let out = profile
+        .run_silent(&["list", "--namespace", namespace])
+        .unwrap_status("list");
+    stdout_json(&out)["count"].as_u64().expect("count")
+}
+
+/// The refusal must name the allowed namespace and how to change it.
+fn assert_workspace_refusal(out: &Output, allowed: &str) {
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("FORBIDDEN"), "stderr: {stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "this workspace writes only into namespace '{allowed}'"
+        )),
+        "stderr must name the allowed namespace: {stderr}"
+    );
+    assert!(
+        stderr.contains("project bind"),
+        "stderr must say how to change it: {stderr}"
+    );
+}
+
+#[test]
+fn a_marker_workspace_refuses_a_save_into_another_namespace() {
+    let p = guard_profile();
+    let ws = Workspace::marked(MARKER_NAMESPACE);
+    let out = p.run_in_dir(ws.path(), &["save", "--namespace", OTHER_NAMESPACE, "x"]);
+    assert_workspace_refusal(&out, MARKER_NAMESPACE);
+    // A refused write stores nothing, in either namespace.
+    assert_eq!(count_in(&p, OTHER_NAMESPACE), 0);
+    assert_eq!(count_in(&p, MARKER_NAMESPACE), 0);
+}
+
+#[test]
+fn a_marker_workspace_accepts_a_save_into_its_own_namespace() {
+    let p = guard_profile();
+    let ws = Workspace::marked(MARKER_NAMESPACE);
+    save_in(&p, ws.path(), MARKER_NAMESPACE, "memoria del proyecto");
+    assert_eq!(count_in(&p, MARKER_NAMESPACE), 1);
+    assert_eq!(count_in(&p, OTHER_NAMESPACE), 0);
+}
+
+#[test]
+fn without_a_workspace_the_profile_allowlist_still_decides() {
+    let p = guard_profile();
+    let ws = Workspace::bare();
+    // Allowed by the profile: the old behaviour, no workspace rule involved.
+    save_in(&p, ws.path(), OTHER_NAMESPACE, "permitido por la allowlist");
+    assert_eq!(count_in(&p, OTHER_NAMESPACE), 1);
+    // Forbidden by the profile stays the scope denial (NOT_FOUND, exit 3),
+    // not the workspace refusal (exit 4).
+    let out = p.run_in_dir(ws.path(), &["save", "--namespace", "fuera", "x"]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("FORBIDDEN"), "stderr: {stderr}");
+}
+
+#[test]
+fn update_and_delete_are_refused_for_memories_of_another_workspace() {
+    let p = guard_profile();
+    let bare = Workspace::bare();
+    let uuid = save_in(&p, bare.path(), OTHER_NAMESPACE, "otra memoria");
+    let ws = Workspace::marked(MARKER_NAMESPACE);
+
+    let update = p.run_in_dir(
+        ws.path(),
+        &[
+            "update",
+            &uuid,
+            "--content",
+            "intento ajeno",
+            "--expected-revision",
+            "1",
+            "--reason",
+            "cross-workspace",
+        ],
+    );
+    assert_workspace_refusal(&update, MARKER_NAMESPACE);
+
+    let delete = p.run_in_dir(ws.path(), &["delete", "--force", &uuid]);
+    assert_workspace_refusal(&delete, MARKER_NAMESPACE);
+
+    // Neither refusal changed anything: same content, still active.
+    let shown = p.run_silent(&["show", &uuid]).unwrap_status("show");
+    let json = stdout_json(&shown);
+    assert_eq!(json["content"], "otra memoria");
+    assert_eq!(json["state"], "active");
+    assert_eq!(json["revision"], 1);
+}
+
+#[test]
+fn supersede_and_restore_are_refused_for_memories_of_another_workspace() {
+    let p = guard_profile();
+    let bare = Workspace::bare();
+    let older = save_in(&p, bare.path(), OTHER_NAMESPACE, "vieja decision");
+    let newer = save_in(&p, bare.path(), OTHER_NAMESPACE, "nueva decision");
+    let deleted = save_in(&p, bare.path(), OTHER_NAMESPACE, "borrada y restaurable");
+    p.run_in_dir(bare.path(), &["delete", "--force", &deleted])
+        .unwrap_status("seed delete");
+
+    let ws = Workspace::marked(MARKER_NAMESPACE);
+    let supersede = p.run_in_dir(
+        ws.path(),
+        &[
+            "supersede",
+            "--older",
+            &older,
+            "--newer",
+            &newer,
+            "--reason",
+            "cross-workspace",
+        ],
+    );
+    assert_workspace_refusal(&supersede, MARKER_NAMESPACE);
+
+    let restore = p.run_in_dir(ws.path(), &["restore", &deleted]);
+    assert_workspace_refusal(&restore, MARKER_NAMESPACE);
+
+    // The refused supersede left both memories active.
+    let shown = p.run_silent(&["show", &older]).unwrap_status("show older");
+    assert_eq!(stdout_json(&shown)["state"], "active");
+    // The refused restore left the memory deleted: only the two active
+    // memories still list.
+    assert_eq!(count_in(&p, OTHER_NAMESPACE), 2);
+}
+
+#[test]
+fn every_write_still_works_inside_the_workspace_namespace() {
+    let p = guard_profile();
+    let ws = Workspace::marked(MARKER_NAMESPACE);
+    let older = save_in(&p, ws.path(), MARKER_NAMESPACE, "decision vieja");
+    let newer = save_in(&p, ws.path(), MARKER_NAMESPACE, "decision nueva");
+    let doomed = save_in(&p, ws.path(), MARKER_NAMESPACE, "para borrar");
+
+    p.run_in_dir(
+        ws.path(),
+        &[
+            "update",
+            &newer,
+            "--content",
+            "decision nueva y corregida",
+            "--expected-revision",
+            "1",
+            "--reason",
+            "fix",
+        ],
+    )
+    .unwrap_status("guarded update");
+    p.run_in_dir(
+        ws.path(),
+        &[
+            "supersede",
+            "--older",
+            &older,
+            "--newer",
+            &newer,
+            "--reason",
+            "reemplazo",
+        ],
+    )
+    .unwrap_status("guarded supersede");
+    p.run_in_dir(ws.path(), &["delete", "--force", &doomed])
+        .unwrap_status("guarded delete");
+    p.run_in_dir(ws.path(), &["restore", &doomed])
+        .unwrap_status("guarded restore");
 }

@@ -229,6 +229,23 @@ impl<R: MemoryRepository> MemoryService<R> {
         Ok(mem)
     }
 
+    // --- target of a write ---
+    /// The namespace a memory lives in, read without the scope's read check.
+    ///
+    /// A caller that must decide about a *write* before the service
+    /// authorizes it needs the target namespace, and its own read allowlist
+    /// may not cover that namespace. Identity only: no content, and no
+    /// authorization — the write itself still goes through
+    /// [`MemoryService::update`], [`MemoryService::supersede`],
+    /// [`MemoryService::soft_delete`] or [`MemoryService::restore`], which
+    /// run the scope check.
+    pub fn namespace_of(&self, uuid: &str) -> Result<Option<String>, MnexisError> {
+        Ok(self
+            .repo
+            .get_by_uuid_including_deleted(uuid)?
+            .map(|m| m.namespace))
+    }
+
     // --- list ---
     pub fn list(&self, filter: ListFilter) -> Result<Vec<Memory>, MnexisError> {
         let state_str = filter.state.as_ref().map(|s| s.as_str());

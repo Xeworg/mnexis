@@ -75,7 +75,8 @@ pub enum Command {
 
     /// Save a new memory
     Save {
-        /// Namespace (default: the profile's default_namespace)
+        /// Namespace (default: the profile's default_namespace); a bound
+        /// workspace only accepts its own namespace
         #[arg(long)]
         namespace: Option<String>,
         /// Memory type (default: fact)
