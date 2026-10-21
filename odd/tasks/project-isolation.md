@@ -193,4 +193,12 @@ comparten componentes.
   (`the_server_refuses_a_write_into_another_namespace`) levanta el
   servidor con un marker de workspace y comprueba el rechazo y el
   namespace propio admitido.
+- L21 (cierre del hueco, 7ca90a2): `mnexis import` era la última vía de
+  escritura que podía salirse del workspace: escribe un archivo entero,
+  un namespace por registro, y nada verificaba a qué namespace apuntaban
+  esos registros. Ahora los namespaces del archivo se comprueban contra
+  el workspace antes de importar, así que un archivo que pertenece a
+  otro proyecto se rechaza en vez de escribirse. `purge` queda fuera a
+  propósito: es una operación administrativa sobre todo el profile, no
+  sobre un namespace.
 
