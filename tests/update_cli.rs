@@ -191,6 +191,27 @@ fn a_machine_without_curl_reports_no_update_instead_of_failing() {
 }
 
 #[test]
+fn a_failed_update_leaves_nothing_behind_in_the_profile() {
+    // The update works in a directory of the profile; when it fails, that
+    // directory is gone (an empty `update-work/` left behind is a ghost
+    // the user never asked for).
+    let scratch = tempdir_in("target").expect("tempdir");
+    let dir = scratch.path().to_path_buf();
+    let path = fake_curl(&dir, "v0.2.0", false);
+    let p = Profile::new();
+
+    let out = p.run_with_path(&path, &["upgrade", "--version", "0.2.0"]);
+    assert!(!out.status.success(), "the update must fail");
+
+    let work = p.data_dir.join("update-work");
+    assert!(
+        !work.exists(),
+        "the failed update left its working directory behind: {}",
+        work.display()
+    );
+}
+
+#[test]
 fn the_check_does_not_need_a_profile() {
     // The command updates the binary, not the memories: it works without
     // an initialised profile.
