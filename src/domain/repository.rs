@@ -6,6 +6,7 @@
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyRecord;
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryTag};
+use crate::domain::scope::NamespaceScope;
 // SearchHit is defined in the spike's retrieval module for T17; T18 will
 // define the production retrieval type in src/retrieval/fts5.rs.
 use crate::retrieval::SearchHit;
@@ -34,7 +35,13 @@ pub trait MemoryRepository {
         state: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<Memory>, MnexisError>;
+    ) -> Result<Vec<Memory>, MnexisError> {
+        let scope = match namespace {
+            Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
+            None => NamespaceScope::All,
+        };
+        self.list_in(&scope, state, limit, offset, false)
+    }
 
     /// List soft-deleted memories with the same namespace pagination as
     /// `list`. `list` intentionally hides deleted records; the TUI's
@@ -44,6 +51,23 @@ pub trait MemoryRepository {
         namespace: Option<&str>,
         limit: usize,
         offset: usize,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        let scope = match namespace {
+            Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
+            None => NamespaceScope::All,
+        };
+        self.list_in(&scope, None, limit, offset, true)
+    }
+
+    /// List memories filtered by a namespace scope, an optional state and
+    /// pagination.
+    fn list_in(
+        &self,
+        namespaces: &NamespaceScope,
+        state: Option<&str>,
+        limit: usize,
+        offset: usize,
+        deleted: bool,
     ) -> Result<Vec<Memory>, MnexisError>;
 
     /// Update a memory with optimistic revision check.
@@ -153,6 +177,20 @@ pub trait MemoryRepository {
         &self,
         query: &str,
         namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, MnexisError> {
+        let scope = match namespace {
+            Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
+            None => NamespaceScope::All,
+        };
+        self.search_in(&scope, query, limit)
+    }
+
+    /// Full-text search filtered by a namespace scope.
+    fn search_in(
+        &self,
+        namespaces: &NamespaceScope,
+        query: &str,
         limit: usize,
     ) -> Result<Vec<SearchHit>, MnexisError>;
 }

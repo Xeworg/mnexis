@@ -543,6 +543,38 @@ fn cross_project_reads_are_closed_without_allow_read_all() {
     assert_eq!(out.status.code(), Some(3));
 }
 
+#[test]
+fn a_scoped_profile_searches_only_its_read_namespaces() {
+    let p = Profile::new().with_config(
+        "default_namespace = \"ns-a\"\nread_namespaces = [\"ns-a\"]\nwrite_namespaces = [\"ns-a\", \"ns-b\"]\nallow_read_all = false\nallow_global = false\nexistence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n",
+    );
+    save(&p, "memoria de otro proyecto", &["--namespace", "ns-b"]);
+    let out = p.run_silent(&["search", "memoria"]).unwrap_status("search");
+    assert_eq!(
+        stdout_json(&out)["count"],
+        0,
+        "a scoped profile must not search outside its read namespaces"
+    );
+    let listed = p.run_silent(&["list"]).unwrap_status("list");
+    assert_eq!(
+        stdout_json(&listed)["count"],
+        0,
+        "a scoped profile must not list outside its read namespaces"
+    );
+}
+
+#[test]
+fn an_open_profile_searches_across_projects() {
+    let p = Profile::new().with_config(
+        "default_namespace = \"ns-a\"\nread_namespaces = [\"ns-a\"]\nwrite_namespaces = [\"ns-a\", \"ns-b\"]\nallow_read_all = true\nallow_global = false\nexistence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n",
+    );
+    save(&p, "memoria de otro proyecto", &["--namespace", "ns-b"]);
+    let out = p.run_silent(&["search", "memoria"]).unwrap_status("search");
+    assert_eq!(stdout_json(&out)["count"], 1);
+    let listed = p.run_silent(&["list"]).unwrap_status("list");
+    assert_eq!(stdout_json(&listed)["count"], 1);
+}
+
 // --- errors and scope (S10) ---
 
 #[test]

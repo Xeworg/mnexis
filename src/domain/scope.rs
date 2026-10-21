@@ -75,6 +75,17 @@ impl Default for ExistenceDisclosure {
     }
 }
 
+/// How a read without an explicit namespace is filtered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NamespaceScope {
+    /// Every namespace.
+    All,
+    /// Every namespace except these.
+    AllExcept(Vec<String>),
+    /// Only these namespaces.
+    Only(Vec<String>),
+}
+
 /// The immutable access scope for a process.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessScope {
@@ -135,6 +146,25 @@ impl AccessScope {
             return self.allow_global;
         }
         self.write_namespaces.iter().any(|n| n == namespace)
+    }
+
+    /// The filter a read without an explicit namespace uses.
+    ///
+    /// `allow_read_all` opens the reads across projects; the reserved
+    /// `global` literal stays outside them until `allow_global` permits
+    /// it. A scoped profile reads only its read namespaces.
+    pub fn read_scope(&self) -> NamespaceScope {
+        match (self.allow_read_all, self.allow_global) {
+            (true, true) => NamespaceScope::All,
+            (true, false) => NamespaceScope::AllExcept(vec!["global".to_string()]),
+            (false, _) => {
+                let mut names = self.read_namespaces.clone();
+                if self.allow_global && !names.iter().any(|n| n == "global") {
+                    names.push("global".to_string());
+                }
+                NamespaceScope::Only(names)
+            }
+        }
     }
 
     pub fn allows(&self, op: Operation) -> bool {
@@ -236,6 +266,36 @@ mod tests {
     fn read_all_is_off_by_default_in_the_constructor() {
         let s = scope();
         assert!(!s.can_read("proyecto-c"));
+    }
+
+    #[test]
+    fn the_read_scope_follows_the_two_permissions() {
+        // Open reads, reserved namespace closed: everything but `global`.
+        let s = scope().with_read_all(true);
+        assert_eq!(
+            s.read_scope(),
+            NamespaceScope::AllExcept(vec!["global".to_string()])
+        );
+        // Open reads and the reserved namespace permitted: everything.
+        let mut s = scope().with_read_all(true);
+        s.allow_global = true;
+        assert_eq!(s.read_scope(), NamespaceScope::All);
+        // Scoped reads: only the read namespaces (plus `global` when it is
+        // permitted).
+        let mut s = scope();
+        assert_eq!(
+            s.read_scope(),
+            NamespaceScope::Only(vec!["proyecto-a".to_string(), "proyecto-b".to_string()])
+        );
+        s.allow_global = true;
+        assert_eq!(
+            s.read_scope(),
+            NamespaceScope::Only(vec![
+                "proyecto-a".to_string(),
+                "proyecto-b".to_string(),
+                "global".to_string()
+            ])
+        );
     }
 
     #[test]

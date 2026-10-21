@@ -38,6 +38,21 @@ export function readItems(payload) {
 	return [];
 }
 
+/**
+ * The namespace a read tool targets.
+ *
+ * Reads are open across projects: without an explicit namespace the tool
+ * does not narrow the search, so the agent sees what other projects
+ * recorded. An explicit namespace narrows it to that one project.
+ *
+ * @param {unknown} value
+ * @returns {string | undefined}
+ */
+export function readNamespace(value) {
+	const namespace = typeof value === "string" ? value.trim() : "";
+	return namespace === "" ? undefined : namespace;
+}
+
 /** Build the tool result shape pi expects. */
 function ok(text, details) {
 	return { content: [{ type: "text", text }], details };
@@ -291,30 +306,35 @@ export default function mnexisMemoryExtension(pi) {
 
 	pi.registerTool({
 		name: "mnexis_search",
-		label: "Search project memories",
-		promptSnippet: "Recall what was recorded about this project.",
+		label: "Search memories",
+		promptSnippet: "Recall what was recorded, across projects.",
 		description:
-			"Search stored memories of this project (full-text, ranked). Use it before answering " +
-			"from scratch when prior context may exist, and to check what was already recorded.",
+			"Search stored memories (full-text, ranked). Use it before answering " +
+			"from scratch when prior context may exist, and to check what was already recorded. " +
+			"The search reaches every project by default, because projects share components; " +
+			"pass `namespace` to narrow it to one project.",
 		parameters: {
 			type: "object",
 			properties: {
 				query: { type: "string", description: "Search terms." },
 				limit: { type: "number", description: "Maximum number of hits (default: 10)." },
-				namespace: { type: "string", description: "Optional other namespace to search." },
+				namespace: {
+					type: "string",
+					description: "Optional namespace to narrow the search to one project.",
+				},
 			},
 			required: ["query"],
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const workspace = await resolveWorkspace(ctx.cwd);
+			const namespace = readNamespace(params.namespace);
 			const result = await client.search(
-				{ query: params.query, namespace: params.namespace || workspace.namespace, limit: params.limit },
+				{ query: params.query, namespace, limit: params.limit },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
 				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
-					namespace: params.namespace || workspace.namespace,
+					namespace: namespace ?? null,
 				});
 			}
 			const hits = readItems(result.data);
@@ -323,41 +343,45 @@ export default function mnexisMemoryExtension(pi) {
 						.map((hit, index) => `${index + 1}. ${JSON.stringify(hit)}`)
 						.join("\n")
 				: `No memories matched '${params.query ?? ""}'.`;
-			return ok(text, { namespace: params.namespace || workspace.namespace, count: hits.length, hits });
+			return ok(text, { namespace: namespace ?? null, count: hits.length, hits });
 		},
 	});
 
 	pi.registerTool({
 		name: "mnexis_list",
-		label: "List project memories",
-		promptSnippet: "List the memories recorded for this project.",
+		label: "List memories",
+		promptSnippet: "List the memories recorded, across projects.",
 		description:
-			"List the memories stored for this project, newest first. Use it to review what is " +
-			"already recorded before saving something new.",
+			"List the memories stored, newest first. Use it to review what is " +
+			"already recorded before saving something new. The list reaches every " +
+			"project by default; pass `namespace` to narrow it to one project.",
 		parameters: {
 			type: "object",
 			properties: {
-				namespace: { type: "string", description: "Optional other namespace to list." },
+				namespace: {
+					type: "string",
+					description: "Optional namespace to narrow the list to one project.",
+				},
 				limit: { type: "number", description: "Maximum number of memories." },
 			},
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const workspace = await resolveWorkspace(ctx.cwd);
+			const namespace = readNamespace(params.namespace);
 			const result = await client.list(
-				{ namespace: params.namespace || workspace.namespace, limit: params.limit },
+				{ namespace, limit: params.limit },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
 				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
-					namespace: params.namespace || workspace.namespace,
+					namespace: namespace ?? null,
 				});
 			}
 			const items = readItems(result.data);
 			const text = items.length
 				? items.map((item, index) => `${index + 1}. ${JSON.stringify(item)}`).join("\n")
-				: "No memories stored in this namespace yet.";
-			return ok(text, { namespace: params.namespace || workspace.namespace, count: items.length, memories: items });
+				: "No memories stored yet.";
+			return ok(text, { namespace: namespace ?? null, count: items.length, memories: items });
 		},
 	});
 
