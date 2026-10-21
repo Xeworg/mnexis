@@ -103,3 +103,26 @@ cuando hay una versión nueva y ofrece instalarla.
   superficie de suministro en el camino que publica binarios. El cache de
   cargo (`Swatinem/rust-cache`) es la única action de terceros, y sólo
   cachea.
+- L10 (T3, diseño): **un solo script, dos modos**. El modo lo decide el
+  propio script (si es un archivo) y no el directorio de trabajo: un
+  script pasado por pipe no tiene archivo propio, así que siempre es el
+  modo "standalone". Con `Cargo.toml` al lado compila (el camino de
+  siempre); sin él, descarga. El script es bash, así que el one-liner es
+  `curl … | bash`, no `| sh`: el `shebang` no se respeta cuando el
+  script va por pipe.
+- L11 (T3, seguridad): el instalador **no instala nada** si el checksum
+  no coincide, si la release no publica checksum para el artefacto, o si
+  el `VERSION` del artefacto no es el que se pidió. La instalación es
+  atómica (temporal único en el mismo directorio + `mv`), así que el
+  binario instalado nunca queda a medias. No pide root y no escribe fuera
+  de `$HOME`.
+- L12 (T3, evidencia): 27 aserciones nuevas en
+  `tests/installer/12_online_install_test.sh` en verde, con la red
+  falseada (un `curl` en el PATH sirve los archivos locales): instalación
+  correcta, pin de versión (`/download/v0.1.0/`), latest por defecto,
+  artefacto corrupto rechazado, checksum ausente rechazado, checksum sin
+  línea para el artefacto rechazado, artefacto de otra versión rechazado,
+  plataforma no soportada rechazada, idempotencia y ningún temporal
+  dejando. La suite completa del instalador queda en **258
+  aserciones en verde** (12 archivos), con el modo repo intacto. El
+  fallback "clonar y compilar" no tiene prueba: necesita git y red.

@@ -23,6 +23,20 @@
 #                                directory after an interactive y/N prompt.
 #   ./install.sh --help          Show usage.
 #
+# The same script is published in every release, so it works in two modes:
+#
+#   from the repository   it builds the working tree with cargo;
+#   standalone (piped)    it downloads the published binary, verifies it
+#                         against the checksum the release publishes and
+#                         installs it.
+#
+# The mode follows the script itself, not the working directory: a script
+# piped from the network has no file of its own, so it is always the
+# standalone one. The standalone mode needs bash (the script uses bash
+# syntax), curl, sha256sum and tar:
+#
+#   curl -fsSL https://github.com/Xeworg/mnexis/releases/latest/download/install.sh | bash
+#
 # The purge path mirrors src/cli/profile.rs::resolve_data_dir:
 # $MNEXIS_DATA_DIR when set, otherwise $HOME/.local/share/mnexis. Both the
 # profile database (mnexis.db) and the profile settings (mnexis.toml) live
@@ -40,11 +54,13 @@ usage() {
     '       ./install.sh uninstall [--skills [--env <name>]|--extensions [--env <name>]|--purge]' \
     '       ./install.sh --help' \
     '' \
-    'Builds the mnexis binary with cargo (release profile) and installs it' \
-    'to $HOME/.local/bin/mnexis. Re-running install overwrites the binary.' \
+    'Installs mnexis into $HOME/.local/bin. Run from the repository it builds' \
+    'the working tree with cargo; served from a release (or piped from the' \
+    'network) it downloads the published binary and verifies its checksum.' \
+    'Re-running install overwrites the binary.' \
     '' \
     'Commands:' \
-    '  install            Build and install (the default when omitted).' \
+    '  install            Install (the default when omitted).' \
     '  skills             Install the agent skills shipped in ./skills to an' \
     '                     AI environment. Interactive selection when run from' \
     '                     a terminal; pass --env <name> to run unattended.' \
@@ -71,9 +87,16 @@ usage() {
     '                     opencode ($HOME/.config/opencode/skills).' \
     '  -h, --help         Show this help and exit.' \
     '' \
+    'Options of install:' \
+    '  --version <version>  Install that published version instead of the' \
+    '                       latest one (e.g. 0.1.0 or v0.1.0).' \
+    '  --from-source        Build from the published sources instead of' \
+    '                       downloading a binary.' \
+    '' \
     'Environment:' \
     '  CARGO_TARGET_DIR   Cargo target directory (default: <repo>/target).' \
     '  MNEXIS_DATA_DIR    Profile data directory used to resolve --purge.' \
+    '  MNEXIS_VERSION     Same as install --version.' \
     '  HOME               The binary is installed under $HOME/.local/bin,' \
     '                     pi skills under $HOME/.pi/agent/skills.' \
     '  PI_CODING_AGENT_DIR  pi agent directory (default: $HOME/.pi/agent).'
@@ -89,6 +112,13 @@ if [[ -z "${HOME:-}" ]]; then
   die "HOME is not set; cannot resolve the install or profile directories"
 fi
 INSTALL_DIR="$HOME/.local/bin"
+
+# --- the published releases ------------------------------------------------
+# The same script is published in every release, so a user can install
+# from a link. The constants below are the only place that knows where
+# the releases live.
+REPO_URL="https://github.com/Xeworg/mnexis"
+RELEASES_URL="https://github.com/Xeworg/mnexis/releases"
 
 # --- agent skills (skills/) --------------------------------------------
 # Supported AI environments and where each one discovers user skills.
@@ -211,7 +241,156 @@ cargo_target_dir() {
   esac
 }
 
-cmd_install() {
+# --- the online installer --------------------------------------------------
+
+# The base URL of the release the installer downloads from. An empty
+# version means the latest published release; a version pins it.
+release_base_url() {
+  local version="${1:-}"
+  if [[ -n "$version" ]]; then
+    printf '%s/download/v%s\n' "$RELEASES_URL" "${version#v}"
+  else
+    printf '%s/latest/download\n' "$RELEASES_URL"
+  fi
+}
+
+# The platform slug the releases publish artifacts for. The MVP is
+# Linux-first, so anything else has to build from source.
+release_platform() {
+  case "$(uname -s)" in
+    Linux) ;;
+    *) return 1 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64 | amd64) printf 'linux-x86_64' ;;
+    aarch64 | arm64) printf 'linux-aarch64' ;;
+    *) return 1 ;;
+  esac
+}
+
+require_download_tools() {
+  local missing=0
+  command -v curl >/dev/null 2>&1 || {
+    error "curl was not found on PATH."
+    missing=1
+  }
+  command -v sha256sum >/dev/null 2>&1 || {
+    error "sha256sum was not found on PATH."
+    missing=1
+  }
+  command -v tar >/dev/null 2>&1 || {
+    error "tar was not found on PATH."
+    missing=1
+  }
+  if ((missing != 0)); then
+    error "Installing a published binary needs curl, sha256sum and tar."
+    error "Install them and re-run, or build from source instead:"
+    error "  git clone $REPO_URL && cd mnexis && ./install.sh"
+    exit 1
+  fi
+}
+
+# Install a binary into INSTALL_DIR atomically. The temporary file lives
+# in the same directory, so the rename cannot cross a filesystem boundary
+# and the installed binary is never half-written.
+install_binary() {
+  local source="$1"
+  mkdir -p -- "$INSTALL_DIR"
+  local tmp="$INSTALL_DIR/.mnexis.install.$$"
+  rm -f -- "$tmp"
+  install -m 0755 -- "$source" "$tmp"
+  mv -f -- "$tmp" "$INSTALL_DIR/mnexis"
+}
+
+# Download the published artifact, verify it against the checksum the
+# release publishes and install it. Nothing is installed unless the
+# checksum matches.
+install_from_release() {
+  local version="${1:-}"
+  local platform asset base tmp expected actual found
+  platform="$(release_platform)" || {
+    error "mnexis publishes binaries for linux-x86_64 and linux-aarch64 only."
+    error "This machine reports: $(uname -s) $(uname -m)."
+    error "Build it from source instead:"
+    error "  git clone $REPO_URL && cd mnexis && ./install.sh"
+    return 1
+  }
+  require_download_tools
+
+  asset="mnexis-$platform.tar.gz"
+  base="$(release_base_url "$version")"
+  tmp="$(mktemp -d)"
+  # shellcheck disable=SC2064  # the path is expanded now, on purpose.
+  trap "rm -rf -- '$tmp'" RETURN
+
+  printf 'Downloading %s\n' "$base/$asset"
+  if ! curl -fsSL --retry 3 --retry-delay 1 -o "$tmp/$asset" "$base/$asset"; then
+    error "the download failed: $base/$asset"
+    return 1
+  fi
+  if ! curl -fsSL --retry 3 --retry-delay 1 -o "$tmp/SHA256SUMS" "$base/SHA256SUMS"; then
+    error "the checksum file could not be downloaded: $base/SHA256SUMS"
+    return 1
+  fi
+
+  expected="$(awk -v name="$asset" '$2 == name {print $1}' "$tmp/SHA256SUMS")"
+  if [[ -z "$expected" ]]; then
+    error "the release publishes no checksum for $asset; refusing to install it."
+    return 1
+  fi
+  actual="$(sha256sum -- "$tmp/$asset" | awk '{print $1}')"
+  if [[ "$expected" != "$actual" ]]; then
+    error "checksum mismatch for $asset; refusing to install it."
+    error "  expected $expected"
+    error "  got      $actual"
+    return 1
+  fi
+
+  mkdir -p -- "$tmp/extract"
+  if ! tar -xzf "$tmp/$asset" -C "$tmp/extract"; then
+    error "the downloaded archive could not be extracted."
+    return 1
+  fi
+  # The artifact carries the version it was built from: a pinned install
+  # must not end up running a different version.
+  if [[ -f "$tmp/extract/VERSION" ]]; then
+    found="$(tr -d '[:space:]' <"$tmp/extract/VERSION")"
+    if [[ -n "$version" && "$found" != "${version#v}" ]]; then
+      error "the downloaded artifact is version $found but $version was requested."
+      return 1
+    fi
+  fi
+
+  install_binary "$tmp/extract/mnexis"
+  printf 'Installed mnexis %s to %s\n' \
+    "$("$INSTALL_DIR/mnexis" --version 2>/dev/null | awk '{print $NF}')" \
+    "$INSTALL_DIR/mnexis"
+}
+
+# Build from the published sources: the fallback for a platform without a
+# published binary, and the path a careful user can ask for explicitly.
+install_from_source_clone() {
+  local version="${1:-}"
+  local tmp
+  require_rust_toolchain
+  if ! command -v git >/dev/null 2>&1; then
+    error "git was not found on PATH."
+    return 1
+  fi
+  tmp="$(mktemp -d)"
+  # shellcheck disable=SC2064  # the path is expanded now, on purpose.
+  trap "rm -rf -- '$tmp'" RETURN
+  if [[ -n "$version" ]]; then
+    git clone --quiet --depth 1 --branch "v${version#v}" "$REPO_URL" "$tmp/mnexis" || return 1
+  else
+    git clone --quiet --depth 1 "$REPO_URL" "$tmp/mnexis" || return 1
+  fi
+  (cd -- "$tmp/mnexis" && ./install.sh) || return 1
+}
+
+# Build the working tree with cargo: the historical path, used when the
+# script runs from the repository.
+install_from_source_repo() {
   require_rust_toolchain
   if [[ ! -f "$SCRIPT_DIR/Cargo.toml" ]]; then
     die "Cargo.toml not found in $SCRIPT_DIR; install.sh must stay at the repository root"
@@ -227,9 +406,7 @@ cmd_install() {
     die "the build succeeded but no executable was found at $built"
   fi
 
-  mkdir -p -- "$INSTALL_DIR"
-  cp -f -- "$built" "$INSTALL_DIR/mnexis"
-  chmod 0755 -- "$INSTALL_DIR/mnexis"
+  install_binary "$built"
   printf 'Installed mnexis to %s\n' "$INSTALL_DIR/mnexis"
 
   case ":$PATH:" in
@@ -242,6 +419,23 @@ cmd_install() {
       printf '  export PATH="%s:$PATH"\n' "$INSTALL_DIR"
       ;;
   esac
+}
+
+# Install: from the repository it builds, standalone it downloads the
+# published binary. The mode follows the script itself, not the working
+# directory: a piped script has no file of its own.
+cmd_install() {
+  local version="${1:-}"
+  local from_source="${2:-0}"
+  if [[ "$from_source" == "1" ]]; then
+    install_from_source_clone "$version"
+    return $?
+  fi
+  if [[ -f "${BASH_SOURCE[0]}" && -f "$SCRIPT_DIR/Cargo.toml" ]]; then
+    install_from_source_repo
+    return $?
+  fi
+  install_from_release "$version"
 }
 
 # Exact resolution order of src/cli/profile.rs:74-90 (the installer has no
@@ -411,15 +605,30 @@ main() {
       ;;
     install)
       shift
-      case "${1:-}" in
-        "") cmd_install ;;
-        -h | --help) usage ;;
-        *)
-          error "unknown option for 'install': $1"
-          usage >&2
-          return 2
-          ;;
-      esac
+      local version="${MNEXIS_VERSION:-}" from_source=0
+      while (($# > 0)); do
+        case "$1" in
+          --version)
+            (($# >= 2)) || die "--version requires a value"
+            version="$2"
+            shift 2
+            ;;
+          --from-source)
+            from_source=1
+            shift
+            ;;
+          -h | --help)
+            usage
+            return 0
+            ;;
+          *)
+            error "unknown option for 'install': $1"
+            usage >&2
+            return 2
+            ;;
+        esac
+      done
+      cmd_install "$version" "$from_source"
       ;;
     skills)
       shift
