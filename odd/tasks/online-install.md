@@ -153,6 +153,41 @@ cuando hay una versión nueva y ofrece instalarla.
   y el comando funciona sin profile (lo que actualiza es el binario, no
   las memorias). Suite completa: 20 suites en verde; `cargo fmt` limpio y
   clippy de vuelta en 36 warnings (los 5 nuevos se corrigieron).
+- L23 (verificación independiente): `gentle-ai-verify` revisó el árbol
+  contra S1–S10 y encontró **cinco defectos que la suite no veía** (la
+  suite probaba el script como archivo, nunca por pipe). Se corrigieron
+  todos y cada corrección quedó con su prueba de regresión:
+
+  1. **El one-liner documentado no instalaba nada.** `set -u` +
+     `${BASH_SOURCE[0]}` aborta el script cuando va por pipe (la variable
+     no existe), y el gate del modo leía lo mismo. Ahora `SCRIPT_PATH`
+     usa `${BASH_SOURCE[0]:-}` y el modo sigue al script, no al
+     directorio de trabajo: el script piped desde la raíz del repo (que
+     **tiene** `Cargo.toml`) toma igual el camino online.
+  2. **`MNEXIS_VERSION` se ignoraba sin subcomando**, que es justo la
+     forma que documentan el README y `docs/install.md`.
+  3. **La release no se publicaba nunca**: el paso que fusiona los
+     checksums ordenaba el archivo en el directorio del job y no dentro
+     de `release/`, donde el archivo está; y el gate de clippy convertía
+     la línea base de 36 warnings en errores, así que el job de tests
+     fallaba antes de construir nada.
+  4. **Sin `curl` el chequeo era un error** (exit 10) en vez de "no hay
+     actualización": contradecía S4 y en la TUI pintaba una línea roja.
+  5. **`u` instalaba aunque el menú no hubiera anunciado nada**, y el
+     directorio de trabajo quedaba en el data dir.
+
+  Además: el directorio de trabajo del instalador ahora vive dentro de
+  `$HOME` (S10), una plataforma sin binario publicado cae al camino de
+  compilar desde las fuentes (S5), y las notas de la release usan
+  `| bash` y no `| sh` (el script es bash).
+- L24 (pruebas nuevas): `tests/installer/13_piped_install_test.sh` (9
+  aserciones: el script piped instala, toma el camino online dentro del
+  repo, no deja temporales en `$HOME` y respeta `MNEXIS_VERSION`),
+  `tests/installer/14_workflow_test.sh` (8: el paso de fusión de los
+  checksums extraído del workflow corre y verifica; el workflow no
+  convierte warnings en errores; las notas dicen `| bash`) y un caso en
+  `tests/update_cli.rs` (sin `curl`: exit 0 y sin actualización). La
+  suite del instalador queda en **299 aserciones** (14 archivos).
 - L20 (cierre): la feature `online-install` queda cerrada con sus seis
   tareas. Verificación final sobre la rama: **20 suites cargo en verde**
   (168 de lib + las de integración), **41 pruebas de node**, **262
