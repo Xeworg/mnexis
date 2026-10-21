@@ -328,83 +328,68 @@ confirm_purge() {
   esac
 }
 
-cmd_skills() {
-  local env="$1" target name
-  require_known_env "$env"
-  require_shipped_skills
-  target="$(skills_env_dir "$env")"
+# The binary owns the installation: the assets are embedded in it, so the
+# shell script only forwards the request. One implementation, one source of
+# truth.
+#
+#   ./install.sh skills --env pi  ->  mnexis agent install --env pi --only skill
+#   ./install.sh extensions --env pi -> mnexis agent install --env pi --only extension
+ensure_mnexis_binary() {
+  if [[ -x "$INSTALL_DIR/mnexis" ]]; then
+    return 0
+  fi
+  printf 'The mnexis binary is required to install the agent assets; building it now.\n'
+  cmd_install
+}
 
-  mkdir -p -- "$target"
-  while IFS= read -r name; do
-    rm -rf -- "${target:?}/$name"
-    cp -R -- "$SCRIPT_DIR/skills/$name" "$target/$name"
-    printf 'Installed skill %s to %s\n' "$name" "$target"
-  done < <(shipped_skill_names)
+mnexis_binary() {
+  if [[ -x "$INSTALL_DIR/mnexis" ]]; then
+    printf '%s\n' "$INSTALL_DIR/mnexis"
+    return 0
+  fi
+  return 1
+}
+
+cmd_skills() {
+  local env="$1" only="$2"
+  require_known_env "$env"
+  ensure_mnexis_binary
+  local binary
+  binary="$(mnexis_binary)" || die "the mnexis binary is not available at $INSTALL_DIR"
+  "$binary" agent install --env "$env" --only "$only"
 }
 
 cmd_uninstall_skills() {
-  local env="$1" target name removed=0
+  local env="$1" only="$2"
   require_known_env "$env"
-  require_shipped_skills
-  target="$(skills_env_dir "$env")"
-
-  if [[ ! -d "$target" ]]; then
-    printf 'No mnexis skills are installed in %s.\n' "$target"
-    return 0
-  fi
-  while IFS= read -r name; do
-    if [[ -d "$target/$name" ]]; then
-      rm -rf -- "${target:?}/$name"
-      printf 'Removed skill %s from %s\n' "$name" "$target"
-      removed=1
-    fi
-  done < <(shipped_skill_names)
-  if ((removed == 0)); then
-    printf 'No mnexis skills are installed in %s.\n' "$target"
-  fi
+  local binary
+  binary="$(mnexis_binary)" || {
+    error "the mnexis binary is not installed, so the agent assets cannot be removed."
+    error "Install mnexis again (./install.sh) and re-run this command."
+    return 1
+  }
+  "$binary" agent uninstall --env "$env" --only "$only"
 }
 
 cmd_extensions() {
-  local env="$1" target name
+  local env="$1" only="$2"
   require_known_extension_env "$env"
-  require_shipped_extensions
-  target="$(extensions_env_dir "$env")"
-
-  mkdir -p -- "$target"
-  while IFS= read -r name; do
-    rm -rf -- "${target:?}/$name"
-    mkdir -p -- "${target:?}/$name"
-    # Copy the extension without its test directory: the tests are for
-    # development, the runtime only needs the entry point and its modules.
-    for entry in "$SCRIPT_DIR/extensions/$name"/*; do
-      [[ -e "$entry" ]] || continue
-      [[ "$(basename -- "$entry")" == "test" ]] && continue
-      cp -R -- "$entry" "${target:?}/$name/"
-    done
-    printf 'Installed extension %s to %s\n' "$name" "$target/$name"
-  done < <(shipped_extension_names)
+  ensure_mnexis_binary
+  local binary
+  binary="$(mnexis_binary)" || die "the mnexis binary is not available at $INSTALL_DIR"
+  "$binary" agent install --env "$env" --only "$only"
 }
 
 cmd_uninstall_extensions() {
-  local env="$1" target name removed=0
+  local env="$1" only="$2"
   require_known_extension_env "$env"
-  require_shipped_extensions
-  target="$(extensions_env_dir "$env")"
-
-  if [[ ! -d "$target" ]]; then
-    printf 'No mnexis extensions are installed in %s.\n' "$target"
-    return 0
-  fi
-  while IFS= read -r name; do
-    if [[ -d "$target/$name" ]]; then
-      rm -rf -- "${target:?}/$name"
-      printf 'Removed extension %s from %s\n' "$name" "$target"
-      removed=1
-    fi
-  done < <(shipped_extension_names)
-  if ((removed == 0)); then
-    printf 'No mnexis extensions are installed in %s.\n' "$target"
-  fi
+  local binary
+  binary="$(mnexis_binary)" || {
+    error "the mnexis binary is not installed, so the agent assets cannot be removed."
+    error "Install mnexis again (./install.sh) and re-run this command."
+    return 1
+  }
+  "$binary" agent uninstall --env "$env" --only "$only"
 }
 
 cmd_uninstall() {
@@ -494,7 +479,7 @@ main() {
         env="$(select_env)" || exit 1
       fi
       require_known_env "$env"
-      cmd_skills "$env"
+      cmd_skills "$env" skill
       ;;
     extensions)
       shift
@@ -518,7 +503,7 @@ main() {
         esac
       done
       env="${env:-pi}"
-      cmd_extensions "$env"
+      cmd_extensions "$env" extension
       ;;
     uninstall)
       shift
@@ -554,13 +539,13 @@ main() {
           env="$(select_env)" || exit 1
         fi
         require_known_env "$env"
-        cmd_uninstall_skills "$env"
+        cmd_uninstall_skills "$env" skill
       elif ((extensions == 1)); then
         if ((purge == 1)); then
           error "--extensions and --purge are separate scopes; run them separately."
           return 2
         fi
-        cmd_uninstall_extensions "${env:-pi}"
+        cmd_uninstall_extensions "${env:-pi}" extension
       elif ((purge == 1)); then
         cmd_uninstall_purge
       else

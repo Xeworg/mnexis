@@ -24,7 +24,7 @@ assert_missing "relocated install does not touch the default agent dir" \
 run_installer skills --env pi
 assert_status "skills --env pi exits 0" 0
 assert_file "mnexis-memory SKILL.md installed" "$PI_SKILLS/mnexis-memory/SKILL.md"
-assert_contains "install names the skill" "Installed skill mnexis-memory"
+assert_contains "install names the skill" "Installed skill 'mnexis-memory'"
 assert_contains "install names the target directory" "$PI_SKILLS"
 
 if cmp -s -- "$SHIPPED" "$PI_SKILLS/mnexis-memory/SKILL.md"; then
@@ -52,9 +52,16 @@ run_installer skills --env pi
 assert_status "install next to a foreign skill exits 0" 0
 assert_file "foreign skill survives the install" "$PI_SKILLS/foreign-skill/SKILL.md"
 
-# The binary is not a prerequisite: skills install with nothing in
-# ~/.local/bin.
-assert_missing "skills install does not install the binary" "$HOME/.local/bin/mnexis"
+# The skills command never builds the binary: it delegates to the one that
+# is already installed.
+BINARY_BEFORE="$(cksum <"$HOME/.local/bin/mnexis")"
+run_installer skills --env pi
+BINARY_AFTER="$(cksum <"$HOME/.local/bin/mnexis")"
+if [[ "$BINARY_BEFORE" == "$BINARY_AFTER" ]]; then
+  ok "skills install does not rebuild the binary"
+else
+  not_ok "skills install replaced the binary"
+fi
 
 # Interactive selection: one environment (pi), chosen through the pty.
 if ((HAVE_PTY == 1)); then

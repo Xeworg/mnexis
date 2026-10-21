@@ -15,7 +15,7 @@ run_installer extensions --env pi
 assert_status "extensions --env pi exits 0" 0
 assert_file "extension entry point installed" "$PI_EXTENSIONS/mnexis-memory/index.js"
 assert_file "extension module installed" "$PI_EXTENSIONS/mnexis-memory/lib/cli.js"
-assert_contains "install names the extension" "Installed extension mnexis-memory"
+assert_contains "install names the extension" "Installed extension 'mnexis-memory'"
 assert_contains "install names the target directory" "$PI_EXTENSIONS"
 
 # The test directory is development-only and must not be shipped.

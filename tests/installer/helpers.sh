@@ -31,6 +31,17 @@ export CARGO_HOME="$CARGO_HOME_REAL"
 export CARGO_TARGET_DIR="$CARGO_TARGET_DIR_REAL"
 mkdir -p -- "$HOME"
 
+# The installer delegates the agent assets to the mnexis binary (the assets
+# are embedded in it). The suite installs the prebuilt release binary into the
+# scratch HOME so the delegation runs the real code without a cargo build.
+MNEXIS_TEST_BINARY="$HOME/.local/bin/mnexis"
+PREBUILT_BINARY="$CARGO_TARGET_DIR_REAL/release/mnexis"
+if [[ -x "$PREBUILT_BINARY" ]]; then
+  mkdir -p -- "$HOME/.local/bin"
+  cp -f -- "$PREBUILT_BINARY" "$MNEXIS_TEST_BINARY"
+  chmod 0755 -- "$MNEXIS_TEST_BINARY"
+fi
+
 PASSES=0
 FAILS=0
 SKIPS=0
