@@ -77,7 +77,7 @@ cuando hay una versión nueva y ofrece instalarla.
   plataforma: `mnexis-linux-<arch>.tar.gz` con el binario, `LICENSE`,
   `README.md` y un `VERSION` (el instalador lo lee para rechazar un
   artefacto que no sea de la versión pedida). El nombre del artefacto no
-  lleva la versión porque la release ya la.namespacía; el checksum de cada
+  lleva la versión porque la release ya la namespacía; el checksum de cada
   artefacto vive en `SHA256SUMS`, que el workflow de T2 fusiona en un solo
   archivo. El script **se niega a empaquetar** un binario cuya versión no
   coincide con la pedida (empaquetar 0.2.0 con un binario 0.1.0 es el
@@ -87,3 +87,19 @@ cuando hay una versión nueva y ofrece instalarla.
   segunda plataforma, y los cuatro rechazos). `shellcheck` no está
   instalado en esta máquina: la verificación del shell es la prueba de
   comportamiento, no un lint.
+- L8 (T2, evidencia): `.github/workflows/release.yml` corta una release
+  con un tag `v*`: el job `test` corre fmt, clippy con `-D warnings`, la
+  suite cargo y la suite del instalador; `build` compila y empaqueta en
+  dos plataformas (`ubuntu-24.04` y `ubuntu-24.04-arm`); `publish` fusiona
+  los `SHA256SUMS`, agrega el `install.sh` con su checksum, verifica los
+  checksums y publica la release con `gh release create`. Las notas de la
+  release dicen explícitamente que los artefactos **no están firmados**
+  todavía (S6). Verificado localmente: el YAML parsea (ruby), los nueve
+  pasos de shell pasan `bash -n`, y el terminador del heredoc queda en
+  columna 0. **No verificable localmente**: la corrida real de Actions
+  (requiere un tag y la red); la primera release la corta el usuario.
+- L9 (T2, decisión de diseño): el workflow usa `gh release create` (la
+  CLI de GitHub, ya presente) y no una action de terceros: menos
+  superficie de suministro en el camino que publica binarios. El cache de
+  cargo (`Swatinem/rust-cache`) es la única action de terceros, y sólo
+  cachea.
