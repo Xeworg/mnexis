@@ -264,7 +264,7 @@ impl UpdateService {
                 .map(|s| s.trim().to_string())
                 .unwrap_or_default();
             if !found.is_empty() && found != target {
-                let _ = std::fs::remove_dir_all(&work);
+                self.clean_work_dir();
                 return Err(MnexisError::invalid_argument(
                     "version",
                     format!("the artifact is version {found} but {target} was requested"),
