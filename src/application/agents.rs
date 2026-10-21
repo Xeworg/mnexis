@@ -284,6 +284,7 @@ impl AgentInstaller {
             // Remove only the files mnexis ships, then the directories it
             // created, from the deepest one up, and only while they are
             // empty: a foreign file anywhere inside must survive.
+            let mut protected: Vec<PathBuf> = Vec::new();
             if let Some(asset) = asset_for(target.kind) {
                 for file in asset.files {
                     let path = target.directory.join(file.path);
@@ -292,7 +293,11 @@ impl AgentInstaller {
                     // the way is not ours to remove: skip it instead of
                     // failing the whole uninstall.
                     match fs::symlink_metadata(&path) {
-                        Ok(metadata) if metadata.is_dir() => {}
+                        Ok(metadata) if metadata.is_dir() => {
+                            // Not ours: it must survive, even as an empty
+                            // directory the cleanup would otherwise remove.
+                            protected.push(path);
+                        }
                         Ok(_) => {
                             fs::remove_file(&path)?;
                             report.files.push(InstalledFile {
@@ -304,7 +309,7 @@ impl AgentInstaller {
                     }
                 }
             }
-            remove_empty_directories(&target.directory);
+            remove_empty_directories(&target.directory, &protected);
             report.assets.push(InstalledAsset {
                 kind: target.kind,
                 name: target.name,
@@ -376,12 +381,16 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 ///
 /// The root itself is removed when it is empty, so an asset directory with
 /// no foreign file left is removed as a whole. A directory holding a
-/// foreign file is kept.
-fn remove_empty_directories(root: &Path) {
+/// foreign file is kept, and so is a directory in `protected`: those stand
+/// in the path of a shipped file and are not ours to remove.
+fn remove_empty_directories(root: &Path, protected: &[PathBuf]) {
     let mut directories = Vec::new();
     collect_directories(root, &mut directories);
     directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     for directory in directories {
+        if protected.iter().any(|kept| kept == &directory) {
+            continue;
+        }
         let empty = fs::read_dir(&directory)
             .map(|mut entries| entries.next().is_none())
             .unwrap_or(false);
@@ -827,6 +836,24 @@ mod tests {
             mode & 0o777,
             0o755,
             "the mode of the replaced file survives the reinstall"
+        );
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn uninstall_skips_a_directory_standing_in_the_path_of_a_shipped_file() {
+        let home = temp_home();
+        let installer = AgentInstaller::new(&home);
+        let skills = installer.targets(AgentEnvironment::Pi)[0].directory.clone();
+        fs::create_dir_all(skills.join("SKILL.md")).expect("dir in the way");
+
+        installer
+            .uninstall(AgentEnvironment::Pi, AssetFilter::All)
+            .expect("uninstall must not fail on a directory in the way");
+
+        assert!(
+            skills.join("SKILL.md").is_dir(),
+            "the directory that is not ours survives"
         );
         fs::remove_dir_all(&home).ok();
     }
