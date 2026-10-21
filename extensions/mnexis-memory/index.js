@@ -53,6 +53,43 @@ export function readNamespace(value) {
 	return namespace === "" ? undefined : namespace;
 }
 
+/**
+ * Check that every memory a write touches lives in the workspace
+ * namespace.
+ *
+ * A write that crosses a project boundary is refused before it reaches
+ * the CLI: this workspace writes only into its own namespace. A memory
+ * that cannot be read cannot be checked either, and a write whose target
+ * is unknown is refused too.
+ *
+ * @returns {Promise<{ message: string, details: Record<string, unknown> } | null>}
+ */
+export async function checkProjectBoundary(client, uuids, namespace, cwd) {
+	for (const uuid of uuids) {
+		const result = await client.show(uuid, cwd);
+		if (result.code !== 0) {
+			return {
+				message:
+					`Cannot read the memory ${uuid} to check which project it belongs to, ` +
+					`so nothing was changed. This workspace writes only into '${namespace}'.`,
+				details: { uuid, namespace },
+			};
+		}
+		const owner =
+			result.data && typeof result.data === "object" ? result.data.namespace : undefined;
+		if (owner !== namespace) {
+			return {
+				message:
+					`The memory ${uuid} lives in namespace '${owner ?? "unknown"}' and this ` +
+					`workspace writes only into '${namespace}'. Saving a memory for another project ` +
+					`is the human's decision, not the agent's.`,
+				details: { uuid, namespace: owner ?? null, workspace: namespace },
+			};
+		}
+	}
+	return null;
+}
+
 /** Build the tool result shape pi expects. */
 function ok(text, details) {
 	return { content: [{ type: "text", text }], details };
@@ -413,7 +450,9 @@ export default function mnexisMemoryExtension(pi) {
 		promptSnippet: "Replace an outdated memory with a newer one, keeping the history.",
 		description:
 			"Replace an outdated memory with a newer one, keeping the history. Use it when a fact " +
-			"changed: save the new fact first, then link both records with this tool.",
+			"changed: save the new fact first, then link both records with this tool. Both memories " +
+			"must live in this project's namespace: the tool refuses to touch a memory that belongs " +
+			"to another project.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -428,6 +467,19 @@ export default function mnexisMemoryExtension(pi) {
 			const { workspace, gate } = await prepareWrite(ctx);
 			if (!gate.authorized) {
 				return fail(gate.message, { namespace: workspace.namespace, authorized: false });
+			}
+			const boundary = await checkProjectBoundary(
+				client,
+				[params.older, params.newer],
+				workspace.namespace,
+				ctx.cwd,
+			);
+			if (boundary) {
+				return fail(boundary.message, {
+					namespace: workspace.namespace,
+					authorized: false,
+					...boundary.details,
+				});
 			}
 			const result = await client.supersede(
 				{ older: params.older, newer: params.newer, reason: params.reason },

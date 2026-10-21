@@ -73,13 +73,24 @@ Then pass `--namespace <name>` on every write for this project, and use
 `mnexis search "<query>"` searches every namespace, which is what to use
 when the answer may live in another project.
 
+**Write only into this project.** A memory belongs to the project it was
+recorded in. Save into this project's namespace and nowhere else, and never
+update, supersede or delete a memory that lives in another project — not
+even when the profile would allow the write, and not even when the other
+project shares components with this one. Reading across projects is fine
+and expected; writing across them is not. If the user wants something
+recorded for another project, that is their call: ask them to run the
+command themselves, or bind that workspace first.
+
 ## The loop
 
 1. **Recall first.** Before answering from scratch, look for prior context:
    `mnexis search "<keywords>"` (FTS5 ranked; `--namespace`, `--limit`),
-   `mnexis list`, and `mnexis show <uuid>` to read one record.
+   `mnexis list`, and `mnexis show <uuid>` to read one record. The bare
+   forms reach every project, because projects share components; add
+   `--namespace <name>` to stay inside this one.
 2. **Save what matters.** After a milestone — a decision, a discovery, a
-   user preference — store it immediately:
+   user preference — store it immediately, in this project's namespace:
    `mnexis save --namespace <name> "<one self-contained sentence>" --tags a,b --topic-key <stable-key>`.
    The content must make sense months later with no surrounding chat.
    `--topic-key` is unique per namespace: reuse it to group facts about one
@@ -88,7 +99,8 @@ when the answer may live in another project.
    historically true facts keep their record: `mnexis save` the newer fact,
    then `mnexis supersede --older <old-uuid> --newer <new-uuid> --reason "why"`.
    The supersede is atomic, revision-checked on both sides, cycle-free, and
-   persists the reason. `mnexis history <uuid>` shows the chain.
+   persists the reason. `mnexis history <uuid>` shows the chain. Both
+   memories must live in this project's namespace.
 4. **Correct a record in place** only for typos/formatting:
    `mnexis update <uuid> --expected-revision <rev> --reason "why" [--content "..."]`.
 

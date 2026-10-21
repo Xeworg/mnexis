@@ -15,11 +15,31 @@ import mnexisMemory from "../index.js";
 
 /** A fake `mnexis` that records its arguments and answers envelopes. */
 const FAKE_BINARY = `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
+const log = process.env.MNEXIS_FAKE_LOG;
 const args = process.argv.slice(2);
-appendFileSync(process.env.MNEXIS_FAKE_LOG, JSON.stringify(args) + "\\n");
+appendFileSync(log, JSON.stringify(args) + "\\n");
+const calls = readFileSync(log, "utf8")
+	.split("\\n")
+	.filter(Boolean)
+	.map((line) => JSON.parse(line));
+// The namespace the extension bound this workspace to, learned from the
+// bind call it made.
+const bind = calls.filter((call) => call[0] === "project" && call[1] === "bind").pop();
+const workspace = bind ? bind[2] : "mnexis";
 if (args[0] === "project" && args[1] === "list") {
 	process.stdout.write(JSON.stringify({ bindings: [] }));
+} else if (args[0] === "config" && args[1] === "show") {
+	process.stdout.write(
+		JSON.stringify({ scope: { read_namespaces: [workspace], write_namespaces: [workspace] } }),
+	);
+} else if (args[0] === "show") {
+	process.stdout.write(
+		JSON.stringify({
+			uuid: args[1],
+			namespace: process.env.MNEXIS_FAKE_MEMORY_NAMESPACE || workspace,
+		}),
+	);
 } else if (args[0] === "search" || args[0] === "list") {
 	process.stdout.write(JSON.stringify({ count: 0, items: [] }));
 } else {
@@ -135,15 +155,13 @@ test("list reads across projects unless a namespace is given", async () => {
 	);
 });
 
-test("a save without consent never reaches the CLI", async () => {
+test("a save targets the workspace namespace", async () => {
 	const { log } = setup();
 	const { tools, pi } = fakeHost();
 	mnexisMemory(pi);
 	const save = tools.get("mnexis_save");
 	assert.ok(save, "mnexis_save is registered");
 
-	// The write path needs the profile: the fake answers `config show`
-	// with an empty scope, so the gate refuses and nothing is written.
 	const result = await save.execute(
 		"t4",
 		{ content: "a fact" },
@@ -151,8 +169,54 @@ test("a save without consent never reaches the CLI", async () => {
 		undefined,
 		context(),
 	);
-	assert.equal(result.isError, true, "the save is refused without consent");
+	assert.notEqual(result.isError, true, "the workspace namespace is authorized");
 
 	const saveCall = calls(log).find((args) => args[0] === "save");
-	assert.equal(saveCall, undefined, "no save reached the CLI");
+	assert.ok(saveCall, "save was called");
+	assert.equal(saveCall.includes("--namespace"), true, "save names its namespace");
+});
+
+test("a supersede inside the workspace namespace goes through", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const supersede = tools.get("mnexis_supersede");
+	assert.ok(supersede, "mnexis_supersede is registered");
+
+	const result = await supersede.execute(
+		"t5",
+		{ older: "old-uuid", newer: "new-uuid", reason: "corrected" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.notEqual(result.isError, true, "the supersede is allowed");
+
+	const call = calls(log).find((args) => args[0] === "supersede");
+	assert.ok(call, "supersede was called");
+});
+
+test("a supersede of another project's memory is refused", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_MEMORY_NAMESPACE = "otro-proyecto";
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const supersede = tools.get("mnexis_supersede");
+	assert.ok(supersede, "mnexis_supersede is registered");
+
+	const result = await supersede.execute(
+		"t6",
+		{ older: "old-uuid", newer: "new-uuid", reason: "corrected" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.equal(result.isError, true, "the supersede is refused");
+	const text = result.content.map((block) => block.text).join(" ");
+	assert.match(text, /otro-proyecto/, "the message names the other namespace");
+	assert.match(text, /writes only into/, "the message states the boundary");
+
+	const call = calls(log).find((args) => args[0] === "supersede");
+	assert.equal(call, undefined, "no supersede reached the CLI");
+	delete process.env.MNEXIS_FAKE_MEMORY_NAMESPACE;
 });

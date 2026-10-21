@@ -60,7 +60,7 @@ comparten componentes.
 | ID | Spec | Route | Commit |
 |----|------|-------|--------|
 | T1 | S3, S4, S10 | Scope y profile: clave `allow_read_all`, `allow_global` por defecto en false, `can_read` con lectura abierta salvo `"global"`, comandos `config allow-global` / `config allow-read-all` (con `--revoke`), `config show`, `scope.schema.json` | a639e30 |
-| T2 | S6 | Lecturas abiertas: la extensión lee entre proyectos por defecto (search/list sin namespace, show por UUID) y el CLI las sostiene | |
+| T2 | S6 | Lecturas abiertas: la extensión lee entre proyectos por defecto (search/list sin namespace, show por UUID) y el CLI las sostiene | 7dfeeb3 |
 | T3 | S5, S9 | Aislamiento de escritura en el CLI: resolución del namespace del workspace actual (binding por clave, marker `.mnexis-namespace`) y guard de escritura en save/update/supersede/delete/restore | |
 | T4 | S7, S8 | Extensión acotada al proyecto: supersede rechaza objetivos fuera del namespace del workspace; descripciones de las tools y protocolo de la skill | |
 | T5 | S3, S5, S6 | Documentación: README, `docs/`, contrato v1 | |
