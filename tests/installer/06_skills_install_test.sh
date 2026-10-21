@@ -7,8 +7,19 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 . "$TESTS_DIR/helpers.sh"
 
-PI_SKILLS="$HOME/.pi/skills"
+PI_SKILLS="$HOME/.pi/agent/skills"
 SHIPPED="$REPO_ROOT/skills/mnexis-memory/SKILL.md"
+
+# A relocated pi agent directory is honoured: pi advertises user skills
+# from <agent-dir>/skills, and <agent-dir> follows PI_CODING_AGENT_DIR.
+# Runs first, while the default agent dir is still empty.
+CUSTOM_AGENT="$HOME/custom-agent"
+run_installer_with_env "PI_CODING_AGENT_DIR=$CUSTOM_AGENT" skills --env pi
+assert_status "skills --env pi honours PI_CODING_AGENT_DIR" 0
+assert_file "skill installed in the relocated agent dir" \
+  "$CUSTOM_AGENT/skills/mnexis-memory/SKILL.md"
+assert_missing "relocated install does not touch the default agent dir" \
+  "$PI_SKILLS/mnexis-memory/SKILL.md"
 
 run_installer skills --env pi
 assert_status "skills --env pi exits 0" 0

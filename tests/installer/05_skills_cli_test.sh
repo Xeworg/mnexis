@@ -12,6 +12,7 @@ assert_contains "skills --help prints usage" "Usage: ./install.sh"
 assert_contains "skills --help documents the subcommand" "skills"
 assert_contains "skills --help documents --env" "--env"
 assert_contains "skills --help lists the pi environment" "pi"
+assert_contains "skills --help lists the opencode environment" "opencode"
 
 run_installer skills --bogus
 assert_status "unknown skills option exits 2" 2
@@ -43,7 +44,7 @@ for tool in cp mkdir chmod rm; do
 done
 run_installer_with_path "$STUB_PATH" skills --env pi
 assert_status "skills --env pi succeeds without cargo on PATH" 0
-assert_file "skill installed without a toolchain" "$HOME/.pi/skills/mnexis-memory/SKILL.md"
+assert_file "skill installed without a toolchain" "$HOME/.pi/agent/skills/mnexis-memory/SKILL.md"
 assert_lacks "no toolchain complaint" "cargo was not found"
 
 finish

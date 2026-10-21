@@ -20,8 +20,9 @@ your PATH. Re-running it overwrites the installed binary. See
 `uninstall --purge` semantics.
 
 To install the shipped agent skills (`skills/`, starting with
-`mnexis-memory`) into an AI environment — `pi` first, target
-`~/.pi/skills`:
+`mnexis-memory`) into an AI environment — `pi`
+(`$PI_CODING_AGENT_DIR` or `~/.pi/agent/skills`) or `opencode`
+(`~/.config/opencode/skills`):
 
 ```sh
 ./install.sh skills            # pick the environment interactively

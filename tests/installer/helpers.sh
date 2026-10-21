@@ -22,6 +22,11 @@ SCRATCH="$(mktemp -d)"
 trap 'rm -rf -- "$SCRATCH"' EXIT
 
 export HOME="$SCRATCH/home"
+# The installer resolves pi's agent directory from PI_CODING_AGENT_DIR when
+# it is set. The suite must not inherit the caller's value (a relocated pi
+# agent dir would move the install target out of the scratch HOME), so it is
+# cleared here; the dedicated test sets it explicitly for one call.
+unset PI_CODING_AGENT_DIR
 export CARGO_HOME="$CARGO_HOME_REAL"
 export CARGO_TARGET_DIR="$CARGO_TARGET_DIR_REAL"
 mkdir -p -- "$HOME"
@@ -49,6 +54,18 @@ run_installer_with_path() {
   shift
   local output status
   output="$(env PATH="$path_value" "$BASH_BIN" "$INSTALL_SH" "$@" 2>&1 </dev/null)"
+  status=$?
+  RUN_OUT="$output"
+  RUN_STATUS="$status"
+}
+
+# Run install.sh with an extra environment variable set (e.g.
+# PI_CODING_AGENT_DIR=/some/dir), keeping the scratch HOME.
+run_installer_with_env() {
+  local env_assignment="$1"
+  shift
+  local output status
+  output="$(env "$env_assignment" "$BASH_BIN" "$INSTALL_SH" "$@" 2>&1 </dev/null)"
   status=$?
   RUN_OUT="$output"
   RUN_STATUS="$status"

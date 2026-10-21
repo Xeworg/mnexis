@@ -75,9 +75,15 @@ mnexis without per-session prompting.
 
 Behaviour:
 
-- `pi` is the first supported environment; its skills are installed to
-  `~/.pi/skills/<skill-name>/` (pi's user skills directory). Adding more
-  environments later extends the registry in `install.sh`.
+- Supported environments and their skills directories:
+  - `pi` → `<agent-dir>/skills/<skill-name>/`, where `<agent-dir>` is
+    `$PI_CODING_AGENT_DIR` or `$HOME/.pi/agent` by default. This is the
+    directory pi scans at startup to advertise skills to the model;
+    `~/.pi/skills/` is a *project*-level location for pi, so a skill
+    installed there is never advertised.
+  - `opencode` → `~/.config/opencode/skills/<skill-name>/` (opencode's
+    global skills directory).
+  Adding more environments extends the registry in `install.sh`.
 - Running `skills` is a pure file copy: no Rust toolchain, no build, and
   the `mnexis` binary is not required or installed by it.
 - Re-running overwrites the installed skills with the shipped content.
