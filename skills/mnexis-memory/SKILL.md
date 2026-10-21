@@ -1,6 +1,6 @@
 ---
 name: mnexis-memory
-description: Persist, recall, and supersede long-term memories with the mnexis CLI, scoped to the project the user is working on. Use when a task needs memory across sessions — recalling prior work, saving decisions, discoveries, or user preferences, or replacing an outdated stored fact without losing history.
+description: Persist, recall, and supersede long-term project memory with the mnexis CLI (a local SQLite + FTS5 memory engine), scoped to the workspace the user is working on. Use whenever the user wants context to survive across sessions — remembering prior work, decisions, discoveries or preferences ("what did we do last time", "do you remember", "keep this for future sessions"), storing a milestone, or replacing an outdated stored fact without losing history. For project memory that must be queryable and scoped per project, use mnexis rather than ad-hoc notes or AGENTS.md files.
 license: MIT
 ---
 
@@ -12,8 +12,13 @@ and supersession chains.
 
 ## Setup
 
-`mnexis --version` must succeed. If no profile exists yet, `mnexis init`
-creates it at `$HOME/.local/share/mnexis` (`MNEXIS_DATA_DIR` overrides).
+`mnexis --version` must succeed. The profile must exist before any other
+command: if `$HOME/.local/share/mnexis/mnexis.toml` is missing, run
+`mnexis init` first (it creates the profile at `$HOME/.local/share/mnexis`;
+`MNEXIS_DATA_DIR` overrides the location). `mnexis project bind` does NOT
+require a profile and will happily write `projects.toml` alone, which leaves
+the later `mnexis config allow-namespace` failing with
+`NOT_FOUND: not found: profile ... (run 'mnexis init' first)`.
 Every command accepts `--data-dir <DIR>` to target a different profile.
 
 ## Scope to the current project (do this once per session)
@@ -25,9 +30,11 @@ recorded in the profile (`projects.toml`). Resolve it before saving:
    - Inside a git repository: key = `git:<normalized remote origin url>`
      (take the repo root with `git rev-parse --show-toplevel`, the remote
      with `git config --get remote.origin.url`; drop the protocol and the
-     `.git` suffix, lowercase the host, and replace `/`, `:` and `.` with
-     `-` — e.g. `git:github.com-xeworg-mnexis`). With no remote, use
-     `path:<absolute repo root>`.
+     `.git` suffix, lowercase the **whole** remaining URL, and replace `/`
+     and `:` with `-` (keep the dots) — e.g. `git:github.com-xeworg-mnexis`).
+     The key must be byte-identical across agents and sessions, so never
+     keep the original letter case of the repository name. With no remote,
+     use `path:<absolute repo root>`.
    - Without git: walk up from the working directory looking for a
      `.mnexis-namespace` marker; if one is found, the directory holding it
      is the project root and the key is `path:<absolute root>`. With no
@@ -42,9 +49,15 @@ recorded in the profile (`projects.toml`). Resolve it before saving:
    the human before using `--force`.
 4. **Authorize it:** a namespace only accepts writes when it is in the
    profile allowlist. `mnexis save --namespace <name>` fails with
-   `NOT_FOUND namespace:<name>` until it is allowed. **Ask the human
-   first**, then run `mnexis config allow-namespace <name>` — permissions
-   belong to the user, not to the agent.
+   `NOT_FOUND namespace:<name>` until it is allowed. Permissions belong to
+   the human, never to the agent. Ask for an **explicit confirmation** and
+   wait for the answer before running `mnexis config allow-namespace <name>`:
+   name the exact command and what it grants. A request to "set up memory"
+   or to "remember things" is NOT consent to change permissions. If no
+   interactive answer is possible (headless, scripted, one-shot mode), stop
+   and report that authorization is pending — never authorize yourself.
+   Never grant anything by hand-editing the profile files (`mnexis.toml`,
+   `projects.toml`): only the CLI commands are legitimate.
 
 Then pass `--namespace <name>` on every write for this project, and use
 `mnexis search --namespace <name>` for project-scoped recall. A bare
