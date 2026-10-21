@@ -11,12 +11,21 @@
 //! namespace unless the caller forces the change, because silently moving
 //! a workspace to another namespace would split its memories in two.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
 use crate::config::write_atomic;
 use crate::domain::error::MnexisError;
+
+/// The registry file inside a profile data directory.
+///
+/// Every reader and writer resolves the path through this function, so the
+/// commands that write bindings and the workspace guard that reads them can
+/// never disagree about where the bindings live.
+pub fn registry_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("projects.toml")
+}
 
 /// One workspace → namespace binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
