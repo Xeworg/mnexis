@@ -272,6 +272,18 @@ pub enum ConfigAction {
         /// Namespace to authorize
         namespace: String,
     },
+    /// Allow (or revoke) the reserved `global` namespace
+    AllowGlobal {
+        /// Revoke the permission instead of granting it
+        #[arg(long)]
+        revoke: bool,
+    },
+    /// Allow (or revoke) reads across every namespace
+    AllowReadAll {
+        /// Revoke the permission instead of granting it
+        #[arg(long)]
+        revoke: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -545,6 +557,12 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Config {
             action: ConfigAction::AllowNamespace { namespace },
         } => config_cmd::allow_namespace(data_dir, namespace.clone()),
+        Command::Config {
+            action: ConfigAction::AllowGlobal { revoke },
+        } => config_cmd::set_permission(data_dir, config_cmd::Permission::Global, !*revoke),
+        Command::Config {
+            action: ConfigAction::AllowReadAll { revoke },
+        } => config_cmd::set_permission(data_dir, config_cmd::Permission::ReadAll, !*revoke),
         Command::Project {
             action:
                 ProjectAction::Bind {

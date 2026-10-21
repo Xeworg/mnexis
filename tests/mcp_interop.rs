@@ -30,6 +30,19 @@ fn bootstrap_profile(data_dir: &std::path::Path) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// A profile whose reads stay scoped to its own namespaces: the default
+/// profile opens reads across namespaces (project-isolation S3).
+fn bootstrap_scoped_profile(data_dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    bootstrap_profile(data_dir)?;
+    let path = data_dir.join("mnexis.toml");
+    let src = std::fs::read_to_string(&path)?;
+    std::fs::write(
+        &path,
+        src.replace("allow_read_all = true", "allow_read_all = false"),
+    )?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tool presence (S6)
 // ---------------------------------------------------------------------------
@@ -907,7 +920,7 @@ async fn list_respects_scope_and_denies_out_of_scope_namespace()
 -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir_in("target")?;
     let data_dir = tmp.path();
-    bootstrap_profile(data_dir)?;
+    bootstrap_scoped_profile(data_dir)?;
 
     let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
     let transport =
@@ -982,6 +995,51 @@ async fn list_respects_scope_and_denies_out_of_scope_namespace()
         err_text.contains("NOT_FOUND"),
         "data.error_code must reach the client: {err_text}"
     );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// S16: reads are open across namespaces when the profile allows them
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_reaches_another_namespace_when_reads_are_open()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let list_other = client
+        .call_tool(
+            CallToolRequestParams::new("memory_list").with_arguments(
+                serde_json::json!({ "namespace": "otro-proyecto" })
+                    .as_object()
+                    .expect("static object")
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("reads open across namespaces must not deny");
+    assert!(!list_other.is_error.unwrap_or(false));
+    let text = list_other
+        .content
+        .iter()
+        .find_map(|b| match b {
+            ContentBlock::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .expect("text");
+    let parsed: serde_json::Value = serde_json::from_str(text).expect("JSON");
+    assert_eq!(parsed["count"], 0, "no memory lives in that namespace yet");
 
     client.cancel().await?;
     Ok(())

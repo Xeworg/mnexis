@@ -82,6 +82,9 @@ pub struct AccessScope {
     pub write_namespaces: Vec<String>,
     pub default_namespace: String,
     pub allow_global: bool,
+    /// Reads are open across namespaces. The reserved literal `global`
+    /// stays governed by `allow_global`: it is never covered by this.
+    pub allow_read_all: bool,
     pub allowed_operations: Vec<Operation>,
     pub existence_disclosure: ExistenceDisclosure,
 }
@@ -99,6 +102,7 @@ impl AccessScope {
             write_namespaces,
             default_namespace,
             allow_global,
+            allow_read_all: false,
             allowed_operations,
             existence_disclosure: ExistenceDisclosure::NotFound,
         }
@@ -109,9 +113,19 @@ impl AccessScope {
         self
     }
 
+    /// Open the reads across every namespace (except the reserved
+    /// `global` literal, which keeps its own permission).
+    pub fn with_read_all(mut self, allow_read_all: bool) -> Self {
+        self.allow_read_all = allow_read_all;
+        self
+    }
+
     pub fn can_read(&self, namespace: &str) -> bool {
         if namespace == "global" {
             return self.allow_global;
+        }
+        if self.allow_read_all {
+            return true;
         }
         self.read_namespaces.iter().any(|n| n == namespace)
     }
@@ -198,6 +212,30 @@ mod tests {
         s.allow_global = true;
         assert!(s.can_read("global"));
         assert!(s.can_write("global"));
+    }
+
+    #[test]
+    fn read_all_opens_other_namespaces_but_keeps_global_reserved() {
+        let mut s = scope().with_read_all(true);
+        assert!(s.can_read("proyecto-c"));
+        // The reserved literal stays governed by `allow_global`.
+        assert!(!s.can_read("global"));
+        s.allow_global = true;
+        assert!(s.can_read("global"));
+    }
+
+    #[test]
+    fn read_all_never_opens_writes() {
+        let s = scope().with_read_all(true);
+        assert!(!s.can_write("proyecto-b"));
+        assert!(!s.can_write("proyecto-c"));
+        assert!(!s.can_write("global"));
+    }
+
+    #[test]
+    fn read_all_is_off_by_default_in_the_constructor() {
+        let s = scope();
+        assert!(!s.can_read("proyecto-c"));
     }
 
     #[test]

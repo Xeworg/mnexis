@@ -28,6 +28,8 @@ pub struct ProfileSettings {
     pub read_namespaces: Vec<String>,
     pub write_namespaces: Vec<String>,
     pub allow_global: bool,
+    /// Reads are open across namespaces; `global` stays reserved.
+    pub allow_read_all: bool,
     pub existence_disclosure: ExistenceDisclosure,
     /// `["all"]` expands to every [`Operation`] variant.
     pub allowed_operations: Vec<String>,
@@ -45,7 +47,8 @@ impl Default for ProfileSettings {
             default_namespace: "default".to_string(),
             read_namespaces: vec!["default".to_string()],
             write_namespaces: vec!["default".to_string()],
-            allow_global: true,
+            allow_global: false,
+            allow_read_all: true,
             existence_disclosure: ExistenceDisclosure::NotFound,
             allowed_operations: vec!["all".to_string()],
             max_content_bytes: None,
@@ -59,10 +62,22 @@ impl Default for ProfileSettings {
 }
 
 impl ProfileSettings {
+    /// The base a profile *file* is parsed on top of. It differs from
+    /// [`ProfileSettings::default`] (what `init` writes) in the two
+    /// permission flags: a file that does not mention them keeps the
+    /// permissions closed, so an existing profile never opens silently.
+    fn file_base() -> Self {
+        Self {
+            allow_global: false,
+            allow_read_all: false,
+            ..Self::default()
+        }
+    }
+
     /// Parse the closed TOML subset. Unknown keys are rejected so typos
     /// fail loudly instead of silently changing the effective scope.
     pub fn from_toml(src: &str) -> Result<Self, MnexisError> {
-        let mut settings = Self::default();
+        let mut settings = Self::file_base();
         for (lineno, line) in src.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -110,6 +125,13 @@ impl ProfileSettings {
             "allow_global" => match value {
                 TomlValue::Bool(b) => {
                     self.allow_global = b;
+                    Ok(())
+                }
+                _ => type_err("a boolean"),
+            },
+            "allow_read_all" => match value {
+                TomlValue::Bool(b) => {
+                    self.allow_read_all = b;
                     Ok(())
                 }
                 _ => type_err("a boolean"),
@@ -204,6 +226,7 @@ impl ProfileSettings {
             quote_list(&self.write_namespaces)
         ));
         out.push_str(&format!("allow_global = {}\n", self.allow_global));
+        out.push_str(&format!("allow_read_all = {}\n", self.allow_read_all));
         out.push_str(&format!(
             "existence_disclosure = {}\n",
             quote(match self.existence_disclosure {
@@ -298,6 +321,7 @@ impl ProfileSettings {
             write_namespaces: self.write_namespaces.clone(),
             default_namespace: self.default_namespace.clone(),
             allow_global: self.allow_global,
+            allow_read_all: self.allow_read_all,
             allowed_operations: ops,
             existence_disclosure: self.existence_disclosure,
         })
@@ -479,11 +503,46 @@ mod tests {
     #[test]
     fn default_scope_is_permissive_all_operations() {
         let scope = ProfileSettings::default().to_access_scope().unwrap();
-        assert!(scope.allow_global);
+        assert!(!scope.allow_global);
         assert_eq!(scope.default_namespace, "default");
         assert_eq!(scope.allowed_operations.len(), ALL_OPERATIONS.len());
         assert!(scope.allows(crate::domain::scope::Operation::Save));
         assert!(scope.allows(crate::domain::scope::Operation::Eval));
+    }
+
+    #[test]
+    fn default_profile_keeps_global_closed_and_reads_open() {
+        let settings = ProfileSettings::default();
+        assert!(!settings.allow_global);
+        assert!(settings.allow_read_all);
+        let scope = settings.to_access_scope().unwrap();
+        assert!(!scope.allow_global);
+        assert!(scope.allow_read_all);
+        assert!(scope.can_read("otro-proyecto"));
+        assert!(!scope.can_read("global"));
+        assert!(!scope.can_write("otro-proyecto"));
+    }
+
+    #[test]
+    fn a_profile_without_the_keys_keeps_reads_scoped() {
+        // A profile written before `allow_read_all` existed must not open
+        // its reads silently: the human authorizes it explicitly.
+        let src = "default_namespace = \"ns-a\"\nread_namespaces = [\"ns-a\"]\nwrite_namespaces = [\"ns-a\"]\n";
+        let s = ProfileSettings::from_toml(src).unwrap();
+        assert!(!s.allow_read_all);
+        assert!(!s.allow_global);
+        let scope = s.to_access_scope().unwrap();
+        assert!(!scope.can_read("otro-proyecto"));
+    }
+
+    #[test]
+    fn allow_read_all_parses_and_round_trips() {
+        let s = ProfileSettings::from_toml("allow_read_all = false\n").unwrap();
+        assert!(!s.allow_read_all);
+        assert!(s.to_toml().contains("allow_read_all = false"));
+        let s = ProfileSettings::from_toml("allow_read_all = true\n").unwrap();
+        assert!(s.allow_read_all);
+        assert!(s.to_toml().contains("allow_read_all = true"));
     }
 
     #[test]

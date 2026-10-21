@@ -24,6 +24,7 @@
     },
     "default_namespace": { "type": "string", "minLength": 1 },
     "allow_global": { "type": "boolean" },
+    "allow_read_all": { "type": "boolean" },
     "allowed_operations": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },

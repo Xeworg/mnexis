@@ -37,6 +37,16 @@ impl Profile {
         )
     }
 
+    /// A profile directory without `mnexis.toml`: the commands that edit
+    /// an existing profile must refuse it instead of creating one.
+    fn without_init() -> Self {
+        let guard = tempdir_in("target").expect("tempdir under target/");
+        Self {
+            data_dir: guard.path().to_path_buf(),
+            guard,
+        }
+    }
+
     fn with_config(self, toml: &str) -> Self {
         std::fs::write(self.data_dir.join("mnexis.toml"), toml).expect("write mnexis.toml");
         self
@@ -446,6 +456,91 @@ fn config_show_prints_effective_settings() {
     let json = stdout_json(&out);
     assert!(json["scope"]["default_namespace"].is_string());
     assert!(json["data_dir"].is_string());
+}
+
+// --- config permissions (project-isolation S3, S4, S10) ---
+
+#[test]
+fn init_keeps_the_reserved_namespace_closed_and_reads_open() {
+    let p = Profile::new();
+    let out = p
+        .run_silent(&["config", "show"])
+        .unwrap_status("config show");
+    let json = stdout_json(&out);
+    assert_eq!(json["scope"]["allow_global"], false);
+    assert_eq!(json["scope"]["allow_read_all"], true);
+}
+
+#[test]
+fn allow_global_opens_and_revokes_the_reserved_namespace() {
+    let p = Profile::new();
+    p.run_silent(&["config", "allow-global"])
+        .unwrap_status("allow-global");
+    let json = stdout_json(
+        &p.run_silent(&["config", "show"])
+            .unwrap_status("config show"),
+    );
+    assert_eq!(json["scope"]["allow_global"], true);
+    p.run_silent(&["config", "allow-global", "--revoke"])
+        .unwrap_status("allow-global --revoke");
+    let json = stdout_json(
+        &p.run_silent(&["config", "show"])
+            .unwrap_status("config show"),
+    );
+    assert_eq!(json["scope"]["allow_global"], false);
+}
+
+#[test]
+fn allow_read_all_opens_and_revokes_cross_project_reads() {
+    let p = Profile::new();
+    p.run_silent(&["config", "allow-read-all", "--revoke"])
+        .unwrap_status("allow-read-all --revoke");
+    let json = stdout_json(
+        &p.run_silent(&["config", "show"])
+            .unwrap_status("config show"),
+    );
+    assert_eq!(json["scope"]["allow_read_all"], false);
+    p.run_silent(&["config", "allow-read-all"])
+        .unwrap_status("allow-read-all");
+    let json = stdout_json(
+        &p.run_silent(&["config", "show"])
+            .unwrap_status("config show"),
+    );
+    assert_eq!(json["scope"]["allow_read_all"], true);
+}
+
+#[test]
+fn config_permission_commands_refuse_a_missing_profile() {
+    let p = Profile::without_init();
+    for args in [
+        vec!["config", "allow-global"],
+        vec!["config", "allow-read-all"],
+    ] {
+        let out = p.run_silent(&args);
+        assert_eq!(out.status.code(), Some(3), "args: {args:?}");
+    }
+}
+
+#[test]
+fn cross_project_reads_are_open_with_allow_read_all() {
+    let p = Profile::new().with_config(
+        "default_namespace = \"ns-a\"\nread_namespaces = [\"ns-a\"]\nwrite_namespaces = [\"ns-a\", \"ns-b\"]\nallow_read_all = true\nallow_global = false\nexistence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n",
+    );
+    let uuid = save(&p, "compartido entre proyectos", &["--namespace", "ns-b"]);
+    let out = p
+        .run_silent(&["show", &uuid])
+        .unwrap_status("show a memory of another project");
+    assert!(stdout_json(&out)["uuid"].is_string());
+}
+
+#[test]
+fn cross_project_reads_are_closed_without_allow_read_all() {
+    let p = Profile::new().with_config(
+        "default_namespace = \"ns-a\"\nread_namespaces = [\"ns-a\"]\nwrite_namespaces = [\"ns-a\", \"ns-b\"]\nallow_global = false\nexistence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n",
+    );
+    let uuid = save(&p, "compartido entre proyectos", &["--namespace", "ns-b"]);
+    let out = p.run_silent(&["show", &uuid]);
+    assert_eq!(out.status.code(), Some(3));
 }
 
 // --- errors and scope (S10) ---

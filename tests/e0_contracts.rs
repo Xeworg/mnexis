@@ -141,6 +141,24 @@ fn e0_scope_contract_requires_prd_process_scope_fields() {
         "read_namespaces": ["project-a"],
         "write_namespaces": ["project-a"]
     })));
+    // `allow_read_all` is optional: a scope that omits it keeps its reads
+    // scoped, and a scope that carries it opens them.
+    assert!(validator.is_valid(&json!({
+        "read_namespaces": ["project-a"],
+        "write_namespaces": ["project-a"],
+        "default_namespace": "project-a",
+        "allow_global": false,
+        "allow_read_all": true,
+        "allowed_operations": ["memory_search"]
+    })));
+    assert!(!validator.is_valid(&json!({
+        "read_namespaces": ["project-a"],
+        "write_namespaces": ["project-a"],
+        "default_namespace": "project-a",
+        "allow_global": false,
+        "allow_read_all": "yes",
+        "allowed_operations": ["memory_search"]
+    })));
 }
 
 #[test]
