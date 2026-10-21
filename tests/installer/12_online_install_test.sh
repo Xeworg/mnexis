@@ -172,10 +172,21 @@ case "$1" in
 esac
 FAKE
 chmod 0755 "$FAKE_BIN_DIR/uname"
+# A git that cannot clone: the fallback to the sources has to fail
+# without touching the network, so the test stays deterministic.
+cat >"$FAKE_BIN_DIR/git" <<'FAKE'
+#!/usr/bin/env bash
+printf 'git: the network is not available in the test\n' >&2
+exit 1
+FAKE
+chmod 0755 "$FAKE_BIN_DIR/git"
+rm -f -- "$HOME/.local/bin/mnexis"
 run_standalone install
-assert_status "an unsupported platform is refused" 1
+assert_status "an unsupported platform without the sources is refused" 1
 assert_contains "the refusal names the platforms mnexis publishes" "linux-x86_64"
-rm -f -- "$FAKE_BIN_DIR/uname"
+assert_contains "the refusal says it builds from the sources" "published sources"
+assert_missing "nothing is installed for an unsupported platform" "$HOME/.local/bin/mnexis"
+rm -f -- "$FAKE_BIN_DIR/uname" "$FAKE_BIN_DIR/git"
 
 # --- installing twice is idempotent ---------------------------------------
 
