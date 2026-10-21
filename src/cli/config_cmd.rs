@@ -1,7 +1,8 @@
 //! `mnexis config` — the effective configuration and scope
 //! (e2-core §7 "Admin commands"). Prints what the process would run
 //! with; never any memory content. `allow-namespace` authorizes a
-//! namespace in the profile.
+//! namespace in the profile; `allow-global` and `allow-read-all` move
+//! the two permission flags the human owns.
 
 use std::path::PathBuf;
 
@@ -10,6 +11,91 @@ use serde_json::json;
 use crate::cli::output::CommandOutcome;
 use crate::config::ProfileSettings;
 use crate::domain::error::MnexisError;
+
+/// The two permission flags a profile carries besides the allowlists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Permission {
+    /// The reserved `global` namespace (read and write).
+    Global,
+    /// Reads across every namespace.
+    ReadAll,
+}
+
+impl Permission {
+    fn key(self) -> &'static str {
+        match self {
+            Permission::Global => "allow_global",
+            Permission::ReadAll => "allow_read_all",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Permission::Global => "the reserved 'global' namespace",
+            Permission::ReadAll => "reads across namespaces",
+        }
+    }
+}
+
+/// `mnexis config allow-global [--revoke]` and
+/// `mnexis config allow-read-all [--revoke]` — move a permission flag in
+/// the profile (project-isolation S10).
+///
+/// The change lands in `mnexis.toml`. The profile must already exist
+/// (`mnexis init`): the command edits an existing profile instead of
+/// creating one, and it never touches the namespace allowlists.
+pub fn set_permission(
+    data_dir: PathBuf,
+    permission: Permission,
+    enable: bool,
+) -> Result<CommandOutcome, MnexisError> {
+    let config_path = data_dir.join("mnexis.toml");
+    let src = std::fs::read_to_string(&config_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            MnexisError::not_found(format!(
+                "profile at {} (run `mnexis init` first)",
+                data_dir.display()
+            ))
+        } else {
+            MnexisError::invalid_argument("mnexis.toml", format!("cannot read: {e}"))
+        }
+    })?;
+
+    let mut settings = ProfileSettings::from_toml(&src)?;
+    let previous = match permission {
+        Permission::Global => settings.allow_global,
+        Permission::ReadAll => settings.allow_read_all,
+    };
+    match permission {
+        Permission::Global => settings.allow_global = enable,
+        Permission::ReadAll => settings.allow_read_all = enable,
+    }
+    let changed = previous != enable;
+    if changed {
+        settings.save_to(&config_path)?;
+    }
+
+    let verb = if enable { "Allowed" } else { "Revoked" };
+    let text = if changed {
+        format!("{verb} {} in {}", permission.label(), config_path.display())
+    } else {
+        format!(
+            "{} was already {} in {}",
+            permission.label(),
+            if enable { "allowed" } else { "revoked" },
+            config_path.display()
+        )
+    };
+    Ok(CommandOutcome::new(
+        json!({
+            "permission": permission.key(),
+            "value": enable,
+            "changed": changed,
+            "config_path": config_path.display().to_string(),
+        }),
+        text,
+    ))
+}
 
 /// `mnexis config allow-namespace <ns>` — authorize a namespace in the
 /// profile (project-bindings S3).
@@ -114,6 +200,7 @@ pub fn show(data_dir: PathBuf) -> Result<CommandOutcome, MnexisError> {
                 "read_namespaces": scope.read_namespaces,
                 "write_namespaces": scope.write_namespaces,
                 "allow_global": scope.allow_global,
+                "allow_read_all": scope.allow_read_all,
                 "allowed_operations": ops,
                 "existence_disclosure": disclosure,
             },
@@ -127,7 +214,7 @@ pub fn show(data_dir: PathBuf) -> Result<CommandOutcome, MnexisError> {
             },
         }),
         format!(
-            "data_dir: {}\nconfig: {} ({})\nscope: default={}, read={:?}, write={:?}, global={}, ops={}, disclosure={}\nlimits: content={}B query={}B tags={} topic_key={}B retention={}d idempotency={}d",
+            "data_dir: {}\nconfig: {} ({})\nscope: default={}, read={:?}, write={:?}, global={}, read_all={}, ops={}, disclosure={}\nlimits: content={}B query={}B tags={} topic_key={}B retention={}d idempotency={}d",
             data_dir.display(),
             config_path.display(),
             if fell_back {
@@ -139,6 +226,7 @@ pub fn show(data_dir: PathBuf) -> Result<CommandOutcome, MnexisError> {
             scope.read_namespaces,
             scope.write_namespaces,
             scope.allow_global,
+            scope.allow_read_all,
             ops.join(","),
             disclosure,
             limits.max_content_bytes,
