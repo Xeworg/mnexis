@@ -124,3 +124,19 @@ TUI abre con un menú donde esa instalación se gestiona sin comandos.
   symlink, temporal huérfano, modo preservado y directorio en el camino) y
   208 asserts del instalador (68 en `10_agent_cli_test.sh`, con los filtros
   `--only` cubiertos), `cargo fmt --check` limpio y 0 warnings en release.
+- L17 (review): el candidato completo (36 archivos / 4428 líneas) ya no entra
+  en el presupuesto de contexto de la review nativa:
+  `lens_context_budget_exceeded` (terminal para ese objetivo; retrying the
+  exact candidate cannot succeed). La continuación nativa pide dividirlo en
+  una secuencia encadenada de candidatos más chicos y refrescar la transición
+  para el alcance reducido.
+  Cadena local preparada (sin push; el push y el PR siguen siendo del usuario):
+  - `feat/agent-skills` — 4 commits, 175 líneas, 10 archivos.
+  - `feat/pi-memory-extension` — 4 commits sobre el anterior, 1431 líneas, 16 archivos.
+  - `feat/agent-installer` — 10 commits sobre el anterior, 4366 líneas, 36 archivos.
+  Los dos primeros eslabones se intentó revisar con su rango propio
+  (base-ref explícito, `committedOnly`): ambos fueron declinados por el host
+  (`consent-declined-this-candidate`, `lineage_created: false`, sin mutación).
+  La review nativa de este trabajo queda sin ejecutar; el control que quedó
+  es la verificación independiente (3 rondas, 6 defectos encontrados y
+  corregidos con test de regresión cada uno).
