@@ -59,6 +59,15 @@ To install the shipped agent skills (`skills/`, starting with
 ./install.sh uninstall --skills --env pi   # remove them again
 ```
 
+The `mnexis-memory` skill tells the agent to load the project's memory at the
+start of a session (`mnexis context "<task>"`) and before it changes code
+that already exists, so the decisions behind the code are never lost:
+
+```sh
+mnexis context "extend the snake game with a wrap mode"   # budgeted context
+mnexis search "wrap mode borde"                            # ranked search
+```
+
 The repository also ships a pi extension that exposes the memory engine as
 native tools, so an agent can store and recall project memory without being
 asked to, and without choosing a namespace itself:

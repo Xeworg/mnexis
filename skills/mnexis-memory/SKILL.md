@@ -1,6 +1,6 @@
 ---
 name: mnexis-memory
-description: Persist, recall, and supersede long-term project memory with the mnexis CLI (a local SQLite + FTS5 memory engine), scoped to the workspace the user is working on. Use whenever the user wants context to survive across sessions — remembering prior work, decisions, discoveries or preferences ("what did we do last time", "do you remember", "keep this for future sessions"), storing a milestone, or replacing an outdated stored fact without losing history. For project memory that must be queryable and scoped per project, use mnexis rather than ad-hoc notes or AGENTS.md files.
+description: Persist, recall, and supersede long-term project memory with the mnexis CLI (a local SQLite + FTS5 memory engine), scoped to the workspace the user is working on. Use it at the start of every session in an existing project, before changing code that already exists, and whenever prior work, decisions, discoveries or preferences matter ("what do we already know about this project", "do you remember", "keep the context for the next session", "stay consistent with what we agreed"). For project memory that must be queryable and scoped per project, use mnexis rather than ad-hoc notes or AGENTS.md files.
 license: MIT
 ---
 
@@ -9,6 +9,30 @@ license: MIT
 mnexis is a local memory engine: one binary, SQLite + FTS5, no daemon, no
 cloud. Memories are plain text rows with namespace, tags, revision history,
 and supersession chains.
+
+## Start of session (do this first)
+
+In a project you have worked on before, the code does not tell you *why* it
+is the way it is. The memory does. So before you read the code or plan the
+work, load the context of the task:
+
+```bash
+mnexis context "extend the snake game with a wrap mode"   # budgeted context for this task
+mnexis search "wrap mode borde"                            # ranked search, FTS5
+mnexis list                                                # everything this project recorded
+```
+
+`mnexis context "<the task in one line>"` returns the memories that matter
+for that task, already trimmed to a token budget: use it as the first call of
+a session. If it returns nothing, the project has no memory yet — carry on
+and record what the session produces (see "The loop").
+
+**Before you change code that already exists**, look for the decisions
+behind it. A previous session may have chosen a layout, a naming rule, a
+dependency limit or a rejected approach that is not visible in the files;
+changing it silently loses that decision. The same applies to a task that
+says "keep it consistent", "as we agreed", "like before" or "the same as
+the other module": those words mean the memory holds the answer.
 
 ## Setup
 
@@ -45,8 +69,8 @@ recorded in the profile (`projects.toml`). Resolve it before saving:
      keep the original letter case of the repository name. With no remote,
      use `path:<absolute repo root>`.
    - Without git: the key is `path:<absolute working directory>`. A
-     `.mnexis-namespace` marker at or above the working directory names
-     the namespace of the workspace (both the CLI and this extension read
+     `.mnexis-namespace` marker at or above the working directory names the
+     namespace of the workspace (both the CLI and this extension read
      it); it does not change the key, and a binding always wins over it.
 2. **Look it up:** `mnexis project list` prints `key -> namespace`. If the
    key is listed, use that namespace — never rename it.
@@ -88,13 +112,17 @@ command themselves, or bind that workspace first.
    `mnexis search "<keywords>"` (FTS5 ranked; `--namespace`, `--limit`),
    `mnexis list`, and `mnexis show <uuid>` to read one record. The bare
    forms reach every project, because projects share components; add
-   `--namespace <name>` to stay inside this one.
+   `--namespace <name>` to stay inside this one. The recall of the session
+   start is not optional: a project with no memory reads like a project
+   that never decided anything.
 2. **Save what matters.** After a milestone — a decision, a discovery, a
    user preference — store it immediately, in this project's namespace:
    `mnexis save --namespace <name> "<one self-contained sentence>" --tags a,b --topic-key <stable-key>`.
    The content must make sense months later with no surrounding chat.
    `--topic-key` is unique per namespace: reuse it to group facts about one
-   topic. `--idempotency-key` makes retries safe.
+   topic. It accepts lowercase ASCII letters, digits, `.` and `-` only —
+   `snake/design` is rejected, `snake-design` is accepted. `--idempotency-key`
+   makes retries safe.
 3. **Replace facts by superseding, never by deleting.** Outdated but
    historically true facts keep their record: `mnexis save` the newer fact,
    then `mnexis supersede --older <old-uuid> --newer <new-uuid> --reason "why"`.
