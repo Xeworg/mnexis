@@ -17,7 +17,7 @@ It downloads the release artifact for your platform, checks it against
 a version with `MNEXIS_VERSION`:
 
 ```sh
-MNEXIS_VERSION=0.1.0 \
+MNEXIS_VERSION=0.2.0 \
   curl -fsSL https://github.com/Xeworg/mnexis/releases/latest/download/install.sh | bash
 ```
 
@@ -236,7 +236,10 @@ MIT. See [LICENSE](LICENSE).
 
 ## Status
 
-v0.1.0 (E0..E5 MVP). Linux only. The 500-memory/150-query evaluation
+v0.2.0 (E0..E5 MVP, plus the agent-memory-ergonomics feature: the recall
+happens on its own, `mnexis status` answers "where may I write?" and the
+installer wires opencode's MCP server). Linux only. The 500-memory/150-query
+evaluation
 fixture is not yet committed; the spike corpora (`docs/t14-fts5-benchmark.md`)
 are the only measured quality evidence at the moment. See `odd/tasks/`
 for the implementation record.
