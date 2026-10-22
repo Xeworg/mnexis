@@ -61,11 +61,13 @@ To install the shipped agent skills (`skills/`, starting with
 
 The `mnexis-memory` skill tells the agent to load the project's memory at the
 start of a session (`mnexis context "<task>"`) and before it changes code
-that already exists, so the decisions behind the code are never lost:
+that already exists, so the decisions behind the code are never lost. One
+call tells it where it may write:
 
 ```sh
 mnexis context "extend the snake game with a wrap mode"   # budgeted context
 mnexis search "wrap mode borde"                            # ranked search
+mnexis status                                             # namespace, allowlists, recent
 ```
 
 The repository also ships a pi extension that exposes the memory engine as
@@ -153,6 +155,7 @@ update            update a memory (optimistic revision)
 supersede         mark an older memory superseded by a newer one
 search            FTS5 ranked search
 list              list memories
+status            where this workspace may write, and what is already there
 show              show a memory (current or specific revision)
 history           show revision history
 delete            soft-delete a memory
@@ -209,10 +212,13 @@ command line. Example `mcp.json` entry:
 }
 ```
 
-The server exposes 9 tools (`memory_save`, `memory_get`,
+The server exposes 10 tools (`memory_save`, `memory_get`,
 `memory_list`, `memory_update`, `memory_history`, `memory_supersede`,
-`memory_delete`, `memory_restore`, `memory_search`). All errors map to
-JSON-RPC code `-32050` with `data.error_code` carrying the stable
+`memory_delete`, `memory_restore`, `memory_search`, `memory_workspace`).
+`memory_workspace` answers "where may I write, and what is already there?"
+with the same payload as `mnexis status`: the bound namespace, the read and
+write allowlists, the memory count and the most recent memories. All errors
+map to JSON-RPC code `-32050` with `data.error_code` carrying the stable
 label.
 
 ## Testing

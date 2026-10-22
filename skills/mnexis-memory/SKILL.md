@@ -20,12 +20,18 @@ work, load the context of the task:
 mnexis context "extend the snake game with a wrap mode"   # budgeted context for this task
 mnexis search "wrap mode borde"                            # ranked search, FTS5
 mnexis list                                                # everything this project recorded
+mnexis status                                             # where may I write, and what is there
 ```
 
 `mnexis context "<the task in one line>"` returns the memories that matter
 for that task, already trimmed to a token budget: use it as the first call of
 a session. If it returns nothing, the project has no memory yet — carry on
 and record what the session produces (see "The loop").
+
+`mnexis status` answers the other half in one call: the namespace this
+workspace writes into, the read and write allowlists, how many memories the
+scope can see, and the most recent ones. Run it before the first save, and
+whenever you are not sure where a write would land.
 
 **Before you change code that already exists**, look for the decisions
 behind it. A previous session may have chosen a layout, a naming rule, a
@@ -73,7 +79,8 @@ recorded in the profile (`projects.toml`). Resolve it before saving:
      namespace of the workspace (both the CLI and this extension read
      it); it does not change the key, and a binding always wins over it.
 2. **Look it up:** `mnexis project list` prints `key -> namespace`. If the
-   key is listed, use that namespace — never rename it.
+   key is listed, use that namespace — never rename it. `mnexis status`
+   prints the same binding together with the allowlists, in one call.
 3. **First visit (no binding):** choose a short, lowercase, hyphenated
    name from the workspace (usually the repository or directory name) and
    record it: `mnexis project bind <name> --key <key> --path <root>`.
@@ -148,4 +155,6 @@ with `mnexis restore <uuid>`.
 - MCP hosts: instead of the CLI, point the host at `mnexis mcp serve`
   (stdio; pass `--data-dir` in the server command line). The namespace
   resolution above still applies — the MCP tools take the namespace as an
-  argument.
+  argument. The server also exposes `memory_workspace`, the tool that
+  answers "where may I write, and what is already there?" with the same
+  payload as `mnexis status`.
