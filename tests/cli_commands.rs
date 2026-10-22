@@ -142,7 +142,9 @@ fn version_prints_name_and_semver() {
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("mnexis"), "stdout: {text}");
-    assert!(text.contains("0.1.0"), "stdout: {text}");
+    // The version is the crate's own, not a literal: a release bump must
+    // not have to touch this test to keep it true.
+    assert!(text.contains(env!("CARGO_PKG_VERSION")), "stdout: {text}");
 }
 
 #[test]

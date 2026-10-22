@@ -81,6 +81,27 @@ fn stdout_json(out: &Output) -> serde_json::Value {
     })
 }
 
+/// A release that is newer than the version under test, as a tag and as
+/// a plain version. The faked network has to answer with something the
+/// running binary considers newer, or the "a newer release exists" case
+/// stops being true the day the crate's version reaches it.
+fn newer_release() -> (String, String) {
+    let mut parts: Vec<u64> = env!("CARGO_PKG_VERSION")
+        .split('.')
+        .map(|part| part.parse().unwrap_or(0))
+        .collect();
+    while parts.len() < 3 {
+        parts.push(0);
+    }
+    parts[1] += 1;
+    let version = parts
+        .iter()
+        .map(|part| part.to_string())
+        .collect::<Vec<_>>()
+        .join(".");
+    (format!("v{version}"), version)
+}
+
 /// A fake `curl` that answers the redirect with the given tag and records
 /// how many times it was called.
 fn fake_curl(dir: &Path, tag: &str, fail: bool) -> PathBuf {
@@ -126,14 +147,14 @@ fn calls(dir: &Path) -> usize {
 fn the_check_reports_a_newer_release() {
     let scratch = tempdir_in("target").expect("tempdir");
     let dir = scratch.path().to_path_buf();
-    let path = fake_curl(&dir, "v0.2.0", false);
+    let path = fake_curl(&dir, &newer_release().0, false);
     let p = Profile::new();
 
     let out = p
         .run_with_path(&path, &["upgrade", "--check"])
         .unwrap_status("upgrade --check");
     let json = stdout_json(&out);
-    assert_eq!(json["latest_version"], "0.2.0");
+    assert_eq!(json["latest_version"], newer_release().1);
     assert_eq!(json["update_available"], true);
     assert!(json["current_version"].is_string());
 }
@@ -142,7 +163,7 @@ fn the_check_reports_a_newer_release() {
 fn the_check_is_cached_and_force_asks_again() {
     let scratch = tempdir_in("target").expect("tempdir");
     let dir = scratch.path().to_path_buf();
-    let path = fake_curl(&dir, "v0.2.0", false);
+    let path = fake_curl(&dir, &newer_release().0, false);
     let p = Profile::new();
 
     p.run_with_path(&path, &["upgrade", "--check"])
@@ -162,7 +183,7 @@ fn the_check_is_cached_and_force_asks_again() {
 fn a_network_failure_is_reported_as_no_update() {
     let scratch = tempdir_in("target").expect("tempdir");
     let dir = scratch.path().to_path_buf();
-    let path = fake_curl(&dir, "v0.2.0", true);
+    let path = fake_curl(&dir, &newer_release().0, true);
     let p = Profile::new();
 
     let out = p
@@ -197,10 +218,10 @@ fn a_failed_update_leaves_nothing_behind_in_the_profile() {
     // the user never asked for).
     let scratch = tempdir_in("target").expect("tempdir");
     let dir = scratch.path().to_path_buf();
-    let path = fake_curl(&dir, "v0.2.0", false);
+    let path = fake_curl(&dir, &newer_release().0, false);
     let p = Profile::new();
 
-    let out = p.run_with_path(&path, &["upgrade", "--version", "0.2.0"]);
+    let out = p.run_with_path(&path, &["upgrade", "--version", &newer_release().1]);
     assert!(!out.status.success(), "the update must fail");
 
     let work = p.data_dir.join("update-work");
@@ -217,7 +238,7 @@ fn the_check_does_not_need_a_profile() {
     // an initialised profile.
     let scratch = tempdir_in("target").expect("tempdir");
     let dir = scratch.path().to_path_buf();
-    let path = fake_curl(&dir, "v0.2.0", false);
+    let path = fake_curl(&dir, &newer_release().0, false);
     let guard = tempdir_in("target").expect("tempdir");
     let data_dir = guard.path().to_path_buf();
 
