@@ -70,6 +70,21 @@ pub trait MemoryRepository {
         deleted: bool,
     ) -> Result<Vec<Memory>, MnexisError>;
 
+    /// List the most recent memories, newest first, limited to `limit`
+    /// rows. Same namespace filtering as [`MemoryRepository::list_in`], but
+    /// ordered by insertion (`id`) descending and without an offset: the
+    /// status surfaces ask "what is already there?" and want the head of
+    /// the list.
+    fn list_recent(
+        &self,
+        namespaces: &NamespaceScope,
+        limit: usize,
+    ) -> Result<Vec<Memory>, MnexisError>;
+
+    /// Count the non-deleted memories in a namespace scope. Same filtering
+    /// as [`MemoryRepository::list_in`], without the order or pagination.
+    fn count_in(&self, namespaces: &NamespaceScope) -> Result<i64, MnexisError>;
+
     /// Update a memory with optimistic revision check.
     fn update(&mut self, mem: &Memory, expected_revision: i32) -> Result<Memory, MnexisError>;
 

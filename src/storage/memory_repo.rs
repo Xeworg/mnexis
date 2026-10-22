@@ -70,9 +70,11 @@ impl SqliteMemoryRepository {
         })
     }
 
-    /// Shared implementation of [`MemoryRepository::list_in`] and
-    /// [`MemoryRepository::list_deleted`]; `deleted` selects which side of
-    /// the soft-delete flag the query returns.
+    /// Shared implementation of [`MemoryRepository::list_in`],
+    /// [`MemoryRepository::list_deleted`] and
+    /// [`MemoryRepository::list_recent`]; `deleted` selects which side of the
+    /// soft-delete flag the query returns and `newest_first` selects the row
+    /// order (`id DESC` instead of `id`).
     fn list_filtered(
         &self,
         namespaces: &NamespaceScope,
@@ -80,40 +82,18 @@ impl SqliteMemoryRepository {
         limit: usize,
         offset: usize,
         deleted: bool,
+        newest_first: bool,
     ) -> Result<Vec<Memory>, MnexisError> {
         let state = state.map(String::from);
-        let mut sql = format!(
-            "SELECT {SELECT_COLUMNS} FROM memories WHERE deleted = {}",
-            if deleted { 1 } else { 0 }
-        );
-        let mut param_refs: Vec<&dyn ToSql> = Vec::new();
-        match namespaces {
-            NamespaceScope::All => {}
-            NamespaceScope::AllExcept(list) => {
-                if !list.is_empty() {
-                    let placeholders = vec!["?"; list.len()].join(",");
-                    sql.push_str(&format!(" AND namespace NOT IN ({placeholders})"));
-                    for ns in list {
-                        param_refs.push(ns as &dyn ToSql);
-                    }
-                }
-            }
-            NamespaceScope::Only(list) => {
-                if list.is_empty() {
-                    return Ok(Vec::new());
-                }
-                let placeholders = vec!["?"; list.len()].join(",");
-                sql.push_str(&format!(" AND namespace IN ({placeholders})"));
-                for ns in list {
-                    param_refs.push(ns as &dyn ToSql);
-                }
-            }
-        }
-        if let Some(st) = state.as_ref() {
-            sql.push_str(" AND state = ?");
-            param_refs.push(st as &dyn ToSql);
-        }
-        sql.push_str(" ORDER BY id LIMIT ? OFFSET ?");
+        let Some((filter, mut param_refs)) = filter_sql(namespaces, state.as_ref(), deleted) else {
+            return Ok(Vec::new());
+        };
+        let mut sql = format!("SELECT {SELECT_COLUMNS}{filter}");
+        sql.push_str(if newest_first {
+            " ORDER BY id DESC LIMIT ? OFFSET ?"
+        } else {
+            " ORDER BY id LIMIT ? OFFSET ?"
+        });
         let limit_val: i64 = limit as i64;
         let offset_val: i64 = offset as i64;
         param_refs.push(&limit_val);
@@ -131,6 +111,57 @@ impl SqliteMemoryRepository {
         }
         Ok(result)
     }
+}
+
+/// The `WHERE` clause every list and count query shares, with its
+/// parameters in placeholder order.
+///
+/// `None` means the scope is an empty `Only` list: no row satisfies that
+/// filter, so the caller can answer without touching the database.
+/// `deleted` selects which side of the soft-delete flag the query reads.
+fn filter_sql<'a>(
+    namespaces: &'a NamespaceScope,
+    state: Option<&'a String>,
+    deleted: bool,
+) -> Option<(String, Vec<&'a dyn ToSql>)> {
+    let mut sql = format!(
+        " FROM memories WHERE deleted = {}",
+        if deleted { 1 } else { 0 }
+    );
+    let mut param_refs: Vec<&'a dyn ToSql> = Vec::new();
+    match namespaces {
+        NamespaceScope::All => {}
+        NamespaceScope::AllExcept(list) => {
+            if !list.is_empty() {
+                sql.push_str(&format!(
+                    " AND namespace NOT IN ({})",
+                    placeholders(list.len())
+                ));
+                for ns in list {
+                    param_refs.push(ns as &dyn ToSql);
+                }
+            }
+        }
+        NamespaceScope::Only(list) => {
+            if list.is_empty() {
+                return None;
+            }
+            sql.push_str(&format!(" AND namespace IN ({})", placeholders(list.len())));
+            for ns in list {
+                param_refs.push(ns as &dyn ToSql);
+            }
+        }
+    }
+    if let Some(st) = state {
+        sql.push_str(" AND state = ?");
+        param_refs.push(st as &dyn ToSql);
+    }
+    Some((sql, param_refs))
+}
+
+/// `?,?,?` for an `IN` list of `n` namespaces.
+fn placeholders(n: usize) -> String {
+    vec!["?"; n].join(",")
 }
 
 fn sql_to_domain(e: rusqlite::Error) -> MnexisError {
@@ -247,7 +278,7 @@ impl MemoryRepository for SqliteMemoryRepository {
             Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
             None => NamespaceScope::All,
         };
-        self.list_filtered(&scope, state, limit, offset, false)
+        self.list_filtered(&scope, state, limit, offset, false, false)
     }
 
     fn list_deleted(
@@ -260,7 +291,7 @@ impl MemoryRepository for SqliteMemoryRepository {
             Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
             None => NamespaceScope::All,
         };
-        self.list_filtered(&scope, None, limit, offset, true)
+        self.list_filtered(&scope, None, limit, offset, true, false)
     }
 
     fn list_in(
@@ -271,7 +302,25 @@ impl MemoryRepository for SqliteMemoryRepository {
         offset: usize,
         deleted: bool,
     ) -> Result<Vec<Memory>, MnexisError> {
-        self.list_filtered(namespaces, state, limit, offset, deleted)
+        self.list_filtered(namespaces, state, limit, offset, deleted, false)
+    }
+
+    fn list_recent(
+        &self,
+        namespaces: &NamespaceScope,
+        limit: usize,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        self.list_filtered(namespaces, None, limit, 0, false, true)
+    }
+
+    fn count_in(&self, namespaces: &NamespaceScope) -> Result<i64, MnexisError> {
+        let Some((filter, param_refs)) = filter_sql(namespaces, None, false) else {
+            return Ok(0);
+        };
+        let sql = format!("SELECT count(*){filter}");
+        self.conn
+            .query_row(&sql, &param_refs[..], |row| row.get(0))
+            .map_err(sql_to_domain)
     }
 
     fn update(&mut self, mem: &Memory, expected_revision: i32) -> Result<Memory, MnexisError> {

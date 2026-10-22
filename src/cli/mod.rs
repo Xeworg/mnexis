@@ -10,6 +10,7 @@ pub mod config_cmd;
 pub mod output;
 pub mod profile;
 pub mod project_cmd;
+pub mod status_cmd;
 pub mod update_cmd;
 
 use clap::{Parser, Subcommand};
@@ -163,6 +164,9 @@ pub enum Command {
         #[arg(long, default_value_t = 0)]
         offset: usize,
     },
+
+    /// Where this workspace may write, and what is already there
+    Status,
 
     /// Show a memory (current or specific revision)
     Show {
@@ -522,6 +526,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 *offset,
             )
         }
+        Command::Status => status_cmd::status(data_dir),
         Command::Show { uuid, revision } => {
             let mut profile = Profile::open(data_dir)?;
             commands::show(&mut profile, uuid.clone(), *revision)
@@ -646,6 +651,7 @@ mod tests {
             "supersede",
             "search",
             "list",
+            "status",
             "show",
             "history",
             "delete",
