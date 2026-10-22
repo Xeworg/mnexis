@@ -272,7 +272,7 @@ async fn harness_shaped_session_covers_every_tool_and_recovery_path() {
         .unwrap_or_else(|| panic!("no serverInfo: {init}"));
     assert!(server_info.get("name").is_some());
 
-    // Step 2: list tools, confirm 9 names.
+    // Step 2: list tools, confirm 10 names.
     let id = h.alloc_id();
     let list = h.request(id, "tools/list", serde_json::json!({})).await;
     let tools = list
@@ -291,6 +291,7 @@ async fn harness_shaped_session_covers_every_tool_and_recovery_path() {
         "memory_delete",
         "memory_restore",
         "memory_search",
+        "memory_workspace",
     ] {
         assert!(names.contains(&expected), "missing {expected}: {names:?}");
     }
