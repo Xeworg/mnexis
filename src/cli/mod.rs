@@ -10,6 +10,7 @@ pub mod config_cmd;
 pub mod output;
 pub mod profile;
 pub mod project_cmd;
+pub mod status_cmd;
 pub mod update_cmd;
 
 use clap::{Parser, Subcommand};
@@ -86,7 +87,7 @@ pub enum Command {
         /// Assertion basis (default: user_stated)
         #[arg(long)]
         basis: Option<String>,
-        /// Topic key (unique per namespace when non-empty)
+        /// Topic key (unique per namespace when non-empty; allowed: lowercase letters, digits, '.' and '-')
         #[arg(long)]
         topic_key: Option<String>,
         /// Idempotency key for safe retries
@@ -163,6 +164,9 @@ pub enum Command {
         #[arg(long, default_value_t = 0)]
         offset: usize,
     },
+
+    /// Where this workspace may write, and what is already there
+    Status,
 
     /// Show a memory (current or specific revision)
     Show {
@@ -333,6 +337,10 @@ pub enum ProjectAction {
 #[derive(Debug, Subcommand)]
 pub enum AgentAction {
     /// Install the skill (and the extension, where supported) for an environment
+    ///
+    /// For opencode this also wires the MCP server into opencode's own
+    /// configuration (`~/.config/opencode/opencode.json`); that is part of
+    /// the integration and is not narrowed by `--only`.
     Install {
         /// Target environment (pi, opencode)
         #[arg(long, value_name = "NAME")]
@@ -342,6 +350,10 @@ pub enum AgentAction {
         only: Option<String>,
     },
     /// Remove the installed assets for an environment
+    ///
+    /// For opencode this also removes the MCP entry mnexis wrote into
+    /// opencode's own configuration; an entry mnexis did not write is left
+    /// alone.
     Uninstall {
         /// Target environment (pi, opencode)
         #[arg(long, value_name = "NAME")]
@@ -522,6 +534,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 *offset,
             )
         }
+        Command::Status => status_cmd::status(data_dir),
         Command::Show { uuid, revision } => {
             let mut profile = Profile::open(data_dir)?;
             commands::show(&mut profile, uuid.clone(), *revision)
@@ -646,6 +659,7 @@ mod tests {
             "supersede",
             "search",
             "list",
+            "status",
             "show",
             "history",
             "delete",

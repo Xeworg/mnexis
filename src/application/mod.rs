@@ -6,9 +6,11 @@ pub mod agents;
 pub mod budget;
 pub mod context;
 pub mod io;
+pub mod opencode_config;
 pub mod service;
 pub mod update;
 pub mod workspace;
+pub mod workspace_status;
 
 /// Convenient alias for the concrete service used by both CLI and MCP.
 pub type ApplicationService = MemoryService<crate::storage::memory_repo::SqliteMemoryRepository>;
@@ -20,7 +22,11 @@ pub use agents::{
 pub use budget::{Budget, BudgetMode, SUPPORTED_TOKENIZER_V1, token_count_v1};
 pub use context::{ContextItem, ContextRequest, ContextResponse, SearchFilter};
 pub use io::ConflictPolicy;
+pub use opencode_config::{ConfigAction, ConfigOutcome, OpencodeConfig};
 pub use service::{
     ImportSummary, ListFilter, MemoryService, SaveRequest, ServiceConfig, SupersedeRequest,
     UpdateRequest,
+};
+pub use workspace_status::{
+    RecentMemory, StatusScope, StatusWorkspace, WorkspaceStatus, workspace_status,
 };

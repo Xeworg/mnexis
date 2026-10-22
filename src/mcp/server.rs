@@ -23,7 +23,10 @@ use crate::mcp::transport::stdio;
 use crate::storage::memory_repo::SqliteMemoryRepository;
 use crate::storage::sqlite::open_sqlite;
 
-/// The MCP server — owns the MemoryService and exposes 9 tools.
+/// How many recent memories the `memory_workspace` tool reports.
+const WORKSPACE_RECENT_LIMIT: usize = 3;
+
+/// The MCP server — owns the MemoryService and exposes 10 tools.
 ///
 /// All tool functions take `&self`; the Arc<Mutex> provides interior
 /// mutability so the service can be mutated without needing `&mut self`.
@@ -33,6 +36,10 @@ use crate::storage::sqlite::open_sqlite;
 pub struct McpServer {
     service: Arc<Mutex<ApplicationService>>,
     default_namespace: String,
+    /// The profile directory the workspace bindings live in. The status
+    /// tool resolves the workspace of the process from it, exactly like the
+    /// CLI does.
+    data_dir: std::path::PathBuf,
     /// The namespace the workspace this server runs in writes into, and
     /// the key that identifies it. `None` means the server runs outside
     /// any known project: the profile allowlist keeps deciding.
@@ -76,6 +83,7 @@ impl McpServer {
         Ok(Self {
             service: Arc::new(Mutex::new(service)),
             default_namespace,
+            data_dir,
             workspace_namespace,
             workspace_key,
         })
@@ -205,6 +213,25 @@ impl McpServer {
             "items": memories,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+
+    /// The status payload: where this workspace may write, and what is
+    /// already there.
+    ///
+    /// The payload is built by the same function the `mnexis status`
+    /// command renders, so the CLI and the agent cannot drift.
+    fn do_workspace(&self) -> Result<String, McpError> {
+        let svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let status = crate::application::workspace_status::workspace_status(
+            &svc,
+            &self.data_dir,
+            WORKSPACE_RECENT_LIMIT,
+        )?;
+        drop(svc);
+        Ok(serde_json::to_string_pretty(&status).unwrap_or_default())
     }
 
     fn do_update(&self, args: UpdateArgs) -> Result<String, McpError> {
@@ -374,7 +401,7 @@ impl McpServer {
 impl McpServer {
     #[tool(
         name = "memory_save",
-        description = "Save a new memory. Returns uuid and row_id."
+        description = "Save a memory that must survive the session: a decision, a discovery, a convention, a user preference. Call it right after such a milestone, and store what the user asked to remember, in the namespace of this workspace."
     )]
     fn memory_save(&self, Parameters(args): Parameters<SaveArgs>) -> Result<String, McpError> {
         self.do_save(args)
@@ -387,10 +414,18 @@ impl McpServer {
 
     #[tool(
         name = "memory_list",
-        description = "List memories with optional namespace/state filters and pagination."
+        description = "List the memories this project already holds, with optional namespace/state filters and pagination. Use it at the start of a session, together with memory_workspace, to see what the project knows."
     )]
     fn memory_list(&self, Parameters(args): Parameters<ListArgs>) -> Result<String, McpError> {
         self.do_list(args)
+    }
+
+    #[tool(
+        name = "memory_workspace",
+        description = "Call this FIRST, at the start of every session and before you change code that already exists: it returns the namespace this workspace writes into, the read and write allowlists, how many memories the scope can see, and the most recent of them. The decisions behind the code live here, not in the files."
+    )]
+    fn memory_workspace(&self) -> Result<String, McpError> {
+        self.do_workspace()
     }
 
     #[tool(
@@ -444,7 +479,7 @@ impl McpServer {
 
     #[tool(
         name = "memory_search",
-        description = "FTS5 ranked search. Returns memories ordered by bm25 relevance."
+        description = "FTS5 ranked search over the memories of this project. Use it BEFORE changing existing code: the decisions, conventions and rejected approaches behind that code are recorded here and are not visible in the files. Returns the memories ordered by relevance."
     )]
     fn memory_search(&self, Parameters(args): Parameters<SearchArgs>) -> Result<String, McpError> {
         self.do_search(args)

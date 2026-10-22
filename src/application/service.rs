@@ -10,7 +10,7 @@ use crate::domain::error::MnexisError;
 use crate::domain::idempotency::{IdempotencyKey, IdempotencyRecord};
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
 use crate::domain::repository::MemoryRepository;
-use crate::domain::scope::{AccessScope, Operation};
+use crate::domain::scope::{AccessScope, NamespaceScope, Operation};
 use crate::retrieval::SearchHit;
 
 pub struct ServiceConfig {
@@ -287,6 +287,35 @@ impl<R: MemoryRepository> MemoryService<R> {
                 .repo
                 .list_in(&self.scope.read_scope(), None, limit, offset, true),
         }
+    }
+
+    // --- recent ---
+    /// The most recent memories, newest first, limited to `limit` rows.
+    ///
+    /// Same scope rule as [`MemoryService::list`]: an explicit namespace is
+    /// authorized as a read first, and a read without a namespace is bounded
+    /// by the scope's read allowlist.
+    pub fn recent(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        match namespace {
+            Some(ns) => {
+                self.scope.authorize_read(ns)?;
+                self.repo
+                    .list_recent(&NamespaceScope::Only(vec![ns.to_string()]), limit)
+            }
+            None => self.repo.list_recent(&self.scope.read_scope(), limit),
+        }
+    }
+
+    // --- count ---
+    /// How many memories the scope can see: the same namespace filter as a
+    /// read without an explicit namespace ([`MemoryService::list`]), without
+    /// loading the rows.
+    pub fn count(&self) -> Result<i64, MnexisError> {
+        self.repo.count_in(&self.scope.read_scope())
     }
 
     // --- update ---
@@ -716,7 +745,9 @@ fn validate_topic_key(topic_key: &str, max_bytes: usize) -> Result<(), MnexisErr
         if !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '.' && c != '-' {
             return Err(MnexisError::invalid_argument(
                 "topic_key",
-                format!("invalid character: {c:?}"),
+                format!(
+                    "invalid character: {c:?} (allowed: lowercase letters, digits, '.' and '-')"
+                ),
             ));
         }
     }

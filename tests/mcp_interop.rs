@@ -48,7 +48,7 @@ fn bootstrap_scoped_profile(data_dir: &std::path::Path) -> Result<(), Box<dyn st
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn tools_list_contains_all_9_memory_tools_and_no_ping()
+async fn tools_list_contains_all_10_memory_tools_and_no_ping()
 -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir_in("target")?;
     let data_dir = tmp.path();
@@ -74,6 +74,7 @@ async fn tools_list_contains_all_9_memory_tools_and_no_ping()
         "memory_delete",
         "memory_restore",
         "memory_search",
+        "memory_workspace",
     ] {
         assert!(
             names.contains(&tool),
@@ -85,6 +86,126 @@ async fn tools_list_contains_all_9_memory_tools_and_no_ping()
     assert!(
         !names.contains(&"ping"),
         "ping must not appear in the tool list, got: {names:?}"
+    );
+
+    // S3: the schema an agent reads must document the topic_key charset, so
+    // a guessed key like "snake/design" never needs a failing save to learn it.
+    let save_tool = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "memory_save")
+        .expect("memory_save present in the tool list");
+    let description = save_tool
+        .input_schema
+        .get("properties")
+        .and_then(|props| props.get("topic_key"))
+        .and_then(|prop| prop.get("description"))
+        .and_then(|description| description.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "memory_save schema must describe topic_key: {:?}",
+                save_tool.input_schema
+            )
+        });
+    assert!(
+        description.contains("lowercase letters, digits, '.' and '-'"),
+        "memory_save topic_key schema must document the charset, got: {description:?}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// memory_workspace: where may I write, and what is already there?
+// (agent-memory-ergonomics S4)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn memory_workspace_reports_the_namespace_the_allowlists_and_the_recent_memories()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // Two memories, so the newest-first order is observable.
+    for content in [
+        "la primera memoria del proyecto",
+        "la segunda memoria del proyecto",
+    ] {
+        let result = client
+            .call_tool(
+                CallToolRequestParams::new("memory_save").with_arguments(
+                    serde_json::json!({ "content": content })
+                        .as_object()
+                        .expect("static object")
+                        .clone(),
+                ),
+            )
+            .await?;
+        assert!(
+            !result.is_error.unwrap_or(false),
+            "memory_save must not report an error: {result:?}"
+        );
+    }
+
+    let result = client
+        .call_tool(CallToolRequestParams::new("memory_workspace"))
+        .await?;
+    assert!(
+        !result.is_error.unwrap_or(false),
+        "memory_workspace must not report an error: {result:?}"
+    );
+    let text = result
+        .content
+        .iter()
+        .find_map(|b| match b {
+            ContentBlock::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .expect("at least one text block");
+    let parsed: serde_json::Value = serde_json::from_str(text).expect("valid JSON");
+
+    // The scope an agent needs to know before it writes.
+    assert!(
+        parsed["scope"]["default_namespace"].is_string(),
+        "the payload must name the default namespace: {parsed}"
+    );
+    assert!(
+        parsed["scope"]["read_namespaces"].is_array(),
+        "the payload must carry the read allowlist: {parsed}"
+    );
+    assert!(
+        parsed["scope"]["write_namespaces"].is_array(),
+        "the payload must carry the write allowlist: {parsed}"
+    );
+    assert!(
+        parsed["workspace"]["key"].is_string(),
+        "the payload must name the workspace key: {parsed}"
+    );
+    assert!(
+        parsed["memory_count"].as_i64().unwrap_or(0) >= 2,
+        "the payload must count the memories: {parsed}"
+    );
+
+    // The most recent memory comes first.
+    let recent = parsed["recent"]
+        .as_array()
+        .expect("the payload must carry the recent list");
+    assert!(
+        !recent.is_empty(),
+        "the payload must carry the recent memories: {parsed}"
+    );
+    assert_eq!(
+        recent[0]["content"].as_str(),
+        Some("la segunda memoria del proyecto"),
+        "the newest memory must come first: {parsed}"
     );
 
     client.cancel().await?;

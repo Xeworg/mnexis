@@ -85,6 +85,26 @@ fn save_validates_topic_key_format() {
 }
 
 #[test]
+fn save_topic_key_rejection_names_the_character_and_the_allowed_set() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-3b", "ok");
+    req.topic_key = "snake/design".into();
+    let err = svc.save(req).unwrap_err();
+    match err {
+        MnexisError::InvalidArgument { field, message } => {
+            assert_eq!(field, "topic_key");
+            assert_eq!(
+                message,
+                "invalid character: '/' (allowed: lowercase letters, digits, '.' and '-')"
+            );
+        }
+        other => panic!("expected InvalidArgument, got {other:?}"),
+    }
+    // The rejected save must not leave a record behind.
+    assert!(svc.get("uuid-3b").unwrap().is_none());
+}
+
+#[test]
 fn save_validates_tags_count() {
     let (mut svc, _dir) = make_service();
     let mut req = save_req("uuid-4", "ok");

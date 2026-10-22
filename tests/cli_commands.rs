@@ -594,6 +594,26 @@ fn an_open_profile_searches_across_projects() {
 // --- errors and scope (S10) ---
 
 #[test]
+fn invalid_topic_key_exits_2_naming_the_character_and_the_allowed_set() {
+    let p = Profile::new();
+    let out = p.run_silent(&["save", "--topic-key", "snake/design", "content"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("INVALID_ARGUMENT"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("'/'"),
+        "stderr must name the offending character: {stderr}"
+    );
+    assert!(
+        stderr.contains("allowed"),
+        "stderr must name the allowed set: {stderr}"
+    );
+    // The rejected save stores nothing.
+    let listed = p.run_silent(&["list"]).unwrap_status("list");
+    assert_eq!(stdout_json(&listed)["count"], 0);
+}
+
+#[test]
 fn invalid_state_exits_2_with_invalid_argument_code() {
     let p = Profile::new();
     let out = p.run_silent(&["save", "--state", "bogus", "content"]);
@@ -659,6 +679,24 @@ fn mcp_serve_is_nested_and_old_spelling_rejected() {
         .output()
         .expect("spawn");
     assert!(!old.status.success(), "old spelling must be rejected");
+}
+
+// --- save --help documents the topic_key charset (S3) ---
+
+#[test]
+fn save_help_documents_the_topic_key_charset() {
+    let help = Command::new(env!("CARGO_BIN_EXE_mnexis"))
+        .args(["save", "--help"])
+        .output()
+        .expect("spawn");
+    assert!(help.status.success(), "save --help must succeed");
+    let text = String::from_utf8_lossy(&help.stdout);
+    // clap wraps the help, so compare against whitespace-normalised text.
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized.contains("lowercase letters, digits, '.' and '-'"),
+        "save --help must document the topic_key charset: {text}"
+    );
 }
 
 // --- T21: doctor diagnostics ---

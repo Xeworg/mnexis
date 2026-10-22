@@ -150,7 +150,7 @@ can set up the integration without a source checkout:
 ```sh
 mnexis agent status                  # what is installed, per environment
 mnexis agent install --env pi        # skill + pi extension
-mnexis agent install --env opencode  # skill only
+mnexis agent install --env opencode  # skill + opencode's MCP entry
 mnexis agent uninstall --env pi
 ```
 
@@ -160,6 +160,50 @@ which reports what it installed.
 
 This is the only implementation: `install.sh skills|extensions` forwards to
 `mnexis agent install`, so both paths write the same embedded assets.
+
+### opencode's MCP entry
+
+opencode can reach the memory engine as native tools, through the MCP
+server the binary already ships. Installing the opencode integration wires
+that server into opencode's own configuration
+(`~/.config/opencode/opencode.json`):
+
+```json
+{
+  "mcp": {
+    "mnexis": {
+      "type": "local",
+      "command": ["/home/you/.local/bin/mnexis", "mcp", "serve"],
+      "enabled": true
+    }
+  }
+}
+```
+
+The file belongs to you, so mnexis is careful with it:
+
+- the file is created when it does not exist;
+- when it exists, mnexis only ever adds or removes **one textual block**: the
+  `"mnexis": { … }` member, or the `"mcp": { "mnexis": { … } }` member when
+  the file has no `mcp` key. The rest of the file keeps its exact bytes, its
+  key order, its number formatting, its duplicate keys and its formatting —
+  mnexis never re-serialises your document;
+- an `mcp.mnexis` entry that is already there is left alone, and an
+  `mcp.mnexis` entry that is **not** the one mnexis wrote (you wrote it, or
+  you edited it) is never removed by the uninstall;
+- the file mode is preserved, and a configuration that is a symlink (you
+  manage it with dotfiles), that is read-only, that is `opencode.jsonc`
+  (opencode also reads JSONC), that is not valid JSON, whose root is not an
+  object, or whose `mcp` member is not an object, is **not touched at all**:
+  the command reports `refused` and prints the exact snippet to add by hand;
+- `XDG_CONFIG_HOME` is honoured when it is set
+  (`$XDG_CONFIG_HOME/opencode/opencode.json`).
+
+A refusal is not an error: the command exits 0 and reports what it did
+(`host config refused: …`), so a script can read the outcome from the
+`host_config` field of `mnexis --json agent install`.
+
+`mnexis agent status` reports whether the entry is configured.
 
 ## Agent extensions
 
