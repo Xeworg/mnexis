@@ -150,7 +150,7 @@ can set up the integration without a source checkout:
 ```sh
 mnexis agent status                  # what is installed, per environment
 mnexis agent install --env pi        # skill + pi extension
-mnexis agent install --env opencode  # skill only
+mnexis agent install --env opencode  # skill + opencode's MCP entry
 mnexis agent uninstall --env pi
 ```
 
@@ -160,6 +160,40 @@ which reports what it installed.
 
 This is the only implementation: `install.sh skills|extensions` forwards to
 `mnexis agent install`, so both paths write the same embedded assets.
+
+### opencode's MCP entry
+
+opencode can reach the memory engine as native tools, through the MCP
+server the binary already ships. Installing the opencode integration wires
+that server into opencode's own configuration
+(`~/.config/opencode/opencode.json`):
+
+```json
+{
+  "mcp": {
+    "mnexis": {
+      "type": "local",
+      "command": ["/home/you/.local/bin/mnexis", "mcp", "serve"],
+      "enabled": true
+    }
+  }
+}
+```
+
+The file belongs to you, so mnexis is careful with it:
+
+- the file is created when it does not exist;
+- when it exists and has no `mcp` key, the entry is inserted textually: the
+  rest of the file keeps its exact bytes, its key order and its formatting;
+- when it already has an `mcp` key, the file is rewritten as JSON with every
+  other key and value preserved;
+- when the file is `opencode.jsonc` (opencode also reads JSONC) or is not
+  valid JSON, mnexis **does not touch it**: the command reports the exact
+  snippet to add by hand;
+- `mnexis agent uninstall --env opencode` removes only the entry mnexis
+  added, and restores your own bytes when it can.
+
+`mnexis agent status` reports whether the entry is configured.
 
 ## Agent extensions
 

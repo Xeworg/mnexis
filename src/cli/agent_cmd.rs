@@ -9,6 +9,7 @@ use serde_json::json;
 use crate::application::agents::{
     AgentEnvironment, AgentInstaller, AssetAction, AssetFilter, FileAction, InstallReport, status,
 };
+use crate::application::opencode_config::{ConfigOutcome, OpencodeConfig};
 use crate::cli::output::CommandOutcome;
 use crate::domain::error::MnexisError;
 
@@ -62,6 +63,16 @@ fn ensure_applicable(
     Ok(())
 }
 
+/// The opencode configuration of an environment, when the environment has
+/// one. opencode is the only supported host that can run the MCP server, so
+/// the MCP entry is part of its integration.
+fn opencode_config(environment: AgentEnvironment) -> Option<OpencodeConfig> {
+    match environment {
+        AgentEnvironment::Opencode => Some(OpencodeConfig::from_env()),
+        AgentEnvironment::Pi => None,
+    }
+}
+
 /// Install the integration for an environment.
 pub fn install(env: Option<&String>, only: Option<&String>) -> Result<CommandOutcome, MnexisError> {
     let environment = resolve_environment(env)?;
@@ -69,13 +80,18 @@ pub fn install(env: Option<&String>, only: Option<&String>) -> Result<CommandOut
     ensure_applicable(environment, filter)?;
     let installer = AgentInstaller::from_env();
     let report = installer.install(environment, filter).map_err(io_error)?;
+    let config = match opencode_config(environment) {
+        Some(config) => Some(config.install().map_err(io_error)?),
+        None => None,
+    };
     Ok(CommandOutcome::new(
         json!({
             "environment": environment.id(),
             "assets": report.assets.iter().map(asset_json).collect::<Vec<_>>(),
             "files": report.files.iter().map(file_json).collect::<Vec<_>>(),
+            "host_config": config.as_ref().map(config_json),
         }),
-        render_report(&report, "install"),
+        render_report(&report, "install", config.as_ref()),
     ))
 }
 
@@ -89,13 +105,18 @@ pub fn uninstall(
     ensure_applicable(environment, filter)?;
     let installer = AgentInstaller::from_env();
     let report = installer.uninstall(environment, filter).map_err(io_error)?;
+    let config = match opencode_config(environment) {
+        Some(config) => Some(config.uninstall().map_err(io_error)?),
+        None => None,
+    };
     Ok(CommandOutcome::new(
         json!({
             "environment": environment.id(),
             "assets": report.assets.iter().map(asset_json).collect::<Vec<_>>(),
             "files": report.files.iter().map(file_json).collect::<Vec<_>>(),
+            "host_config": config.as_ref().map(config_json),
         }),
-        render_report(&report, "uninstall"),
+        render_report(&report, "uninstall", config.as_ref()),
     ))
 }
 
@@ -117,6 +138,17 @@ pub fn show() -> Result<CommandOutcome, MnexisError> {
                 }
             ));
         }
+        if let Some(config) = opencode_config(environment.environment) {
+            text.push_str(&format!(
+                "  {:<10} {}\n",
+                "mcp:",
+                if config.is_configured() {
+                    format!("configured  {}", config.config_path().display())
+                } else {
+                    format!("not configured  ({})", config.config_path().display())
+                }
+            ));
+        }
     }
     Ok(CommandOutcome::new(
         json!({
@@ -128,10 +160,21 @@ pub fn show() -> Result<CommandOutcome, MnexisError> {
                     "directory": asset.directory.display().to_string(),
                     "installed": asset.installed,
                 })).collect::<Vec<_>>(),
+                "mcp_configured": opencode_config(environment.environment)
+                    .map(|config| config.is_configured()),
             })).collect::<Vec<_>>(),
         }),
         text,
     ))
+}
+
+/// The JSON shape of a host configuration outcome.
+fn config_json(outcome: &ConfigOutcome) -> serde_json::Value {
+    json!({
+        "path": outcome.path.display().to_string(),
+        "action": outcome.action.label(),
+        "detail": outcome.detail,
+    })
 }
 
 fn asset_json(asset: &crate::application::agents::InstalledAsset) -> serde_json::Value {
@@ -160,7 +203,7 @@ fn file_json(file: &crate::application::agents::InstalledFile) -> serde_json::Va
 }
 
 /// Human-readable summary of what an operation did.
-fn render_report(report: &InstallReport, action: &str) -> String {
+fn render_report(report: &InstallReport, action: &str, config: Option<&ConfigOutcome>) -> String {
     if report.assets.is_empty() {
         let verb = if action == "uninstall" {
             "Nothing to remove"
@@ -194,6 +237,13 @@ fn render_report(report: &InstallReport, action: &str) -> String {
             FileAction::Removed => "removed",
         };
         text.push_str(&format!("  {} {}\n", verb, file.path.display()));
+    }
+    if let Some(config) = config {
+        text.push_str(&format!(
+            "  host config {}: {}\n",
+            config.action.label(),
+            config.detail
+        ));
     }
     text
 }
