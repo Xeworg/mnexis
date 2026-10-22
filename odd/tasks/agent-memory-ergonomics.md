@@ -188,3 +188,18 @@ improvements the opencode benchmark produced.
   you change code that already exists: the decisions behind the code live
   here, not in the files") are what turned the recall on. That is why the
   feature ships the MCP wiring and the descriptions, and not only the skill.
+- **L13** (2026-10-22, closing) — The native review (RDD) classified the
+  candidate as `high` risk (the evidence it names is the executable shell
+  test file: an executable permission change, code that starts other
+  processes, shell scripting). The explicit lens selection was rejected by
+  the provider (`lenses-invalid`), and the ordinary START without lens
+  fields did not reach the consent either through the facade
+  (`committed-only-required`); the provider-issued start command did, and the
+  human DECLINED the review for this candidate
+  (`consent: declined_this_candidate`, no lineage, no mutations). The
+  independent verification is the evidence that accompanies this change.
+  Final state: branch `feat/agent-memory-ergonomics`, 9 commits, 22 files,
+  +2963/-64; 410 cargo tests green, the installer suite green (15 files,
+  33 assertions in the new one), `cargo fmt --check` clean, clippy at the
+  36-warning baseline. The feature is NOT merged: the push and the pull
+  request are the human's decision.
