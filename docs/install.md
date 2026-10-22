@@ -183,15 +183,25 @@ that server into opencode's own configuration
 The file belongs to you, so mnexis is careful with it:
 
 - the file is created when it does not exist;
-- when it exists and has no `mcp` key, the entry is inserted textually: the
-  rest of the file keeps its exact bytes, its key order and its formatting;
-- when it already has an `mcp` key, the file is rewritten as JSON with every
-  other key and value preserved;
-- when the file is `opencode.jsonc` (opencode also reads JSONC) or is not
-  valid JSON, mnexis **does not touch it**: the command reports the exact
-  snippet to add by hand;
-- `mnexis agent uninstall --env opencode` removes only the entry mnexis
-  added, and restores your own bytes when it can.
+- when it exists, mnexis only ever adds or removes **one textual block**: the
+  `"mnexis": { … }` member, or the `"mcp": { "mnexis": { … } }` member when
+  the file has no `mcp` key. The rest of the file keeps its exact bytes, its
+  key order, its number formatting, its duplicate keys and its formatting —
+  mnexis never re-serialises your document;
+- an `mcp.mnexis` entry that is already there is left alone, and an
+  `mcp.mnexis` entry that is **not** the one mnexis wrote (you wrote it, or
+  you edited it) is never removed by the uninstall;
+- the file mode is preserved, and a configuration that is a symlink (you
+  manage it with dotfiles), that is read-only, that is `opencode.jsonc`
+  (opencode also reads JSONC), that is not valid JSON, whose root is not an
+  object, or whose `mcp` member is not an object, is **not touched at all**:
+  the command reports `refused` and prints the exact snippet to add by hand;
+- `XDG_CONFIG_HOME` is honoured when it is set
+  (`$XDG_CONFIG_HOME/opencode/opencode.json`).
+
+A refusal is not an error: the command exits 0 and reports what it did
+(`host config refused: …`), so a script can read the outcome from the
+`host_config` field of `mnexis --json agent install`.
 
 `mnexis agent status` reports whether the entry is configured.
 

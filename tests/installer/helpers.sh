@@ -27,6 +27,10 @@ export HOME="$SCRATCH/home"
 # agent dir would move the install target out of the scratch HOME), so it is
 # cleared here; the dedicated test sets it explicitly for one call.
 unset PI_CODING_AGENT_DIR
+# The opencode integration honours XDG_CONFIG_HOME. The suite must not
+# inherit the caller's value: a relocated config directory would move the
+# install target out of the scratch HOME.
+unset XDG_CONFIG_HOME
 export CARGO_HOME="$CARGO_HOME_REAL"
 export CARGO_TARGET_DIR="$CARGO_TARGET_DIR_REAL"
 mkdir -p -- "$HOME"
