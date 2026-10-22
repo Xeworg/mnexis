@@ -144,7 +144,7 @@ another project's memories. See
 
 ## CLI
 
-The full surface (16 command groups; see `mnexis --help`):
+The full surface (25 command groups; see `mnexis --help`):
 
 ```
 version           print the version and exit

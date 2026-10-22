@@ -337,6 +337,10 @@ pub enum ProjectAction {
 #[derive(Debug, Subcommand)]
 pub enum AgentAction {
     /// Install the skill (and the extension, where supported) for an environment
+    ///
+    /// For opencode this also wires the MCP server into opencode's own
+    /// configuration (`~/.config/opencode/opencode.json`); that is part of
+    /// the integration and is not narrowed by `--only`.
     Install {
         /// Target environment (pi, opencode)
         #[arg(long, value_name = "NAME")]
@@ -346,6 +350,10 @@ pub enum AgentAction {
         only: Option<String>,
     },
     /// Remove the installed assets for an environment
+    ///
+    /// For opencode this also removes the MCP entry mnexis wrote into
+    /// opencode's own configuration; an entry mnexis did not write is left
+    /// alone.
     Uninstall {
         /// Target environment (pi, opencode)
         #[arg(long, value_name = "NAME")]

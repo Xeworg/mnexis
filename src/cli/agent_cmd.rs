@@ -81,7 +81,7 @@ pub fn install(env: Option<&String>, only: Option<&String>) -> Result<CommandOut
     let installer = AgentInstaller::from_env();
     let report = installer.install(environment, filter).map_err(io_error)?;
     let config = match opencode_config(environment) {
-        Some(config) => Some(config.install().map_err(io_error)?),
+        Some(config) => Some(config.install().map_err(config_io_error)?),
         None => None,
     };
     Ok(CommandOutcome::new(
@@ -106,7 +106,7 @@ pub fn uninstall(
     let installer = AgentInstaller::from_env();
     let report = installer.uninstall(environment, filter).map_err(io_error)?;
     let config = match opencode_config(environment) {
-        Some(config) => Some(config.uninstall().map_err(io_error)?),
+        Some(config) => Some(config.uninstall().map_err(config_io_error)?),
         None => None,
     };
     Ok(CommandOutcome::new(
@@ -251,4 +251,12 @@ fn render_report(report: &InstallReport, action: &str, config: Option<&ConfigOut
 /// Map an IO error into the domain error type.
 fn io_error(error: std::io::Error) -> MnexisError {
     MnexisError::invalid_argument("io", format!("could not write the agent assets: {error}"))
+}
+
+/// Map an IO error of the host configuration into the domain error type.
+fn config_io_error(error: std::io::Error) -> MnexisError {
+    MnexisError::invalid_argument(
+        "io",
+        format!("could not write the host configuration: {error}"),
+    )
 }
