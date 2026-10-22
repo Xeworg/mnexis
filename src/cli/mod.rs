@@ -86,7 +86,7 @@ pub enum Command {
         /// Assertion basis (default: user_stated)
         #[arg(long)]
         basis: Option<String>,
-        /// Topic key (unique per namespace when non-empty)
+        /// Topic key (unique per namespace when non-empty; allowed: lowercase letters, digits, '.' and '-')
         #[arg(long)]
         topic_key: Option<String>,
         /// Idempotency key for safe retries

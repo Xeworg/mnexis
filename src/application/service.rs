@@ -716,7 +716,9 @@ fn validate_topic_key(topic_key: &str, max_bytes: usize) -> Result<(), MnexisErr
         if !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '.' && c != '-' {
             return Err(MnexisError::invalid_argument(
                 "topic_key",
-                format!("invalid character: {c:?}"),
+                format!(
+                    "invalid character: {c:?} (allowed: lowercase letters, digits, '.' and '-')"
+                ),
             ));
         }
     }

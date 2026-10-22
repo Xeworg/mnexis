@@ -10,7 +10,8 @@
 //! - memory_update: uuid, expected_revision, reason (required); optional
 //!   content/state/tags/assertion_basis
 //! - memory_save: content required; optional namespace, memory_type (default
-//!   "fact"), assertion_basis (default "user_stated"), topic_key (default ""),
+//!   "fact"), assertion_basis (default "user_stated"), topic_key (default "",
+//!   allowed characters: lowercase letters, digits, '.' and '-'),
 //!   idempotency_key, valid_from, valid_until, tags (array, max 32), state
 //!   (default "active")
 //! - memory_list: optional namespace, state, limit (default 20, clamp to 100),
@@ -45,7 +46,8 @@ pub struct SaveArgs {
     /// Assertion basis (default: "user_stated")
     #[serde(default)]
     pub assertion_basis: Option<String>,
-    /// Topic key — unique per namespace when non-empty (default: "")
+    /// Topic key — unique per namespace when non-empty (default: "").
+    /// Allowed characters: lowercase letters, digits, '.' and '-'
     #[serde(default)]
     pub topic_key: Option<String>,
     /// Idempotency key for safe retries (default: none)

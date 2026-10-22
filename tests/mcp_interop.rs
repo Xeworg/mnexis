@@ -87,6 +87,29 @@ async fn tools_list_contains_all_9_memory_tools_and_no_ping()
         "ping must not appear in the tool list, got: {names:?}"
     );
 
+    // S3: the schema an agent reads must document the topic_key charset, so
+    // a guessed key like "snake/design" never needs a failing save to learn it.
+    let save_tool = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "memory_save")
+        .expect("memory_save present in the tool list");
+    let description = save_tool
+        .input_schema
+        .get("properties")
+        .and_then(|props| props.get("topic_key"))
+        .and_then(|prop| prop.get("description"))
+        .and_then(|description| description.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "memory_save schema must describe topic_key: {:?}",
+                save_tool.input_schema
+            )
+        });
+    assert!(
+        description.contains("lowercase letters, digits, '.' and '-'"),
+        "memory_save topic_key schema must document the charset, got: {description:?}"
+    );
+
     client.cancel().await?;
     Ok(())
 }
