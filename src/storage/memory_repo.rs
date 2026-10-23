@@ -11,6 +11,7 @@ use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, Memo
 use crate::domain::query::MatchMode;
 use crate::domain::repository::MemoryRepository;
 use crate::domain::scope::NamespaceScope;
+use crate::domain::session::{Session, UserPrompt};
 // SearchHit is defined in the spike's retrieval module for T17; T18 will
 // define the production retrieval type in src/retrieval/fts5.rs.
 use crate::retrieval::SearchHit;
@@ -869,6 +870,178 @@ impl MemoryRepository for SqliteMemoryRepository {
         )
     }
 
+    // --- sessions and prompts ---
+
+    fn start_session(&mut self, session: &Session) -> Result<Session, MnexisError> {
+        // A session that already exists is the caller's session: the
+        // engine never restarts it and never renames it.
+        if let Some(existing) = self.get_session(&session.id)? {
+            return Ok(existing);
+        }
+        self.conn
+            .execute(
+                "INSERT INTO sessions (id, namespace, directory, started_at) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    session.id,
+                    session.namespace,
+                    session.directory,
+                    session.started_at
+                ],
+            )
+            .map_err(|e| MnexisError::busy(format!("session start: {e}")))?;
+        Ok(session.clone())
+    }
+
+    fn end_session(
+        &mut self,
+        id: &str,
+        ended_at: &str,
+        summary: Option<&str>,
+    ) -> Result<Session, MnexisError> {
+        let existing = self
+            .get_session(id)?
+            .ok_or_else(|| MnexisError::not_found(format!("session:{id}")))?;
+        // A session that already ended keeps its end: only the summary can
+        // still change.
+        let ended = existing
+            .ended_at
+            .clone()
+            .unwrap_or_else(|| ended_at.to_string());
+        let new_summary = summary.map(|s| s.to_string()).or(existing.summary);
+        self.conn
+            .execute(
+                "UPDATE sessions SET ended_at = ?1, summary = ?2 WHERE id = ?3",
+                params![ended, new_summary, id],
+            )
+            .map_err(|e| MnexisError::busy(format!("session end: {e}")))?;
+        Ok(Session {
+            ended_at: Some(ended),
+            summary: new_summary,
+            ..existing
+        })
+    }
+
+    fn get_session(&self, id: &str) -> Result<Option<Session>, MnexisError> {
+        self.conn
+            .query_row(
+                "SELECT id, namespace, directory, started_at, ended_at, summary \
+                 FROM sessions WHERE id = ?1",
+                [id],
+                |row| {
+                    Ok(Session {
+                        id: row.get(0)?,
+                        namespace: row.get(1)?,
+                        directory: row.get(2)?,
+                        started_at: row.get(3)?,
+                        ended_at: row.get(4)?,
+                        summary: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| MnexisError::busy(format!("session get: {e}")))
+    }
+
+    fn list_sessions(
+        &self,
+        namespaces: &NamespaceScope,
+        limit: usize,
+    ) -> Result<Vec<Session>, MnexisError> {
+        let ns_filter = namespace_filter(namespaces);
+        let (sql, owned) = session_query(&ns_filter);
+        let limit_i64: i64 = limit as i64;
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .map_err(|e| MnexisError::busy(format!("sessions list: {e}")))?;
+        let mut all_params: Vec<&dyn ToSql> = owned.iter().map(|s| s as &dyn ToSql).collect();
+        all_params.push(&limit_i64);
+        let rows = stmt
+            .query_map(&all_params[..], |row| {
+                Ok(Session {
+                    id: row.get(0)?,
+                    namespace: row.get(1)?,
+                    directory: row.get(2)?,
+                    started_at: row.get(3)?,
+                    ended_at: row.get(4)?,
+                    summary: row.get(5)?,
+                })
+            })
+            .map_err(|e| MnexisError::busy(format!("sessions list: {e}")))?;
+        let sessions = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| MnexisError::busy(format!("sessions list: {e}")))?;
+        Ok(sessions)
+    }
+
+    fn save_prompt(&mut self, prompt: &UserPrompt) -> Result<i64, MnexisError> {
+        self.conn
+            .execute(
+                "INSERT INTO user_prompts (session_id, namespace, content, created_at) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    prompt.session_id,
+                    prompt.namespace,
+                    prompt.content,
+                    prompt.created_at
+                ],
+            )
+            .map_err(|e| MnexisError::busy(format!("prompt save: {e}")))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    fn list_prompts(
+        &self,
+        namespaces: &NamespaceScope,
+        session_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<UserPrompt>, MnexisError> {
+        let ns_filter = namespace_filter(namespaces);
+        let (mut sql, mut owned) = prompt_query(&ns_filter);
+        let session_owned;
+        if let Some(session) = session_id {
+            sql.push_str(" AND session_id = ?");
+            session_owned = session.to_string();
+            owned.push(session_owned.clone());
+        }
+        sql.push_str(" ORDER BY id DESC LIMIT ?");
+        let limit_i64: i64 = limit as i64;
+        let mut all_params: Vec<&dyn ToSql> = owned.iter().map(|s| s as &dyn ToSql).collect();
+        all_params.push(&limit_i64);
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .map_err(|e| MnexisError::busy(format!("prompts list: {e}")))?;
+        let rows = stmt
+            .query_map(&all_params[..], |row| {
+                Ok(UserPrompt {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    namespace: row.get(2)?,
+                    content: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| MnexisError::busy(format!("prompts list: {e}")))?;
+        let prompts = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| MnexisError::busy(format!("prompts list: {e}")))?;
+        Ok(prompts)
+    }
+
+    fn search_prompts(
+        &self,
+        namespaces: &NamespaceScope,
+        query: &str,
+        limit: usize,
+        mode: MatchMode,
+    ) -> Result<Vec<UserPrompt>, MnexisError> {
+        let ns_filter = namespace_filter(namespaces);
+        let hits = crate::retrieval::search_prompts(&self.conn, query, mode, ns_filter, limit)?;
+        Ok(hits.iter().map(crate::retrieval::prompt_from_hit).collect())
+    }
+
     /// Snapshot all memories in the given namespaces, optionally including
     /// soft-deleted ones. Used by `MemoryService::export`; the result is
     /// already filtered to the caller's authorised namespaces and the
@@ -1170,4 +1343,85 @@ mod tests {
             "search must return both rows after a reindex"
         );
     }
+}
+
+/// The namespace filter for a scope, in the shape the retrieval layer
+/// expects.
+fn namespace_filter(namespaces: &NamespaceScope) -> crate::retrieval::NamespaceFilter {
+    match namespaces {
+        NamespaceScope::All => crate::retrieval::NamespaceFilter::Any,
+        NamespaceScope::AllExcept(list) => {
+            crate::retrieval::NamespaceFilter::AnyExcept(list.clone())
+        }
+        NamespaceScope::Only(list) => crate::retrieval::NamespaceFilter::Many(list.clone()),
+    }
+}
+
+/// The session query for a namespace filter.
+fn session_query(ns: &crate::retrieval::NamespaceFilter) -> (String, Vec<String>) {
+    let mut sql = String::from(
+        "SELECT id, namespace, directory, started_at, ended_at, summary FROM sessions WHERE 1=1",
+    );
+    let mut params: Vec<String> = Vec::new();
+    match ns {
+        crate::retrieval::NamespaceFilter::Any => {}
+        crate::retrieval::NamespaceFilter::Namespace(one) => {
+            sql.push_str(" AND namespace = ?");
+            params.push(one.clone());
+        }
+        crate::retrieval::NamespaceFilter::AnyExcept(list) => {
+            if !list.is_empty() {
+                sql.push_str(" AND namespace NOT IN (");
+                sql.push_str(&vec!["?"; list.len()].join(", "));
+                sql.push(')');
+                params.extend(list.iter().cloned());
+            }
+        }
+        crate::retrieval::NamespaceFilter::Many(list) => {
+            if list.is_empty() {
+                sql.push_str(" AND 0");
+            } else {
+                sql.push_str(" AND namespace IN (");
+                sql.push_str(&vec!["?"; list.len()].join(", "));
+                sql.push(')');
+                params.extend(list.iter().cloned());
+            }
+        }
+    }
+    sql.push_str(" ORDER BY started_at DESC");
+    (sql, params)
+}
+
+/// The prompt query for a namespace filter.
+fn prompt_query(ns: &crate::retrieval::NamespaceFilter) -> (String, Vec<String>) {
+    let mut sql = String::from(
+        "SELECT id, session_id, namespace, content, created_at FROM user_prompts WHERE 1=1",
+    );
+    let mut params: Vec<String> = Vec::new();
+    match ns {
+        crate::retrieval::NamespaceFilter::Any => {}
+        crate::retrieval::NamespaceFilter::Namespace(one) => {
+            sql.push_str(" AND namespace = ?");
+            params.push(one.clone());
+        }
+        crate::retrieval::NamespaceFilter::AnyExcept(list) => {
+            if !list.is_empty() {
+                sql.push_str(" AND namespace NOT IN (");
+                sql.push_str(&vec!["?"; list.len()].join(", "));
+                sql.push(')');
+                params.extend(list.iter().cloned());
+            }
+        }
+        crate::retrieval::NamespaceFilter::Many(list) => {
+            if list.is_empty() {
+                sql.push_str(" AND 0");
+            } else {
+                sql.push_str(" AND namespace IN (");
+                sql.push_str(&vec!["?"; list.len()].join(", "));
+                sql.push(')');
+                params.extend(list.iter().cloned());
+            }
+        }
+    }
+    (sql, params)
 }

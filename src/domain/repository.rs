@@ -8,6 +8,7 @@ use crate::domain::idempotency::IdempotencyRecord;
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryTag};
 use crate::domain::query::MatchMode;
 use crate::domain::scope::NamespaceScope;
+use crate::domain::session::{Session, UserPrompt};
 // SearchHit is defined in the spike's retrieval module for T17; T18 will
 // define the production retrieval type in src/retrieval/fts5.rs.
 use crate::retrieval::SearchHit;
@@ -215,4 +216,52 @@ pub trait MemoryRepository {
         limit: usize,
         mode: MatchMode,
     ) -> Result<Vec<SearchHit>, MnexisError>;
+
+    // --- sessions and prompts ---
+
+    /// Register a session. Registering one that already exists leaves it
+    /// as it is: the session belongs to the caller, and the engine never
+    /// restarts it.
+    fn start_session(&mut self, session: &Session) -> Result<Session, MnexisError>;
+
+    /// End a session, with an optional summary. Returns the session as it
+    /// is afterwards. A session that was already ended keeps its end: only
+    /// the summary can still change.
+    fn end_session(
+        &mut self,
+        id: &str,
+        ended_at: &str,
+        summary: Option<&str>,
+    ) -> Result<Session, MnexisError>;
+
+    /// One session by its id.
+    fn get_session(&self, id: &str) -> Result<Option<Session>, MnexisError>;
+
+    /// The sessions of the namespaces the scope can read, newest first.
+    fn list_sessions(
+        &self,
+        namespaces: &NamespaceScope,
+        limit: usize,
+    ) -> Result<Vec<Session>, MnexisError>;
+
+    /// Store what the user said.
+    fn save_prompt(&mut self, prompt: &UserPrompt) -> Result<i64, MnexisError>;
+
+    /// The prompts of the namespaces the scope can read, newest first.
+    fn list_prompts(
+        &self,
+        namespaces: &NamespaceScope,
+        session_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<UserPrompt>, MnexisError>;
+
+    /// Full-text search over the prompts, the same way the memories are
+    /// searched: the query is compiled, never passed through.
+    fn search_prompts(
+        &self,
+        namespaces: &NamespaceScope,
+        query: &str,
+        limit: usize,
+        mode: MatchMode,
+    ) -> Result<Vec<UserPrompt>, MnexisError>;
 }
