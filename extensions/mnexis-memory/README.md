@@ -21,6 +21,7 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 | `mnexis_search` | Full-text search over the stored memories (ranked). |
 | `mnexis_list` | List what is already stored. |
 | `mnexis_show` | Read one memory by UUID. |
+| `mnexis_duplicates` | Find the records whose title looks like a given one, before saving. |
 | `mnexis_supersede` | Replace an outdated memory with a newer one, keeping history. |
 
 Every tool is declared to the model in every session: availability does not

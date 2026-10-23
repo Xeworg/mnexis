@@ -159,16 +159,27 @@ Two things a repository cannot hold, and the engine keeps both:
    and whether the project already records it.
    `--topic-key` still exists for the cases where you want to place the
    memory yourself; it accepts lowercase letters, digits, `.`, `-` and `/`.
-4. **A replaced fact says so.** When a search or a list answer carries
+4. **Two titles, one fact — the engine proposes, you decide.** Two
+   *different* titles for the same fact (`puerto del servicio` and `puerto
+   de pagos`) are two records, and the engine cannot tell they are the
+   same: it ranks the records whose title looks like yours and proposes
+   them, it does not decide. A save that creates a record answers with
+   those candidates; `mnexis duplicates --title "<title>"` asks on demand.
+   If a candidate is the same fact, link it — the candidate is the older
+   record and the one you just saved is the newer:
+   `mnexis supersede --older <candidate-uuid> --newer <saved-uuid> --reason "same fact, different title"`.
+   If it is a different fact, leave it alone: two records that look alike
+   are two facts.
+5. **A replaced fact says so.** When a search or a list answer carries
    `was replaced by`, that memory is the old one and the other is current.
    Answer with the current value, and do not read the replaced one.
-5. **Replace facts by superseding, never by deleting.** Outdated but
+6. **Replace facts by superseding, never by deleting.** Outdated but
    historically true facts keep their record: `mnexis save` the newer fact,
    then `mnexis supersede --older <old-uuid> --newer <new-uuid> --reason "why"`.
    The supersede is atomic, revision-checked on both sides, cycle-free, and
    persists the reason. `mnexis history <uuid>` shows the chain. Both
    memories must live in this project's namespace.
-6. **Correct a record in place** only for typos/formatting:
+7. **Correct a record in place** only for typos/formatting:
    `mnexis update <uuid> --expected-revision <rev> --reason "why" [--content "..."]`.
 
 Soft-delete only on request: `mnexis delete <uuid> [--force]`, reversible

@@ -90,6 +90,13 @@ same record, so a fact that changed updates its record instead of adding a
 second one next to it. `mnexis suggest-topic-key "<title>"` answers which key
 a title yields and whether the project already records it.
 
+Two **different** titles for the same fact (`puerto del servicio` and
+`puerto de pagos`) are two records, and the engine cannot tell they are the
+same: it ranks the records whose title looks like yours and proposes them,
+it does not decide. `mnexis duplicates --title "<title>"` asks on demand,
+and a save that creates a record answers with the same candidates — the
+agent links the one that is the same fact, and leaves the others apart.
+
 The repository also ships a pi extension that exposes the memory engine as
 native tools, so an agent can store and recall project memory without being
 asked to, and without choosing a namespace itself:
@@ -175,6 +182,7 @@ update            update a memory (optimistic revision)
 supersede         mark an older memory superseded by a newer one
 search            ranked search (every word of the query counts)
 suggest-topic-key the topic key a title yields, and who holds it
+duplicates         the records whose title looks like a given one
 list              list memories
 session           register the session this process runs in
 end               end a session, with an optional summary
@@ -238,11 +246,12 @@ command line. Example `mcp.json` entry:
 }
 ```
 
-The server exposes 14 tools (`memory_save`, `memory_get`,
+The server exposes 16 tools (`memory_save`, `memory_get`,
 `memory_list`, `memory_update`, `memory_history`, `memory_supersede`,
 `memory_delete`, `memory_restore`, `memory_search`, `memory_workspace`,
 `memory_session_start`, `memory_session_end`, `memory_save_prompt`,
-`memory_search_prompts`).
+`memory_search_prompts`, `memory_suggest_topic_key`,
+`memory_scan_duplicates`).
 `memory_workspace` answers "where may I write, and what is already there?"
 with the same payload as `mnexis status`: the bound namespace, the read and
 write allowlists, the memory count and the most recent memories. All errors

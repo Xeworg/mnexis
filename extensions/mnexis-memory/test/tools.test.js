@@ -82,6 +82,40 @@ if (args[0] === "project" && args[1] === "list") {
 	process.stdout.write(JSON.stringify({ count: 0, items: [] }));
 } else if (args[0] === "suggest-topic-key") {
 	process.stdout.write(JSON.stringify({ title: args[2], topic_key: "puerto-del-servicio", recorded_by: null }));
+} else if (args[0] === "save") {
+	// The envelope a save answers with: the revision says whether the
+	// record was created or updated, and the duplicates are the records
+	// whose title looks like the one just saved.
+	const duplicates = process.env.MNEXIS_FAKE_SAVE_DUPLICATES
+		? JSON.parse(process.env.MNEXIS_FAKE_SAVE_DUPLICATES)
+		: [];
+	process.stdout.write(
+		JSON.stringify({
+			uuid: "saved-uuid",
+			row_id: 7,
+			title: "puerto de pagos",
+			topic_key: "puerto-de-pagos",
+			revision: Number(process.env.MNEXIS_FAKE_SAVE_REVISION || 1),
+			duplicates,
+		}),
+	);
+} else if (args[0] === "duplicates") {
+	process.stdout.write(
+		JSON.stringify({
+			title: "puerto de pagos",
+			namespace: workspace,
+			count: 1,
+			items: [
+				{
+					uuid: "old-uuid",
+					title: "puerto del servicio",
+					topic_key: "puerto-del-servicio",
+					score: 0.981,
+					shared: ["puerto"],
+				},
+			],
+		}),
+	);
 } else if (args[0] === "session" || args[0] === "end" || args[0] === "prompt") {
 	process.stdout.write(JSON.stringify({ id: args[3] || "s1", session_id: args[3] || "s1" }));
 } else {
@@ -473,4 +507,100 @@ test("a supersede of another project's memory is refused", async () => {
 	const call = calls(log).find((args) => args[0] === "supersede");
 	assert.equal(call, undefined, "no supersede reached the CLI");
 	delete process.env.MNEXIS_FAKE_MEMORY_NAMESPACE;
+});
+
+// --- the records a title looks like ---
+
+test("a save that finds a record like its title says so", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_SAVE_DUPLICATES = JSON.stringify([
+		{
+			uuid: "old-uuid",
+			title: "puerto del servicio",
+			topic_key: "puerto-del-servicio",
+			score: 0.981,
+			shared: ["puerto"],
+			link: 'mnexis supersede --older old-uuid --newer saved-uuid --reason "same fact, different title"',
+		},
+	]);
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+	assert.ok(save, "mnexis_save is registered");
+
+	const result = await save.execute(
+		"t-dup",
+		{ content: "el puerto de pagos es 9090", title: "puerto de pagos" },
+		undefined,
+		undefined,
+		context(),
+	);
+	const text = result.content[0].text;
+
+	// The model has to read what the namespace already holds, and what to
+	// do about it: the candidate, the words it shares, and the command.
+	assert.ok(
+		text.includes("puerto del servicio"),
+		`the candidate is named: ${text}`,
+	);
+	assert.ok(text.includes("puerto"), `the shared words are named: ${text}`);
+	assert.ok(
+		text.includes('mnexis supersede --older old-uuid --newer saved-uuid --reason "same fact, different title"'),
+		`the link command is given verbatim: ${text}`,
+	);
+	assert.ok(
+		text.includes("different fact"),
+		`the message says what to do when it is a different fact: ${text}`,
+	);
+});
+
+test("a save with nothing like its title says nothing more than before", async () => {
+	const { log } = setup();
+	delete process.env.MNEXIS_FAKE_SAVE_DUPLICATES;
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+	assert.ok(save, "mnexis_save is registered");
+
+	const result = await save.execute(
+		"t-dup2",
+		{ content: "un hecho cualquiera", title: "un hecho cualquiera" },
+		undefined,
+		undefined,
+		context(),
+	);
+	const text = result.content[0].text;
+
+	// The common path stays exactly as it was: no sentence about duplicates.
+	assert.equal(
+		text,
+		"Saved a memory in namespace 'mnexis'.",
+		`the message must not change when there is nothing to propose: ${text}`,
+	);
+});
+
+test("the duplicates tool asks the CLI for the records a title looks like", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const duplicates = tools.get("mnexis_duplicates");
+	assert.ok(duplicates, "mnexis_duplicates is registered");
+
+	const result = await duplicates.execute(
+		"t-dup3",
+		{ title: "puerto de pagos" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.notEqual(result.isError, true);
+
+	const call = calls(log).find((args) => args[0] === "duplicates");
+	assert.ok(call, "duplicates was called");
+	assert.deepEqual(call, ["duplicates", "--title", "puerto de pagos", "--json"]);
+
+	const text = result.content[0].text;
+	assert.ok(text.includes("puerto del servicio"), `the candidate is named: ${text}`);
+	assert.equal(result.details.count, 1);
+	assert.equal(result.details.items.length, 1);
 });

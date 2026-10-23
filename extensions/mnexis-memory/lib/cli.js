@@ -192,6 +192,17 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
+		async duplicates({ title, namespace, limit }, cwd) {
+			const args = ["duplicates", "--title", title];
+			if (namespace) {
+				args.push("--namespace", namespace);
+			}
+			if (limit) {
+				args.push("--limit", String(limit));
+			}
+			return run(args, { json: true, cwd });
+		},
+
 		async show(uuid, cwd) {
 			return run(["show", uuid], { json: true, cwd });
 		},

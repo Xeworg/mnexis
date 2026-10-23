@@ -134,6 +134,27 @@ function fail(text, details) {
 }
 
 /**
+ * The proposal a save carries: the records of the namespace whose title
+ * looks like the title just saved. The engine proposes and the model
+ * decides — it says what to do with each candidate, and the command that
+ * does it.
+ */
+function describeDuplicates(duplicates) {
+	const parts = duplicates.map((candidate) => {
+		const shared =
+			Array.isArray(candidate.shared) && candidate.shared.length
+				? ` (shared: ${candidate.shared.join(", ")})`
+				: "";
+		const link = candidate.link ? ` — link it with: ${candidate.link}` : "";
+		return `'${candidate.title}'${shared}${link}`;
+	});
+	return (
+		` These records of the namespace look like the same fact: ${parts.join("; ")}. ` +
+		"If one of them is the same fact, link it as shown; if it is a different fact, leave it apart."
+	);
+}
+
+/**
  * Commands and file writes that would grant write permissions without the
  * human. The extension owns that decision, so a model-issued call that
  * tries to do it behind the extension's back is blocked.
@@ -491,10 +512,17 @@ export default function mnexisMemoryExtension(pi) {
 			// that it happened.
 			const revision = result.data && result.data.revision;
 			const topicKey = result.data && result.data.topic_key;
+			// Two DIFFERENT titles for one fact are two records, and the
+			// engine cannot tell they are the same: it proposes the records
+			// whose title looks like this one, and the model decides.
+			const duplicates = (result.data && result.data.duplicates) || [];
+			const proposal = duplicates.length
+				? describeDuplicates(duplicates)
+				: "";
 			const what =
 				typeof revision === "number" && revision > 1
-					? `Updated the memory in namespace '${workspace.namespace}' (revision ${revision}, topic key \`${topicKey}\`).`
-					: `Saved a memory in namespace '${workspace.namespace}'.`;
+					? `Updated the memory in namespace '${workspace.namespace}' (revision ${revision}, topic key \`${topicKey}\`).${proposal}`
+					: `Saved a memory in namespace '${workspace.namespace}'.${proposal}`;
 			return ok(
 				what,
 				{
@@ -601,6 +629,63 @@ export default function mnexisMemoryExtension(pi) {
 					? `The key \`${key}\` is already recorded by ${held}: saving with this title updates that record.`
 					: `The key \`${key}\` is free.`;
 			return ok(text, { title: params.title, topic_key: key, recorded_by: held || null });
+		},
+	});
+
+	pi.registerTool({
+		name: "mnexis_duplicates",
+		label: "Find the records a title looks like",
+		promptSnippet: "Ask whether this project already records this fact under another title.",
+		description:
+			"Find the records of this project whose title looks like the one you give, each " +
+			"with the words the two titles share. Use it before saving a fact you are not sure " +
+			"about, or when a save came back with duplicates. Two DIFFERENT titles for the same " +
+			"fact are two records, and the engine cannot tell they are the same: it proposes " +
+			"the records your title looks like and you decide. If one of them is the same fact, " +
+			"link it with `mnexis supersede --older <candidate-uuid> --newer <saved-uuid> " +
+			"--reason \"same fact, different title\"`; if it is a different fact, leave it apart.",
+		parameters: {
+			type: "object",
+			properties: {
+				title: { type: "string", description: "The title of the fact you are about to record." },
+				namespace: {
+					type: "string",
+					description: "Optional namespace to narrow the search to one project.",
+				},
+				limit: { type: "number", description: "Maximum number of candidates (default 5)." },
+			},
+			required: ["title"],
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const result = await client.duplicates(
+				{ title: params.title, namespace: params.namespace, limit: params.limit },
+				ctx.cwd,
+			);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+					authorized: false,
+				});
+			}
+			const data = result.data || {};
+			const items = Array.isArray(data.items) ? data.items : [];
+			const text = !items.length
+				? "No record of this project looks like that title."
+				: `These records look like the same fact: ${items
+						.map((item) => {
+							const shared =
+								Array.isArray(item.shared) && item.shared.length
+									? ` (shared: ${item.shared.join(", ")})`
+									: "";
+							return `'${item.title}'${shared}`;
+						})
+						.join("; ")}. If one of them is the same fact, link it; if it is a different fact, leave it apart.`;
+			return ok(text, {
+				title: params.title || null,
+				namespace: data.namespace || null,
+				count: typeof data.count === "number" ? data.count : items.length,
+				items,
+			});
 		},
 	});
 
