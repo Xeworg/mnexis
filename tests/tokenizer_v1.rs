@@ -138,6 +138,7 @@ fn make_service() -> (MemoryService<SqliteMemoryRepository>, tempfile::TempDir) 
 fn save(svc: &mut MemoryService<SqliteMemoryRepository>, uuid: &str, content: &str, kind: &str) {
     let req = mnexis_core::application::SaveRequest {
         uuid: uuid.into(),
+        new_topic: false,
         topic_key: format!("topic.{uuid}"),
         namespace: "default".into(),
         memory_type: kind.into(),

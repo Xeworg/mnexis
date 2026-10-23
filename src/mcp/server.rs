@@ -15,14 +15,31 @@ use crate::ApplicationService;
 use crate::MnexisError;
 use crate::application::ListFilter;
 use crate::domain::idempotency::IdempotencyKey;
+use crate::domain::memory::MemoryLink;
 use crate::mcp::tools::{
     DeleteArgs, GetArgs, HistoryArgs, ListArgs, McpError, RestoreArgs, SaveArgs, SavePromptArgs,
-    SearchArgs, SearchPromptsArgs, SessionEndArgs, SessionStartArgs, SupersedeArgs, UpdateArgs,
-    clamp_limit, parse_state, parse_tags,
+    SearchArgs, SearchPromptsArgs, SessionEndArgs, SessionStartArgs, SuggestTopicKeyArgs,
+    SupersedeArgs, UpdateArgs, clamp_limit, parse_state, parse_tags,
 };
 use crate::mcp::transport::stdio;
 use crate::storage::memory_repo::SqliteMemoryRepository;
 use crate::storage::sqlite::open_sqlite;
+
+/// The relations between the memories a caller is reading, in the shape
+/// the agent reads them.
+fn relations_payload(links: &[MemoryLink]) -> Vec<serde_json::Value> {
+    links
+        .iter()
+        .map(|link| {
+            serde_json::json!({
+                "older": link.older_uuid,
+                "newer": link.newer_uuid,
+                "type": link.link_type,
+                "reason": link.reason,
+            })
+        })
+        .collect()
+}
 
 /// How many recent memories the `memory_workspace` tool reports.
 const WORKSPACE_RECENT_LIMIT: usize = 3;
@@ -144,6 +161,7 @@ impl McpServer {
         self.authorize_write(&namespace)?;
         let req = crate::application::SaveRequest {
             uuid: uuid.clone(),
+            new_topic: args.new_topic.unwrap_or(false),
             topic_key: args.topic_key.unwrap_or_default(),
             namespace,
             memory_type: args.memory_type.unwrap_or_else(|| "fact".to_string()),
@@ -208,6 +226,11 @@ impl McpServer {
             offset: args.offset,
         };
         let memories = svc.list(filter)?;
+        // Which of these replaced which: the agent sees it in the same
+        // answer, so it does not have to open every record to know which
+        // one is current.
+        let uuids: Vec<String> = memories.iter().map(|m| m.uuid.clone()).collect();
+        let relations = svc.relations_between(&uuids)?;
         drop(svc);
         // A list is a list: the identity of every memory and a preview of
         // its content. `full` asks for the whole shape.
@@ -220,6 +243,7 @@ impl McpServer {
         let json = serde_json::json!({
             "count": memories.len(),
             "items": items,
+            "relations": relations_payload(&relations),
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
@@ -265,6 +289,23 @@ impl McpServer {
             &now,
         )?;
         Ok(serde_json::to_string_pretty(&prompt).unwrap_or_default())
+    }
+
+    /// The topic key this content is already recorded under.
+    fn do_suggest_topic_key(&self, args: SuggestTopicKeyArgs) -> Result<String, McpError> {
+        let limit = args.limit.clamp(1, 20);
+        let svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let suggestions =
+            svc.suggest_topic(&args.content, args.namespace.as_deref(), limit, None)?;
+        drop(svc);
+        let json = serde_json::json!({
+            "count": suggestions.len(),
+            "items": suggestions,
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
 
     /// Search what the user said.
@@ -442,6 +483,9 @@ impl McpServer {
             None => crate::domain::query::MatchMode::default(),
         };
         let hits = svc.search(&args.query, args.namespace.as_deref(), limit, mode)?;
+        // Which of the hits replaced which.
+        let hit_uuids: Vec<String> = hits.iter().map(|h| h.uuid.clone()).collect();
+        let relations = svc.relations_between(&hit_uuids)?;
         drop(svc);
         let items: Vec<_> = hits
             .iter()
@@ -464,6 +508,7 @@ impl McpServer {
             "namespace": args.namespace,
             "count": hits.len(),
             "items": items,
+            "relations": relations_payload(&relations),
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
@@ -546,6 +591,17 @@ impl McpServer {
         Parameters(args): Parameters<SearchPromptsArgs>,
     ) -> Result<String, McpError> {
         self.do_search_prompts(args)
+    }
+
+    #[tool(
+        name = "memory_suggest_topic_key",
+        description = "Call this BEFORE you save a fact you are not sure about: it answers which topic key this content is already recorded under in this project, so you can update that record instead of writing a second one about the same thing."
+    )]
+    fn memory_suggest_topic_key(
+        &self,
+        Parameters(args): Parameters<SuggestTopicKeyArgs>,
+    ) -> Result<String, McpError> {
+        self.do_suggest_topic_key(args)
     }
 
     #[tool(

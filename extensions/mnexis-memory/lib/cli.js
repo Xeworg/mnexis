@@ -181,6 +181,17 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
+		async suggestTopicKey({ content, namespace, limit }, cwd) {
+			const args = ["suggest-topic-key", content];
+			if (namespace) {
+				args.push("--namespace", namespace);
+			}
+			if (typeof limit === "number") {
+				args.push("--limit", String(limit));
+			}
+			return run(args, { json: true, cwd });
+		},
+
 		async show(uuid, cwd) {
 			return run(["show", uuid], { json: true, cwd });
 		},

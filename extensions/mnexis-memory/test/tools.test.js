@@ -70,7 +70,17 @@ if (args[0] === "project" && args[1] === "list") {
 			namespace: process.env.MNEXIS_FAKE_MEMORY_NAMESPACE || workspace,
 		}),
 	);
-} else if (args[0] === "search" || args[0] === "list" || args[0] === "prompts") {
+} else if (args[0] === "list") {
+	process.stdout.write(
+		JSON.stringify({
+			count: 1,
+			items: [{ uuid: "m1", namespace: "payments", preview: "el puerto es 8081" }],
+			relations: [{ older: "m1", newer: "m2", type: "supersedes", reason: "el puerto cambió" }],
+		}),
+	);
+} else if (args[0] === "search" || args[0] === "prompts") {
+	process.stdout.write(JSON.stringify({ count: 0, items: [] }));
+} else if (args[0] === "suggest-topic-key") {
 	process.stdout.write(JSON.stringify({ count: 0, items: [] }));
 } else if (args[0] === "session" || args[0] === "end" || args[0] === "prompt") {
 	process.stdout.write(JSON.stringify({ id: args[3] || "s1", session_id: args[3] || "s1" }));
@@ -386,6 +396,38 @@ test("a session id is never invented", async () => {
 		undefined,
 		"the engine is not called with a made-up id",
 	);
+});
+
+test("the topic suggestion reaches the engine", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const suggest = tools.get("mnexis_suggest_topic_key");
+	assert.ok(suggest, "mnexis_suggest_topic_key is registered");
+
+	await suggest.execute(
+		"s6",
+		{ content: "el puerto es 8081" },
+		undefined,
+		undefined,
+		context(),
+	);
+	const call = calls(log).find((args) => args[0] === "suggest-topic-key");
+	assert.ok(call, "the engine was asked");
+	assert.ok(call.includes("el puerto es 8081"), "the content reaches the engine");
+});
+
+test("the relations travel with the list the model reads", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const list = tools.get("mnexis_list");
+	assert.ok(list, "mnexis_list is registered");
+
+	const result = await list.execute("s7", {}, undefined, undefined, context());
+	assert.notEqual(result.isError, true);
+	const text = result.content.map((block) => block.text).join(" ");
+	assert.match(text, /was replaced by/, `the relation is in the text the model reads: ${text}`);
 });
 
 test("a supersede of another project's memory is refused", async () => {

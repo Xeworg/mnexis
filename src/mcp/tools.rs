@@ -48,6 +48,11 @@ pub struct SaveArgs {
     /// Assertion basis (default: "user_stated")
     #[serde(default)]
     pub assertion_basis: Option<String>,
+    /// Record this as a new topic, even if the engine holds one like it
+    /// (default: false). Without it, a content the namespace already holds
+    /// a topic for is refused, naming the key to use.
+    #[serde(default)]
+    pub new_topic: Option<bool>,
     /// Topic key — unique per namespace when non-empty (default: "").
     /// Allowed characters: lowercase letters, digits, '.', '-' and '/'
     #[serde(default)]
@@ -130,6 +135,19 @@ pub struct SavePromptArgs {
     pub namespace: Option<String>,
 }
 
+/// Arguments for `memory_suggest_topic_key`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SuggestTopicKeyArgs {
+    /// The content you are about to record.
+    pub content: String,
+    /// Namespace (default: the profile's default namespace).
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Max suggestions (default 5, clamped to 20).
+    #[serde(default = "default_suggestion_limit")]
+    pub limit: usize,
+}
+
 /// Arguments for `memory_search_prompts`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchPromptsArgs {
@@ -148,6 +166,10 @@ pub struct SearchPromptsArgs {
 
 pub(crate) fn default_limit() -> usize {
     20
+}
+
+pub(crate) fn default_suggestion_limit() -> usize {
+    5
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -236,6 +258,7 @@ pub const TOOL_MEMORY_SESSION_START: &str = "memory_session_start";
 pub const TOOL_MEMORY_SESSION_END: &str = "memory_session_end";
 pub const TOOL_MEMORY_SAVE_PROMPT: &str = "memory_save_prompt";
 pub const TOOL_MEMORY_SEARCH_PROMPTS: &str = "memory_search_prompts";
+pub const TOOL_MEMORY_SUGGEST_TOPIC_KEY: &str = "memory_suggest_topic_key";
 
 // ---------------------------------------------------------------------------
 // Helpers

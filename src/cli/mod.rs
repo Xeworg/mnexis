@@ -90,6 +90,9 @@ pub enum Command {
         /// Assertion basis (default: user_stated)
         #[arg(long)]
         basis: Option<String>,
+        /// Record this as a new topic, even if the engine holds one like it
+        #[arg(long)]
+        new_topic: bool,
         /// Topic key (unique per namespace when non-empty; allowed: lowercase letters, digits, '.', '-' and '/')
         #[arg(long)]
         topic_key: Option<String>,
@@ -232,6 +235,18 @@ pub enum Command {
         match_mode: String,
         /// Max results (default 20, capped at 100)
         #[arg(long, default_value_t = commands::DEFAULT_LIMIT)]
+        limit: usize,
+    },
+
+    /// The topic key this content is already recorded under
+    SuggestTopicKey {
+        /// The content you are about to record (positional)
+        content: String,
+        /// Namespace (default: the profile's default_namespace)
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Max suggestions (default 5, capped at 20)
+        #[arg(long, default_value_t = 5)]
         limit: usize,
     },
 
@@ -523,6 +538,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             tags,
             state,
             content,
+            new_topic,
         } => {
             let mut profile = Profile::open(data_dir)?;
             commands::save(
@@ -537,6 +553,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 tags.clone(),
                 state.clone(),
                 content.clone(),
+                *new_topic,
             )
         }
         Command::Update {
@@ -661,6 +678,14 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 *limit,
                 namespace.clone(),
             )
+        }
+        Command::SuggestTopicKey {
+            content,
+            namespace,
+            limit,
+        } => {
+            let mut profile = Profile::open(data_dir)?;
+            commands::suggest_topic_key(&mut profile, content.clone(), namespace.clone(), *limit)
         }
         Command::Status => status_cmd::status(data_dir),
         Command::Show { uuid, revision } => {

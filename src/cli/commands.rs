@@ -15,7 +15,7 @@ use crate::cli::profile::Profile;
 use crate::diagnostics::doctor::purge_eligible_count;
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyKey;
-use crate::domain::memory::MemoryState;
+use crate::domain::memory::{Memory, MemoryState};
 use crate::domain::query::MatchMode;
 use crate::retrieval::explain;
 use crate::retrieval::fts5::{DeletedFilter, NamespaceFilter, StateFilter};
@@ -127,10 +127,12 @@ pub fn save_request(
     tags: Option<String>,
     state: Option<String>,
     content: String,
+    new_topic: bool,
 ) -> Result<SaveRequest, MnexisError> {
     let state = parse_state(state.as_deref().unwrap_or("active"))?;
     Ok(SaveRequest {
         uuid: crate::cli::profile::uuid_v4()?,
+        new_topic,
         topic_key: topic_key.unwrap_or_default(),
         namespace,
         memory_type: memory_type.unwrap_or_else(|| "fact".to_string()),
@@ -160,12 +162,16 @@ pub fn save(
     tags: Option<String>,
     state: Option<String>,
     content: String,
+    new_topic: bool,
 ) -> Result<CommandOutcome, MnexisError> {
     let namespace = namespace.unwrap_or_else(|| profile.default_namespace());
     WorkspaceGuard::resolve(profile)?.authorize(&namespace)?;
+    // The content is kept for the topic check: the engine may already hold
+    // this topic under another key.
+    let saved_content = content.clone();
     let req = save_request(
         "cli",
-        namespace,
+        namespace.clone(),
         memory_type,
         basis,
         topic_key,
@@ -175,13 +181,64 @@ pub fn save(
         tags,
         state,
         content,
+        new_topic,
     )?;
     let mem = profile.service_mut().save(req)?;
     let uuid_out = mem.uuid.clone();
     let row_id = mem.id.unwrap_or(0);
+    // A notice, not a refusal: the save happened. The agent can use the key
+    // the namespace already uses (so the record is updated instead of
+    // duplicated) or keep its own.
+    // The notice is advisory: a failure to compute it never fails the
+    // save that already happened.
+    let topic = profile
+        .service_ref()
+        .suggest_topic(&saved_content, Some(&namespace), 1, Some(&uuid_out))
+        .unwrap_or_default();
+    let text = match topic.first() {
+        Some(s) => format!(
+            "saved {uuid_out} (row {row_id})\n\
+             note: this topic is already recorded under the topic key `{}` ({}); \
+             save it again with that key to update that record instead of adding a second one",
+            s.topic_key, s.uuid
+        ),
+        None => format!("saved {uuid_out} (row {row_id})"),
+    };
     Ok(CommandOutcome::new(
-        json!({ "uuid": uuid_out, "row_id": row_id }),
-        format!("saved {uuid_out} (row {row_id})"),
+        json!({ "uuid": uuid_out, "row_id": row_id, "topic_suggestion": topic.first() }),
+        text,
+    ))
+}
+
+/// `mnexis suggest-topic-key "<content>"` — the topic the namespace already
+/// holds for this content.
+pub fn suggest_topic_key(
+    profile: &mut Profile,
+    content: String,
+    namespace: Option<String>,
+    limit: usize,
+) -> Result<CommandOutcome, MnexisError> {
+    let namespace = namespace.unwrap_or_else(|| profile.default_namespace());
+    WorkspaceGuard::resolve(profile)?.authorize(&namespace)?;
+    let suggestions =
+        profile
+            .service_ref()
+            .suggest_topic(&content, Some(&namespace), limit, None)?;
+    let text = if suggestions.is_empty() {
+        "no record holds this topic yet".to_string()
+    } else {
+        suggestions
+            .iter()
+            .map(|s| format!("  [{}] {} ({}) {}", s.state, s.topic_key, s.uuid, s.preview))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    Ok(CommandOutcome::new(
+        json!({
+            "count": suggestions.len(),
+            "items": suggestions,
+        }),
+        text,
     ))
 }
 
@@ -320,6 +377,9 @@ pub fn search(
     let hits = profile
         .service_ref()
         .search(&query, namespace.as_deref(), limit, mode)?;
+    // Which of the hits replaced which.
+    let hit_uuids: Vec<String> = hits.iter().map(|h| h.uuid.clone()).collect();
+    let relations = profile.service_ref().relations_between(&hit_uuids)?;
 
     if explain_hits {
         // Same filters as the repository's search path, on a second
@@ -403,6 +463,7 @@ pub fn search(
             "namespace": namespace,
             "count": hits.len(),
             "items": items,
+            "relations": relations,
         }),
         if text.is_empty() {
             format!("query `{query}` matched 0 memories")
@@ -410,6 +471,26 @@ pub fn search(
             text
         },
     ))
+}
+
+/// The relations between the memories a caller is reading: which one
+/// replaced which.
+fn relations_of(profile: &mut Profile, memories: &[Memory]) -> Vec<serde_json::Value> {
+    let uuids: Vec<String> = memories.iter().map(|m| m.uuid.clone()).collect();
+    profile
+        .service_ref()
+        .relations_between(&uuids)
+        .unwrap_or_default()
+        .iter()
+        .map(|link| {
+            json!({
+                "older": link.older_uuid,
+                "newer": link.newer_uuid,
+                "type": link.link_type,
+                "reason": link.reason,
+            })
+        })
+        .collect()
 }
 
 // --- list ---
@@ -443,10 +524,14 @@ pub fn list(
         serde_json::to_value(crate::application::previews(&memories))
             .unwrap_or(serde_json::Value::Null)
     };
+    // Which of these replaced which: the agent sees it in the same answer,
+    // so it does not have to open every record to know which one is current.
+    let relations = relations_of(profile, &memories);
     Ok(CommandOutcome::new(
         json!({
             "count": memories.len(),
             "items": items,
+            "relations": relations,
         }),
         if text.is_empty() {
             "no memories".to_string()

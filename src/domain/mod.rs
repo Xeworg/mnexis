@@ -11,6 +11,7 @@ pub mod query;
 pub mod repository;
 pub mod scope;
 pub mod session;
+pub mod topic;
 pub mod workspace;
 
 pub use error::MnexisError;

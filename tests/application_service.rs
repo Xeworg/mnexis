@@ -40,6 +40,7 @@ fn make_service() -> (MemoryService<SqliteMemoryRepository>, tempfile::TempDir) 
 fn save_req(uuid: &str, content: &str) -> SaveRequest {
     SaveRequest {
         uuid: uuid.into(),
+        new_topic: false,
         topic_key: format!("topic.{uuid}"),
         namespace: "proyecto-a".into(),
         memory_type: "fact".into(),
@@ -694,6 +695,7 @@ fn a_prompt_outside_the_write_allowlist_is_refused() {
     let memory_error = svc
         .save(SaveRequest {
             uuid: "uuid-refused".into(),
+            new_topic: false,
             namespace: "otro".into(),
             content: "contenido".into(),
             ..save_req("uuid-refused", "ok")
@@ -711,4 +713,105 @@ fn a_prompt_outside_the_write_allowlist_is_refused() {
         ),
         "{error:?}"
     );
+}
+
+// --- one fact, one record (topic-continuity) ---
+
+const PORT_8081: &str = "El servicio payments-api escucha en el puerto TCP 8081, \
+                         definido como port en la seccion server de config.toml con 4 workers";
+
+#[test]
+fn a_second_record_about_a_topic_the_namespace_holds_is_refused() {
+    let (mut svc, _dir) = make_service();
+    let mut first = save_req("uuid-t1", PORT_8081);
+    first.topic_key = "payments-api/port".into();
+    svc.save(first).expect("the first record is saved");
+
+    // The same topic, a new value, and no key: the engine refuses and names
+    // the key to use.
+    let new_value = PORT_8081.replace("8081", "9090");
+    let mut duplicate = save_req("uuid-t2", &new_value);
+    duplicate.topic_key = String::new();
+    let error = svc
+        .save(duplicate)
+        .expect_err("a duplicate topic is refused");
+    match &error {
+        MnexisError::InvalidArgument { field, message } => {
+            assert_eq!(field, "topic_key");
+            assert!(
+                message.contains("payments-api/port"),
+                "the refusal names the key: {message}"
+            );
+            assert!(
+                message.contains("--new-topic"),
+                "the refusal names the way out: {message}"
+            );
+        }
+        other => panic!("expected InvalidArgument, got {other:?}"),
+    }
+    // Nothing was written.
+    assert!(svc.get("uuid-t2").unwrap().is_none());
+}
+
+#[test]
+fn the_caller_can_say_it_is_a_new_topic_on_purpose() {
+    let (mut svc, _dir) = make_service();
+    let mut first = save_req("uuid-t3", PORT_8081);
+    first.topic_key = "payments-api/port".into();
+    svc.save(first).expect("the first record is saved");
+
+    let mut second = save_req("uuid-t4", &PORT_8081.replace("8081", "9090"));
+    second.topic_key = String::new();
+    second.new_topic = true;
+    svc.save(second)
+        .expect("the caller decided it is a new topic");
+    assert!(svc.get("uuid-t4").unwrap().is_some());
+}
+
+#[test]
+fn saving_the_same_request_twice_is_a_retry_not_a_second_fact() {
+    let (mut svc, _dir) = make_service();
+    let mut first = save_req("uuid-t5", PORT_8081);
+    first.topic_key = String::new();
+    first.idempotency_key = Some(IdempotencyKey::new("idem-t5"));
+    let saved = svc.save(first).expect("the first save");
+    assert_eq!(saved.uuid, "uuid-t5");
+
+    // The same request again (a retry repeats the request, uuid included):
+    // the replay returns the original, and the topic refusal must not fire
+    // on a fact the engine just wrote itself.
+    let mut again = save_req("uuid-t5", PORT_8081);
+    again.topic_key = String::new();
+    again.idempotency_key = Some(IdempotencyKey::new("idem-t5"));
+    let replayed = svc.save(again).expect("the replay is not refused");
+    assert_eq!(replayed.uuid, "uuid-t5", "the original record comes back");
+}
+
+#[test]
+fn a_write_the_profile_allows_is_not_blocked_by_a_topic_it_cannot_read() {
+    // A profile that writes into a namespace it may not read: the engine
+    // cannot name a topic it is not allowed to see, so it must not refuse.
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&dir.path().join("mnexis.db")).unwrap();
+    let repo = SqliteMemoryRepository::new(conn);
+    let scope = AccessScope::new(
+        vec!["ns-a".to_string()],
+        vec!["ns-a".to_string(), "ns-b".to_string()],
+        "ns-a".to_string(),
+        false,
+        vec![Operation::Save, Operation::Get],
+    )
+    .with_disclosure(mnexis_core::domain::scope::ExistenceDisclosure::NotFound);
+    let mut svc = MemoryService::new(repo, scope, ServiceConfig::default());
+
+    let mut first = save_req("uuid-t7", PORT_8081);
+    first.namespace = "ns-b".into();
+    first.topic_key = "payments-api/port".into();
+    svc.save(first).expect("the first write into ns-b");
+
+    let mut second = save_req("uuid-t8", &PORT_8081.replace("8081", "9090"));
+    second.namespace = "ns-b".into();
+    second.topic_key = String::new();
+    svc.save(second)
+        .expect("the write the profile allows is not blocked by a read it does not");
 }

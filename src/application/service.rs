@@ -13,6 +13,7 @@ use crate::domain::query::MatchMode;
 use crate::domain::repository::MemoryRepository;
 use crate::domain::scope::{AccessScope, NamespaceScope, Operation};
 use crate::domain::session::{Session, UserPrompt};
+use crate::domain::topic::TopicSuggestion;
 use crate::retrieval::SearchHit;
 
 pub struct ServiceConfig {
@@ -40,6 +41,9 @@ impl Default for ServiceConfig {
 pub struct SaveRequest {
     pub uuid: String,
     pub topic_key: String,
+    /// Set when the caller has seen the topic the engine already holds and
+    /// decided this is a new one anyway. It turns the refusal into a save.
+    pub new_topic: bool,
     pub namespace: String,
     pub memory_type: String,
     pub content: String,
@@ -157,6 +161,43 @@ impl<R: MemoryRepository> MemoryService<R> {
                     ));
                 }
             }
+        }
+
+        // The engine already holds this topic: refuse, and name the key.
+        //
+        // This runs AFTER the idempotency replay: saving the same request
+        // twice is a retry, not a second fact, and a retry must never be
+        // refused for a topic it just wrote itself.
+        //
+        // A notice was tried first and it was not enough: the measurement
+        // (three runs) showed the agent reading the notice and writing a
+        // second record anyway. A refusal is what changes the outcome — and
+        // it costs nothing when it is wrong, because the caller can say
+        // "this is a new topic" and the save goes through.
+        // Only when the scope may read the namespace: the engine can name a
+        // topic it is allowed to see, and a write the profile permits must
+        // never be blocked by a read it does not.
+        if req.topic_key.is_empty()
+            && !req.new_topic
+            && self.scope.can_read(&req.namespace)
+            && let Some(existing) = self
+                .suggest_topic(&req.content, Some(&req.namespace), 1, Some(&req.uuid))?
+                .first()
+        {
+            return Err(MnexisError::invalid_argument(
+                "topic_key",
+                format!(
+                    "this topic is already recorded under the topic key `{}` ({}); \
+                     save with that key to update that record, or pass --new-topic \
+                     to record a second one on purpose",
+                    if existing.topic_key.is_empty() {
+                        "(none)"
+                    } else {
+                        existing.topic_key.as_str()
+                    },
+                    existing.uuid
+                ),
+            ));
         }
 
         let mem = Memory {
@@ -839,6 +880,75 @@ impl<R: MemoryRepository> MemoryService<R> {
             .unwrap_or_else(|| self.scope.default_namespace.clone());
         validate_namespace(&ns)?;
         Ok(ns)
+    }
+
+    // --- the relations between the memories a caller is reading ---
+
+    /// Which of these memories replaced which.
+    ///
+    /// A memory that was superseded says so where the agent reads it, so
+    /// the agent does not have to open every record to find out which one
+    /// is current.
+    pub fn relations_between(&self, uuids: &[String]) -> Result<Vec<MemoryLink>, MnexisError> {
+        self.repo.links_between(uuids)
+    }
+
+    // --- the topic the namespace already holds ---
+
+    /// The records that already hold this content's topic.
+    ///
+    /// The engine cannot ask the agent whether two memories are the same
+    /// fact; it can notice that two contents are about the same thing and
+    /// say so, with the topic key the namespace already uses. The answer
+    /// is a notice: the save already happened, and a wrong guess costs a
+    /// confusing sentence, never a lost fact.
+    pub fn suggest_topic(
+        &self,
+        content: &str,
+        namespace: Option<&str>,
+        limit: usize,
+        exclude: Option<&str>,
+    ) -> Result<Vec<TopicSuggestion>, MnexisError> {
+        let ns = match namespace {
+            Some(ns) => {
+                self.scope.authorize_read(ns)?;
+                ns.to_string()
+            }
+            None => self.scope.default_namespace.clone(),
+        };
+        // The candidates come from the index: the words of the content,
+        // counted the way a search counts them.
+        let terms = crate::domain::topic::significant_terms(content);
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let query = terms.iter().cloned().collect::<Vec<_>>().join(" ");
+        let hits = self
+            .repo
+            .search(&query, Some(&ns), limit.max(1) * 4, MatchMode::Any)?;
+        let mut suggestions = Vec::new();
+        for hit in hits {
+            if Some(hit.uuid.as_str()) == exclude {
+                continue;
+            }
+            let Some(memory) = self.repo.get_by_uuid(&hit.uuid)? else {
+                continue;
+            };
+            if !crate::domain::topic::is_same_topic(content, &memory.content) {
+                continue;
+            }
+            suggestions.push(TopicSuggestion {
+                uuid: memory.uuid.clone(),
+                topic_key: memory.topic_key.clone(),
+                state: memory.state.as_str().to_string(),
+                preview: crate::domain::topic::preview(&memory.content, 160),
+                overlap: crate::domain::topic::overlap(content, &memory.content),
+            });
+            if suggestions.len() >= limit.max(1) {
+                break;
+            }
+        }
+        Ok(suggestions)
     }
 
     // --- search ---
