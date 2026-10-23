@@ -91,6 +91,7 @@ mod tests {
             id: Some(1),
             uuid: "uuid-1".to_string(),
             title: "el puerto del servicio".to_string(),
+            keywords: Vec::new(),
             topic_key: "topic-1".to_string(),
             namespace: "ns".to_string(),
             memory_type: "fact".to_string(),

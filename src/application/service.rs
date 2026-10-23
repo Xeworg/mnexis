@@ -19,6 +19,9 @@ pub struct ServiceConfig {
     pub max_content_bytes: usize,
     pub max_query_bytes: usize,
     pub max_tags: usize,
+    /// The words one memory may carry. The list **accumulates** across the
+    /// saves of a fact, so the limit is per memory, not per request.
+    pub max_keywords: usize,
     pub max_topic_key_bytes: usize,
     pub default_retention_days: i64,
     pub idempotency_retention_days: i64,
@@ -30,6 +33,7 @@ impl Default for ServiceConfig {
             max_content_bytes: 16_384,
             max_query_bytes: 8_192,
             max_tags: 32,
+            max_keywords: 32,
             max_topic_key_bytes: 128,
             default_retention_days: 30,
             idempotency_retention_days: 7,
@@ -52,6 +56,12 @@ pub struct SaveRequest {
     pub valid_from: Option<String>,
     pub valid_until: Option<String>,
     pub tags: Vec<String>,
+    /// The words of the fact the agent supplies. They are **added** to the
+    /// ones the record already has, unless `replace_keywords` says otherwise.
+    pub keywords: Vec<String>,
+    /// Replace the record's words with the requested ones instead of adding
+    /// them. The escape hatch for a word that is wrong.
+    pub replace_keywords: bool,
     pub idempotency_key: Option<IdempotencyKey>,
     pub state: MemoryState,
     pub now: String,
@@ -132,6 +142,13 @@ impl<R: MemoryRepository> MemoryService<R> {
         validate_namespace(&req.namespace)?;
         validate_tags(&req.tags, self.config.max_tags)?;
 
+        // The words are normalized once, before anything is written: a word
+        // is trimmed, an empty one is not a word, and a word the request
+        // repeats in another case is the same word (the first spelling wins).
+        let requested_keywords = normalize_keywords(&req.keywords);
+        validate_keywords(&requested_keywords, self.config.max_keywords)?;
+        req.keywords = requested_keywords.clone();
+
         // The key comes from the title: the same title always gives the same
         // key, so the same fact lands on the same record, in any language,
         // without anyone having to remember the key.
@@ -192,7 +209,7 @@ impl<R: MemoryRepository> MemoryService<R> {
             if occupier.state != MemoryState::Active || occupier.deleted {
                 return self.refuse_dead_occupier(&occupier, &req);
             }
-            let updated = self.update_occupied(&occupier, &req)?;
+            let updated = self.update_occupied(&occupier, &req, &requested_keywords)?;
             return Ok(updated);
         }
 
@@ -200,6 +217,7 @@ impl<R: MemoryRepository> MemoryService<R> {
             id: None,
             uuid: req.uuid.clone(),
             title: req.title.clone(),
+            keywords: requested_keywords,
             topic_key: req.topic_key.clone(),
             namespace: req.namespace.clone(),
             memory_type: req.memory_type.clone(),
@@ -958,12 +976,25 @@ impl<R: MemoryRepository> MemoryService<R> {
     /// stays in the history with the reason, and the caller gets the record
     /// that was actually written. Only an alive occupier reaches this path
     /// ([`MemoryService::refuse_dead_occupier`] refuses the rest).
+    ///
+    /// The words **accumulate**: the agent of a new session does not remember
+    /// the words of the old one, so the requested words are added to the ones
+    /// the record already carries (the requested first, the old ones after,
+    /// no case-insensitive duplicates). `replace_keywords` replaces them
+    /// instead, for a word that is wrong.
     fn update_occupied(
         &mut self,
         current: &Memory,
         req: &SaveRequest,
+        requested_keywords: &[String],
     ) -> Result<Memory, MnexisError> {
         let next_revision = current.revision + 1;
+        let keywords = if req.replace_keywords {
+            requested_keywords.to_vec()
+        } else {
+            union_keywords(requested_keywords, &current.keywords)
+        };
+        validate_keywords(&keywords, self.config.max_keywords)?;
         let updated = Memory {
             id: current.id,
             uuid: current.uuid.clone(),
@@ -972,6 +1003,7 @@ impl<R: MemoryRepository> MemoryService<R> {
             } else {
                 req.title.clone()
             },
+            keywords,
             topic_key: current.topic_key.clone(),
             namespace: current.namespace.clone(),
             memory_type: req.memory_type.clone(),
@@ -1141,6 +1173,65 @@ fn validate_tags(tags: &[String], max_tags: usize) -> Result<(), MnexisError> {
     Ok(())
 }
 
+/// One word is a word of a vocabulary, not a document: 48 bytes is more than
+/// any term of any language needs, and it keeps a word from becoming a value
+/// or a sentence.
+const MAX_KEYWORD_BYTES: usize = 48;
+
+/// The words are normalized once and then never guessed at again: a word is
+/// trimmed, an empty one is not a word, and a word that repeats another in a
+/// different case is a duplicate (the first spelling wins).
+fn normalize_keywords(words: &[String]) -> Vec<String> {
+    let mut normalized: Vec<String> = Vec::with_capacity(words.len());
+    for word in words {
+        let word = word.trim();
+        if word.is_empty() {
+            continue;
+        }
+        if normalized.iter().any(|kept| same_word(kept, word)) {
+            continue;
+        }
+        normalized.push(word.to_string());
+    }
+    normalized
+}
+
+/// The words an upsert keeps: the requested ones first, then the record's own
+/// that are not already there. `requested` is already normalized, so the
+/// result is too.
+fn union_keywords(requested: &[String], previous: &[String]) -> Vec<String> {
+    let mut merged = requested.to_vec();
+    for word in normalize_keywords(previous) {
+        if !merged.iter().any(|kept| same_word(kept, &word)) {
+            merged.push(word);
+        }
+    }
+    merged
+}
+
+/// Two words are the same word when their case does not distinguish them.
+fn same_word(a: &str, b: &str) -> bool {
+    a.to_lowercase() == b.to_lowercase()
+}
+
+fn validate_keywords(keywords: &[String], max_keywords: usize) -> Result<(), MnexisError> {
+    if keywords.len() > max_keywords {
+        return Err(MnexisError::invalid_argument(
+            "keywords",
+            format!("exceeds max count: {} > {}", keywords.len(), max_keywords),
+        ));
+    }
+    for word in keywords {
+        if word.len() > MAX_KEYWORD_BYTES {
+            return Err(MnexisError::invalid_argument(
+                "keywords",
+                format!("word exceeds max bytes: {word:?} > {MAX_KEYWORD_BYTES}"),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_query(query: &str, max_bytes: usize) -> Result<(), MnexisError> {
     if query.len() > max_bytes {
         Err(MnexisError::invalid_argument(
@@ -1170,6 +1261,16 @@ fn hash_save_request(req: &SaveRequest) -> String {
     req.valid_until.hash(&mut h);
     for tag in &req.tags {
         tag.hash(&mut h);
+    }
+    // The words are part of the record, so they are part of the request: a
+    // replay with other words is not the same save. An empty list hashes
+    // nothing, so the requests saved before the words existed keep their
+    // hash.
+    for keyword in &req.keywords {
+        keyword.hash(&mut h);
+    }
+    if req.replace_keywords {
+        "replace_keywords".hash(&mut h);
     }
     req.state.as_str().hash(&mut h);
     format!("{:x}", h.finish())

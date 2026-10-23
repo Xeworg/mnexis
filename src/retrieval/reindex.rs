@@ -6,9 +6,9 @@
 //! triggers — and it lives in `storage::sqlite`. The migration, this reindex
 //! and `doctor --repair` all go through
 //! [`crate::storage::sqlite::rebuild_memories_fts`], so a rebuilt index and a
-//! migrated index are the same index by construction: three columns
-//! (`content`, `title`, `topic_key`) and one row per `state = 'active' AND
-//! deleted = 0` memory.
+//! migrated index are the same index by construction: four columns
+//! (`content`, `title`, `topic_key`, `keywords`) and one row per
+//! `state = 'active' AND deleted = 0` memory.
 //!
 //! Unlike the previous drop-and-recreate pass, the rebuild is atomic: it runs
 //! in a savepoint, so a failure leaves the old index in place, and it joins a

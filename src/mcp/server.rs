@@ -177,6 +177,8 @@ impl McpServer {
         let req = crate::application::SaveRequest {
             uuid: uuid.clone(),
             title: args.title.unwrap_or_default(),
+            keywords: Vec::new(),
+            replace_keywords: false,
             topic_key: args.topic_key.unwrap_or_default(),
             namespace,
             memory_type: args.memory_type.unwrap_or_else(|| "fact".to_string()),

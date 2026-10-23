@@ -133,6 +133,8 @@ pub fn save_request(
     Ok(SaveRequest {
         uuid: crate::cli::profile::uuid_v4()?,
         title: title.unwrap_or_default(),
+        keywords: Vec::new(),
+        replace_keywords: false,
         topic_key: topic_key.unwrap_or_default(),
         namespace,
         memory_type: memory_type.unwrap_or_else(|| "fact".to_string()),
@@ -768,6 +770,7 @@ pub fn show(
                     id: None,
                     uuid: entry.memory_uuid.clone(),
                     title: String::new(),
+                    keywords: Vec::new(),
                     topic_key: String::new(),
                     namespace: String::new(),
                     memory_type: entry.memory_type.clone(),

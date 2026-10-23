@@ -35,6 +35,8 @@ fn save(profile: &mut Profile, ns: &str, content: &str) -> String {
             valid_until: None,
             tags: Vec::new(),
             idempotency_key: None,
+            keywords: Vec::new(),
+            replace_keywords: false,
             state: MemoryState::Active,
             now: now_rfc3339(),
         })

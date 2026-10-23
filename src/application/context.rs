@@ -314,6 +314,7 @@ mod tests {
             id: Some(1),
             uuid: uuid.into(),
             title: format!("titulo de {uuid}"),
+            keywords: Vec::new(),
             topic_key: String::new(),
             namespace: "default".into(),
             memory_type: kind.into(),
