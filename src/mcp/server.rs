@@ -15,6 +15,7 @@ use crate::ApplicationService;
 use crate::MnexisError;
 use crate::application::ListFilter;
 use crate::domain::idempotency::IdempotencyKey;
+use crate::domain::memory::MemoryLink;
 use crate::mcp::tools::{
     DeleteArgs, GetArgs, HistoryArgs, ListArgs, McpError, RestoreArgs, SaveArgs, SavePromptArgs,
     SearchArgs, SearchPromptsArgs, SessionEndArgs, SessionStartArgs, SuggestTopicKeyArgs,
@@ -23,6 +24,22 @@ use crate::mcp::tools::{
 use crate::mcp::transport::stdio;
 use crate::storage::memory_repo::SqliteMemoryRepository;
 use crate::storage::sqlite::open_sqlite;
+
+/// The relations between the memories a caller is reading, in the shape
+/// the agent reads them.
+fn relations_payload(links: &[MemoryLink]) -> Vec<serde_json::Value> {
+    links
+        .iter()
+        .map(|link| {
+            serde_json::json!({
+                "older": link.older_uuid,
+                "newer": link.newer_uuid,
+                "type": link.link_type,
+                "reason": link.reason,
+            })
+        })
+        .collect()
+}
 
 /// How many recent memories the `memory_workspace` tool reports.
 const WORKSPACE_RECENT_LIMIT: usize = 3;
@@ -208,6 +225,11 @@ impl McpServer {
             offset: args.offset,
         };
         let memories = svc.list(filter)?;
+        // Which of these replaced which: the agent sees it in the same
+        // answer, so it does not have to open every record to know which
+        // one is current.
+        let uuids: Vec<String> = memories.iter().map(|m| m.uuid.clone()).collect();
+        let relations = svc.relations_between(&uuids)?;
         drop(svc);
         // A list is a list: the identity of every memory and a preview of
         // its content. `full` asks for the whole shape.
@@ -220,6 +242,7 @@ impl McpServer {
         let json = serde_json::json!({
             "count": memories.len(),
             "items": items,
+            "relations": relations_payload(&relations),
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
@@ -459,6 +482,9 @@ impl McpServer {
             None => crate::domain::query::MatchMode::default(),
         };
         let hits = svc.search(&args.query, args.namespace.as_deref(), limit, mode)?;
+        // Which of the hits replaced which.
+        let hit_uuids: Vec<String> = hits.iter().map(|h| h.uuid.clone()).collect();
+        let relations = svc.relations_between(&hit_uuids)?;
         drop(svc);
         let items: Vec<_> = hits
             .iter()
@@ -481,6 +507,7 @@ impl McpServer {
             "namespace": args.namespace,
             "count": hits.len(),
             "items": items,
+            "relations": relations_payload(&relations),
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
