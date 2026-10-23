@@ -208,9 +208,17 @@ impl McpServer {
         };
         let memories = svc.list(filter)?;
         drop(svc);
+        // A list is a list: the identity of every memory and a preview of
+        // its content. `full` asks for the whole shape.
+        let items = if args.full.unwrap_or(false) {
+            serde_json::to_value(&memories).unwrap_or(serde_json::Value::Null)
+        } else {
+            serde_json::to_value(crate::application::previews(&memories))
+                .unwrap_or(serde_json::Value::Null)
+        };
         let json = serde_json::json!({
             "count": memories.len(),
-            "items": memories,
+            "items": items,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }

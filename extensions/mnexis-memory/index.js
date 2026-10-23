@@ -431,9 +431,12 @@ export default function mnexisMemoryExtension(pi) {
 		label: "List memories",
 		promptSnippet: "List the memories recorded, across projects.",
 		description:
-			"List the memories stored, newest first. Use it to review what is " +
-			"already recorded before saving something new. The list reaches every " +
-			"project by default; pass `namespace` to narrow it to one project.",
+			"List the memories stored, newest first: what is there, with a preview " +
+			"of each one. Use it to review what is already recorded before saving " +
+			"something new. The list reaches every project by default; pass `namespace` " +
+			"to narrow it to one project. Each item names the memory and shows a few " +
+			"words of it: read the one that matters with `mnexis_show`, and ask for " +
+			"`full` only when you need the whole text of every memory.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -442,13 +445,17 @@ export default function mnexisMemoryExtension(pi) {
 					description: "Optional namespace to narrow the list to one project.",
 				},
 				limit: { type: "number", description: "Maximum number of memories." },
+				full: {
+					type: "boolean",
+					description: "The complete content of every memory, not a preview.",
+				},
 			},
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const namespace = readNamespace(params.namespace);
 			const result = await client.list(
-				{ namespace, limit: params.limit },
+				{ namespace, limit: params.limit, full: params.full },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {

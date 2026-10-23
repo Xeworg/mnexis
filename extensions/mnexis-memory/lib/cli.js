@@ -126,13 +126,16 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
-		async list({ namespace, limit }, cwd) {
+		async list({ namespace, limit, full }, cwd) {
 			const args = ["list"];
 			if (namespace) {
 				args.push("--namespace", namespace);
 			}
 			if (typeof limit === "number") {
 				args.push("--limit", String(limit));
+			}
+			if (full === true) {
+				args.push("--full");
 			}
 			return run(args, { json: true, cwd });
 		},

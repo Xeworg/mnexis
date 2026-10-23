@@ -88,20 +88,33 @@ fn save_validates_topic_key_format() {
 fn save_topic_key_rejection_names_the_character_and_the_allowed_set() {
     let (mut svc, _dir) = make_service();
     let mut req = save_req("uuid-3b", "ok");
-    req.topic_key = "snake/design".into();
+    req.topic_key = "snake design".into();
     let err = svc.save(req).unwrap_err();
     match err {
         MnexisError::InvalidArgument { field, message } => {
             assert_eq!(field, "topic_key");
             assert_eq!(
                 message,
-                "invalid character: '/' (allowed: lowercase letters, digits, '.' and '-')"
+                "invalid character: ' ' (allowed: lowercase letters, digits, '.', '-' and '/')"
             );
         }
         other => panic!("expected InvalidArgument, got {other:?}"),
     }
     // The rejected save must not leave a record behind.
     assert!(svc.get("uuid-3b").unwrap().is_none());
+}
+
+#[test]
+fn save_accepts_the_separator_an_agent_groups_facts_with() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-3c", "the fact");
+    // The slash is how an agent writes a grouped key, and the other
+    // engine's convention: it used to be refused.
+    req.topic_key = "payments-api/server-config".into();
+    let saved = svc.save(req).expect("a grouped topic key must be accepted");
+    assert_eq!(saved.topic_key, "payments-api/server-config");
+    let found = svc.get("uuid-3c").unwrap().expect("the memory is stored");
+    assert_eq!(found.topic_key, "payments-api/server-config");
 }
 
 #[test]

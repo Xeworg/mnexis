@@ -748,11 +748,14 @@ fn validate_topic_key(topic_key: &str, max_bytes: usize) -> Result<(), MnexisErr
         ));
     }
     for c in topic_key.chars() {
-        if !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '.' && c != '-' {
+        // The slash is what an agent writes when it groups facts
+        // (`payments-api/server-config`), and the dot is the same idea
+        // written the other way. Both are accepted, and nothing else is.
+        if !c.is_ascii_lowercase() && !c.is_ascii_digit() && !matches!(c, '.' | '-' | '/') {
             return Err(MnexisError::invalid_argument(
                 "topic_key",
                 format!(
-                    "invalid character: {c:?} (allowed: lowercase letters, digits, '.' and '-')"
+                    "invalid character: {c:?} (allowed: lowercase letters, digits, '.', '-' and '/')"
                 ),
             ));
         }

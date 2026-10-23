@@ -420,6 +420,7 @@ pub fn list(
     state: Option<String>,
     limit: usize,
     offset: usize,
+    full: bool,
 ) -> Result<CommandOutcome, MnexisError> {
     let filter = ListFilter {
         namespace,
@@ -433,10 +434,19 @@ pub fn list(
         .map(crate::cli::output::memory_line)
         .collect::<Vec<_>>()
         .join("\n");
+    // A list is a list: the identity of every memory and a preview of its
+    // content. The whole record is one `mnexis show` away, and `--full`
+    // asks for it.
+    let items = if full {
+        serde_json::to_value(&memories).unwrap_or(serde_json::Value::Null)
+    } else {
+        serde_json::to_value(crate::application::previews(&memories))
+            .unwrap_or(serde_json::Value::Null)
+    };
     Ok(CommandOutcome::new(
         json!({
             "count": memories.len(),
-            "items": memories,
+            "items": items,
         }),
         if text.is_empty() {
             "no memories".to_string()

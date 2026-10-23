@@ -233,7 +233,45 @@ fn list_shows_saved_memory_and_count() {
     assert_eq!(json["count"], 1);
     let items = json["items"].as_array().expect("items array");
     assert_eq!(items.len(), 1);
+    // A list is a list: the identity of the memory and a preview of it.
+    assert_eq!(items[0]["preview"], "listable content");
+    assert!(items[0]["uuid"].is_string(), "the item names the memory");
+    assert_eq!(items[0]["namespace"], "proyecto-a");
+    assert!(
+        items[0].get("content").is_none(),
+        "the whole content is not in the list: {items:?}"
+    );
+}
+
+#[test]
+fn list_full_asks_for_the_whole_content() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    save(&p, "listable content", &["--namespace", "proyecto-a"]);
+    let out = p
+        .run_silent(&["list", "--namespace", "proyecto-a", "--full"])
+        .unwrap_status("list --full");
+    let json = stdout_json(&out);
+    let items = json["items"].as_array().expect("items array");
     assert_eq!(items[0]["content"], "listable content");
+}
+
+#[test]
+fn a_long_memory_is_previewed_and_the_cut_is_marked() {
+    let p = Profile::new();
+    let long = "una frase bastante larga que se repite. ".repeat(40);
+    save(&p, &long, &[]);
+    let out = p.run_silent(&["list"]).unwrap_status("list");
+    let json = stdout_json(&out);
+    let items = json["items"].as_array().expect("items array");
+    let preview = items[0]["preview"].as_str().expect("preview");
+    assert!(
+        preview.ends_with('\u{2026}'),
+        "the cut is marked: {preview}"
+    );
+    assert!(
+        preview.chars().count() < long.chars().count(),
+        "the preview is shorter than the content"
+    );
 }
 
 #[test]
@@ -677,12 +715,12 @@ fn an_open_profile_searches_across_projects() {
 #[test]
 fn invalid_topic_key_exits_2_naming_the_character_and_the_allowed_set() {
     let p = Profile::new();
-    let out = p.run_silent(&["save", "--topic-key", "snake/design", "content"]);
+    let out = p.run_silent(&["save", "--topic-key", "snake design", "content"]);
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("INVALID_ARGUMENT"), "stderr: {stderr}");
     assert!(
-        stderr.contains("'/'"),
+        stderr.contains("' '"),
         "stderr must name the offending character: {stderr}"
     );
     assert!(
@@ -775,7 +813,7 @@ fn save_help_documents_the_topic_key_charset() {
     // clap wraps the help, so compare against whitespace-normalised text.
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        normalized.contains("lowercase letters, digits, '.' and '-'"),
+        normalized.contains("lowercase letters, digits, '.', '-' and '/'"),
         "save --help must document the topic_key charset: {text}"
     );
 }
