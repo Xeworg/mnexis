@@ -213,8 +213,8 @@ fn migration_006_indexes_the_title_and_the_topic_key() {
 
     assert_eq!(
         schema_version(&conn),
-        6,
-        "the ledger must reach migration 006"
+        7,
+        "the ledger must reach the end of the migrations"
     );
 
     insert_titled(
@@ -266,7 +266,7 @@ fn migration_006_rebuilds_an_index_built_without_the_title() {
 
     run_migrations(&conn).expect("the migration must heal the index");
 
-    assert_eq!(schema_version(&conn), 6);
+    assert_eq!(schema_version(&conn), 7);
     assert_eq!(
         indexed(&conn, "puerto"),
         2,
@@ -297,10 +297,10 @@ fn migration_006_is_idempotent_and_probes_before_it_applies() {
     // A half-applied migration: the schema is already the new one, the ledger
     // lost its row. The probe decides, so the re-run must be a no-op and must
     // never fail on the index it already rebuilt.
-    conn.execute("DELETE FROM schema_migrations WHERE version = 6", [])
+    conn.execute("DELETE FROM schema_migrations WHERE version >= 6", [])
         .unwrap();
     run_migrations(&conn).expect("the re-run must not fail on the index it already built");
-    assert_eq!(schema_version(&conn), 6);
+    assert_eq!(schema_version(&conn), 7);
     assert_eq!(
         indexed(&conn, "puerto"),
         1,
@@ -309,7 +309,7 @@ fn migration_006_is_idempotent_and_probes_before_it_applies() {
 
     // And a plain second run is still safe.
     run_migrations(&conn).expect("a second run must be a no-op");
-    assert_eq!(schema_version(&conn), 6);
+    assert_eq!(schema_version(&conn), 7);
     assert_eq!(indexed(&conn, "puerto"), 1);
 }
 
@@ -473,4 +473,252 @@ fn doctor_repair_heals_a_title_less_index_and_keeps_it_healed() {
         1,
         "the trigger the repair wrote re-indexes a title change"
     );
+}
+
+// ── migration 007: the index knows the words (agent-keywords S3) ────────────
+
+fn insert_with_words(conn: &Connection, uuid: &str, title: &str, content: &str, words: &str) {
+    conn.execute(
+        "INSERT INTO memories (
+            uuid, title, topic_key, namespace, memory_type, content, state,
+            actor, channel, assertion_basis, keywords
+         ) VALUES (?1, ?2, '', 'ns', 'fact', ?3, 'active', 'user', 'cli', 'user_stated', ?4)",
+        rusqlite::params![uuid, title, content, words],
+    )
+    .expect("insert_with_words must succeed for the test fixture to be valid");
+}
+
+/// Put the profile back in the pre-007 state the migration has to heal: the
+/// ledger says 6 and the index is the three-column one of migration 006.
+fn regress_to_titled_index(conn: &Connection) {
+    conn.execute("DROP TABLE memories_fts", [])
+        .expect("the pre-007 index is dropped");
+    conn.execute(
+        "CREATE VIRTUAL TABLE memories_fts USING fts5(content, title, topic_key)",
+        [],
+    )
+    .expect("the pre-007 index is recreated");
+    conn.execute(
+        "INSERT INTO memories_fts(rowid, content, title, topic_key) \
+         SELECT id, content, title, topic_key FROM memories \
+         WHERE state = 'active' AND deleted = 0",
+        [],
+    )
+    .expect("the pre-007 index is populated without the words");
+    conn.execute("DELETE FROM schema_migrations WHERE version >= 7", [])
+        .expect("the ledger goes back to 6");
+}
+
+#[test]
+fn migration_007_gives_the_memories_the_keywords_column() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("mig007_column.db");
+    let conn = open_sqlite(&path).unwrap();
+
+    let (col_type, dflt, notnull): (String, String, i64) = conn
+        .query_row(
+            "SELECT type, dflt_value, [notnull] FROM pragma_table_info('memories') \
+             WHERE name = 'keywords'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("memories.keywords exists after migration 007");
+    assert_eq!(col_type.to_uppercase(), "TEXT");
+    assert_eq!(dflt, "''", "an existing memory reads back no words");
+    assert_eq!(notnull, 1, "the column is NOT NULL with an empty default");
+}
+
+#[test]
+fn migration_007_indexes_the_words_of_a_fact() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("mig007.db");
+    let conn = open_sqlite(&path).unwrap();
+
+    // The index carries the four parts of a memory, in the documented order.
+    let columns: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT name FROM pragma_table_info('memories_fts')")
+            .unwrap();
+        let rows = stmt.query_map([], |row| row.get(0)).unwrap();
+        rows.collect::<Result<_, _>>().unwrap()
+    };
+    assert_eq!(
+        columns,
+        vec![
+            "content".to_string(),
+            "title".to_string(),
+            "topic_key".to_string(),
+            "keywords".to_string()
+        ],
+        "the index is fts5(content, title, topic_key, keywords)"
+    );
+
+    // A record titled in one vocabulary and saved with the words of another:
+    // the words find it, because the content says `port`.
+    insert_with_words(
+        &conn,
+        "uuid-puerto",
+        "listen port",
+        "port = 8081",
+        "puerto, puerto de escucha",
+    );
+    assert_eq!(
+        indexed(&conn, "puerto"),
+        1,
+        "the insert trigger indexes the words"
+    );
+    assert_eq!(
+        indexed(&conn, "escucha"),
+        1,
+        "every word of the list is searchable, not only the first"
+    );
+    assert_eq!(
+        indexed(&conn, "port"),
+        1,
+        "the content is still indexed next to the words"
+    );
+    assert_eq!(
+        search_ids(&conn, "puerto"),
+        vec!["uuid-puerto".to_string()],
+        "the search layer finds the memory by its word"
+    );
+}
+
+#[test]
+fn migration_007_rebuilds_an_index_built_without_the_words() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("mig007_old.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_with_words(
+        &conn,
+        "uuid-puerto",
+        "listen port",
+        "port = 8081",
+        "puerto, puerto de escucha",
+    );
+
+    regress_to_titled_index(&conn);
+    assert_eq!(
+        indexed(&conn, "puerto"),
+        0,
+        "the pre-007 index knows the content, the title and the key — not the words"
+    );
+
+    run_migrations(&conn).expect("the migration must heal the index");
+
+    assert_eq!(schema_version(&conn), 7);
+    assert_eq!(
+        indexed(&conn, "puerto"),
+        1,
+        "the migration rebuilds every active row with its words"
+    );
+    assert_eq!(search_ids(&conn, "puerto"), vec!["uuid-puerto".to_string()]);
+}
+
+#[test]
+fn migration_007_is_idempotent_and_probes_before_it_applies() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("mig007_again.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_with_words(&conn, "uuid-puerto", "", "port = 8081", "puerto");
+
+    // A half-applied migration: the schema is already the new one, the ledger
+    // lost its row. The probe decides, so the re-run is a no-op that neither
+    // fails on the index it already rebuilt nor loses the words.
+    conn.execute("DELETE FROM schema_migrations WHERE version = 7", [])
+        .unwrap();
+    run_migrations(&conn).expect("the re-run must not fail on the index it already built");
+    assert_eq!(schema_version(&conn), 7);
+    assert_eq!(
+        indexed(&conn, "puerto"),
+        1,
+        "the rebuilt index survived the re-run"
+    );
+
+    // And a plain second run is still safe.
+    run_migrations(&conn).expect("a second run must be a no-op");
+    assert_eq!(schema_version(&conn), 7);
+    assert_eq!(indexed(&conn, "puerto"), 1);
+}
+
+#[test]
+fn migration_007_recreates_the_triggers_with_the_words() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("mig007_triggers.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_with_words(&conn, "uuid-t", "", "port = 8081", "puerto");
+
+    // The update trigger follows a word that changes.
+    conn.execute(
+        "UPDATE memories SET keywords = 'costa' WHERE uuid = 'uuid-t'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(indexed(&conn, "puerto"), 0, "the old word left the index");
+    assert_eq!(indexed(&conn, "costa"), 1, "the new word is indexed");
+
+    // A memory that dies leaves the index with its words; one that comes back
+    // is re-indexed with them.
+    conn.execute(
+        "UPDATE memories SET state = 'superseded' WHERE uuid = 'uuid-t'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(indexed(&conn, "costa"), 0, "out-of-active drops the row");
+    conn.execute(
+        "UPDATE memories SET state = 'active' WHERE uuid = 'uuid-t'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        indexed(&conn, "costa"),
+        1,
+        "into-active re-indexes the words"
+    );
+
+    conn.execute("DELETE FROM memories WHERE uuid = 'uuid-t'", [])
+        .unwrap();
+    assert_eq!(indexed(&conn, "costa"), 0, "the delete trigger still fires");
+}
+
+#[test]
+fn the_doctor_reports_an_index_built_without_the_words() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_words.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_with_words(&conn, "uuid-puerto", "listen port", "port = 8081", "puerto");
+
+    regress_to_titled_index(&conn);
+
+    // Same row count as canonical data: the count check cannot see the
+    // difference, the shape check has to.
+    let report = run_checks(&conn);
+    assert!(
+        check(&report, "fts_invariant").ok,
+        "the row counts agree — that is exactly why a count check is not enough"
+    );
+    let shape = check(&report, "fts_shape");
+    assert!(
+        !shape.ok,
+        "the doctor must fail an index built without the words"
+    );
+    assert!(
+        shape.detail.contains("keywords"),
+        "the detail names the column the index is missing: {}",
+        shape.detail
+    );
+    assert_eq!(
+        failure_exit_code(&report),
+        Some((6, "INDEX_UNAVAILABLE")),
+        "a stale index is INDEX_UNAVAILABLE, and the repair is the way out"
+    );
+
+    // A good index passes the same check, and the words are findable again.
+    run_migrations(&conn).unwrap();
+    let healed = run_checks(&conn);
+    assert!(
+        check(&healed, "fts_shape").ok,
+        "the rebuilt index passes the shape check"
+    );
+    assert_eq!(search_ids(&conn, "puerto"), vec!["uuid-puerto".to_string()]);
 }

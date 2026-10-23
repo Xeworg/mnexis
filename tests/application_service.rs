@@ -52,6 +52,8 @@ fn save_req(uuid: &str, content: &str) -> SaveRequest {
         valid_until: None,
         tags: vec!["tag1".into(), "tag2".into()],
         idempotency_key: None,
+        keywords: Vec::new(),
+        replace_keywords: false,
         state: MemoryState::Active,
         now: "2026-01-01T00:00:00Z".into(),
     }
@@ -1083,4 +1085,311 @@ fn an_uppercase_key_is_still_refused() {
         matches!(error, MnexisError::InvalidArgument { .. }),
         "a key is lowercase by contract: {error:?}"
     );
+}
+
+// --- the words of a fact (agent-keywords S1, S2) ---
+
+/// A save request on `topic_key` that carries `words` as its vocabulary.
+fn save_req_with_words(uuid: &str, topic_key: &str, words: &[&str]) -> SaveRequest {
+    let mut req = save_req(uuid, "port = 8081");
+    req.topic_key = topic_key.to_string();
+    req.keywords = words.iter().map(|w| w.to_string()).collect();
+    req
+}
+
+/// The words as they are stored, not only as the save answered them.
+fn words_of(svc: &MemoryService<SqliteMemoryRepository>, uuid: &str) -> Vec<String> {
+    svc.get(uuid)
+        .expect("the read must run")
+        .expect("the memory must exist")
+        .keywords
+}
+
+fn words(items: &[&str]) -> Vec<String> {
+    items.iter().map(|w| w.to_string()).collect()
+}
+
+/// The refused-words error is the same invalid argument the tags use, on the
+/// `keywords` field: the caller can tell which input it has to fix.
+fn assert_keywords_refused(error: MnexisError) {
+    match error {
+        MnexisError::InvalidArgument { field, .. } => {
+            assert_eq!(field, "keywords", "the refusal names the words")
+        }
+        other => panic!("a word list the limits refuse is INVALID_ARGUMENT: {other:?}"),
+    }
+}
+
+#[test]
+fn a_save_with_words_stores_them() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req_with_words(
+        "uuid-1",
+        "topic.fact1",
+        &["puerto", "port"],
+    ))
+    .unwrap();
+    assert_eq!(
+        words_of(&svc, "uuid-1"),
+        words(&["puerto", "port"]),
+        "the words the agent gave are part of the record"
+    );
+    let listed = svc
+        .list(ListFilter {
+            namespace: Some("proyecto-a".into()),
+            ..ListFilter::default()
+        })
+        .unwrap();
+    assert_eq!(
+        listed[0].keywords,
+        words(&["puerto", "port"]),
+        "the words come back with every read of the record"
+    );
+}
+
+#[test]
+fn a_second_save_accumulates_the_words() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req_with_words("uuid-1", "topic.fact1", &["puerto"]))
+        .unwrap();
+    let stored = svc
+        .save(save_req_with_words(
+            "uuid-2",
+            "topic.fact1",
+            &["listen port"],
+        ))
+        .unwrap();
+    assert_eq!(stored.uuid, "uuid-1", "one key is one record");
+    assert_eq!(
+        stored.keywords,
+        words(&["listen port", "puerto"]),
+        "the requested words come first and the old ones stay"
+    );
+    assert_eq!(
+        words_of(&svc, "uuid-1"),
+        words(&["listen port", "puerto"]),
+        "the accumulated words are on disk, not only in the answer"
+    );
+
+    // The amnesia is the common case: a save with no words keeps the ones the
+    // record already carries instead of erasing them.
+    let untouched = svc
+        .save(save_req_with_words("uuid-3", "topic.fact1", &[]))
+        .unwrap();
+    assert_eq!(
+        untouched.keywords,
+        words(&["listen port", "puerto"]),
+        "a save that carries no words keeps the vocabulary"
+    );
+    assert_eq!(words_of(&svc, "uuid-1"), untouched.keywords);
+}
+
+#[test]
+fn a_second_save_with_replace_keywords_replaces_them() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req_with_words(
+        "uuid-1",
+        "topic.fact1",
+        &["puerto", "port"],
+    ))
+    .unwrap();
+    let mut req = save_req_with_words("uuid-2", "topic.fact1", &["costa"]);
+    req.replace_keywords = true;
+    let stored = svc.save(req).unwrap();
+    assert_eq!(
+        stored.keywords,
+        words(&["costa"]),
+        "replace_keywords replaces the words instead of adding them"
+    );
+    assert_eq!(words_of(&svc, "uuid-1"), words(&["costa"]));
+}
+
+#[test]
+fn the_union_does_not_duplicate_a_word_it_already_has() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req_with_words("uuid-1", "topic.fact1", &["puerto"]))
+        .unwrap();
+    let stored = svc
+        .save(save_req_with_words("uuid-2", "topic.fact1", &["Puerto"]))
+        .unwrap();
+    assert_eq!(
+        stored.keywords.len(),
+        1,
+        "the case does not make a second word: {:?}",
+        stored.keywords
+    );
+    assert_eq!(
+        stored.keywords[0], "Puerto",
+        "the requested spelling is the first one, so it wins"
+    );
+}
+
+#[test]
+fn a_word_is_trimmed_and_an_empty_one_is_dropped() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req_with_words(
+        "uuid-1",
+        "topic.fact1",
+        &["  puerto  ", "", "   ", "Puerto", "port"],
+    ))
+    .unwrap();
+    assert_eq!(
+        words_of(&svc, "uuid-1"),
+        words(&["puerto", "port"]),
+        "a word is trimmed, an empty one is dropped and a duplicate is folded"
+    );
+}
+
+#[test]
+fn too_many_words_are_refused_and_nothing_is_written() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-1", "un hecho");
+    req.keywords = (0..=32).map(|i| format!("palabra{i}")).collect();
+    let error = svc.save(req).unwrap_err();
+    assert_keywords_refused(error);
+    assert!(
+        svc.get("uuid-1").unwrap().is_none(),
+        "a save the limit refuses stores nothing"
+    );
+}
+
+#[test]
+fn thirty_two_words_are_accepted_and_thirty_three_are_not() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-1", "un hecho");
+    req.keywords = (0..32).map(|i| format!("palabra{i}")).collect();
+    let stored = svc.save(req).unwrap();
+    assert_eq!(stored.keywords.len(), 32, "32 words are within the limit");
+}
+
+#[test]
+fn a_word_longer_than_48_bytes_is_refused() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-1", "un hecho");
+    req.keywords = vec!["a".repeat(49)];
+    let error = svc.save(req).unwrap_err();
+    assert_keywords_refused(error);
+    assert!(
+        svc.get("uuid-1").unwrap().is_none(),
+        "the refusal is atomic: no record is written"
+    );
+}
+
+#[test]
+fn a_word_of_48_bytes_is_accepted() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-1", "un hecho");
+    let word = "a".repeat(48);
+    req.keywords = vec![word.clone()];
+    let stored = svc.save(req).unwrap();
+    assert_eq!(stored.keywords, vec![word], "48 bytes is the boundary");
+}
+
+#[test]
+fn the_accumulated_words_obey_the_limit_and_leave_the_record_as_it_was() {
+    let (mut svc, _dir) = make_service();
+    let first: Vec<String> = (0..30).map(|i| format!("vieja{i}")).collect();
+    let mut req = save_req("uuid-1", "un hecho");
+    req.keywords = first.clone();
+    svc.save(req).unwrap();
+
+    let second: Vec<String> = (0..5).map(|i| format!("nueva{i}")).collect();
+    let mut req = save_req("uuid-2", "un hecho");
+    req.topic_key = "topic.uuid-1".into();
+    req.keywords = second;
+    let error = svc.save(req).unwrap_err();
+    assert_keywords_refused(error);
+    assert_eq!(
+        words_of(&svc, "uuid-1"),
+        first,
+        "a refused save leaves the record's words untouched"
+    );
+}
+
+#[test]
+fn a_memory_is_found_by_its_words_even_when_the_content_says_something_else() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-1", "port = 8081");
+    req.title = "listen port".into();
+    req.keywords = words(&["puerto"]);
+    svc.save(req).unwrap();
+
+    let hits = svc.search("puerto", None, 10, MatchMode::Any).unwrap();
+    assert_eq!(
+        hits.len(),
+        1,
+        "the vocabulary finds a record whose content says 'port'"
+    );
+    assert_eq!(hits[0].uuid, "uuid-1");
+}
+
+#[test]
+fn the_words_are_re_indexed_when_they_change() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req_with_words("uuid-1", "topic.fact1", &["puerto"]))
+        .unwrap();
+    assert_eq!(
+        svc.search("puerto", None, 10, MatchMode::Any)
+            .unwrap()
+            .len(),
+        1,
+        "the word is in the index as soon as it is saved"
+    );
+
+    let mut req = save_req_with_words("uuid-2", "topic.fact1", &["costa"]);
+    req.replace_keywords = true;
+    svc.save(req).unwrap();
+    assert!(
+        svc.search("puerto", None, 10, MatchMode::Any)
+            .unwrap()
+            .is_empty(),
+        "a replaced word leaves the index"
+    );
+    assert_eq!(
+        svc.search("costa", None, 10, MatchMode::Any).unwrap().len(),
+        1,
+        "the word that replaced it is indexed"
+    );
+}
+
+#[test]
+fn a_save_without_words_stores_no_words() {
+    // The behaviour every profile had before the words existed: a save with an
+    // empty list writes the record and reads back with no vocabulary at all.
+    let (mut svc, _dir) = make_service();
+    let stored = svc.save(save_req("uuid-1", "hello")).unwrap();
+    assert_eq!(stored.keywords, Vec::<String>::new());
+    assert_eq!(words_of(&svc, "uuid-1"), Vec::<String>::new());
+}
+
+#[test]
+fn an_update_keeps_the_words_of_the_record() {
+    // The update path writes the canonical row too, so it has to carry the
+    // words through instead of blanking them.
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req_with_words(
+        "uuid-1",
+        "topic.fact1",
+        &["puerto", "port"],
+    ))
+    .unwrap();
+    let updated = svc
+        .update(UpdateRequest {
+            uuid: "uuid-1".into(),
+            expected_revision: 1,
+            content: Some("port = 9090".into()),
+            state: None,
+            tags: None,
+            assertion_basis: None,
+            reason: "a new value".into(),
+            now: "2026-01-02T00:00:00Z".into(),
+        })
+        .unwrap();
+    assert_eq!(updated.content, "port = 9090");
+    assert_eq!(
+        updated.keywords,
+        words(&["puerto", "port"]),
+        "an update of the content does not touch the vocabulary"
+    );
+    assert_eq!(words_of(&svc, "uuid-1"), words(&["puerto", "port"]));
 }

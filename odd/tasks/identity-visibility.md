@@ -121,3 +121,39 @@ one relation each.
   commits) stays where it is: it is arm B of the experiment. If the
   experiment says the proposal is still needed, it is rebased onto this
   branch; if it says it is not, it is archived with its measurement.
+- **L5** (2026-10-23) — **The measurement** (four scenarios, three runs per
+  arm, paired: the same runs, the same day, the same model; the report in
+  `tmp/bench/visibility-measurement.md`):
+
+  | | A: main | C: this branch |
+  | --- | --- | --- |
+  | the agent linked the two records | 7/12 | **11/12** |
+  | the fact ended in one current record | 9/12 | **11/12** |
+  | the recall answered the current value | 12/12 | 12/12 |
+  | tokens in the recall (mean) | 3 054 | 3 103 |
+
+  In the hard scenario — a busy namespace, a content that does not repeat
+  the title's words, no hint that the fact exists — today's engine left
+  the fact in two records in **three of three** runs; this branch, in two
+  of three.
+
+  The honest limits: n = 3 per arm per scenario, the difference is two
+  runs out of twelve, and the variance is large — the same image and the
+  same prompts measured 11/12 in the earlier measurement and 9/12 in this
+  one. What the direction says across four independent scenarios is more
+  than what one scenario's number says.
+
+- **L6** (2026-10-23) — What this says about the parked proposal: the
+  **visibility is worth more than the proposal**, and it removes the
+  reason the proposal existed. The agent can see what it found (the title
+  travels with every answer) and find it by the title's words (the index
+  covers it). The proposal's shortlist compares titles with a similarity
+  the measurement already showed does not separate; the visibility does
+  not have to separate anything — it shows the truth and lets the agent
+  judge it.
+- **L7** (2026-10-23) — The two defects this branch fixed are of a
+  different kind, and both were found by the measurement of the *previous*
+  feature: the upsert that wrote into a dead record (a fact lost, 0 hits)
+  and the on-demand tools that answered in the wrong namespace (26 refused
+  calls). Neither needed a measurement to justify the fix: both had a
+  correct behaviour that was simply not implemented.

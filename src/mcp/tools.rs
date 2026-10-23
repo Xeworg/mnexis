@@ -15,7 +15,8 @@
 //!   "fact"), assertion_basis (default "user_stated"), topic_key (default "",
 //!   allowed characters: lowercase letters, digits, '.', '-' and '/'),
 //!   idempotency_key, valid_from, valid_until, tags (array, max 32), state
-//!   (default "active")
+//!   (default "active"), keywords (comma-separated, max 32) and
+//!   replace_keywords (default false)
 //! - memory_list: optional namespace, state, limit (default 20, clamp to 100),
 //!   offset (default 0)
 //! - memory_search: query required; optional namespace, limit default 20 clamp 100
@@ -69,6 +70,15 @@ pub struct SaveArgs {
     /// Comma-separated tags, max 32 (default: empty)
     #[serde(default)]
     pub tags: Option<String>,
+    /// Comma-separated words the fact is called by in another language or
+    /// another team's jargon, max 32 (default: empty). They are the topic's
+    /// vocabulary, never a value, and they accumulate across saves.
+    #[serde(default)]
+    pub keywords: Option<String>,
+    /// Replace the words the record already carries instead of adding to
+    /// them (default: false). Use it when a word is wrong.
+    #[serde(default)]
+    pub replace_keywords: bool,
     /// Initial state: "active" (default) or "proposed"
     #[serde(default)]
     pub state: Option<String>,
@@ -259,6 +269,18 @@ pub const TOOL_MEMORY_SUGGEST_TOPIC_KEY: &str = "memory_suggest_topic_key";
 
 /// Parse comma-separated tags, returning at most 32.
 pub(crate) fn parse_tags(raw: Option<String>) -> Vec<String> {
+    split_commas(raw)
+}
+
+/// Parse the comma-separated words of a fact. The service trims them,
+/// deduplicates them and enforces the limits, so nothing is normalized here.
+pub(crate) fn parse_keywords(raw: Option<String>) -> Vec<String> {
+    split_commas(raw)
+}
+
+/// A comma-separated list, trimmed, without the empty entries: the shape tags
+/// and the words of a fact share.
+fn split_commas(raw: Option<String>) -> Vec<String> {
     match raw {
         None => Vec::new(),
         Some(s) => s
@@ -424,6 +446,16 @@ mod tests {
         assert_eq!(parse_tags(Some("  x ,  y ".into())), vec!["x", "y"]);
         assert_eq!(parse_tags(None), Vec::<String>::new());
         assert_eq!(parse_tags(Some("".into())), Vec::<String>::new());
+    }
+
+    #[test]
+    fn parse_keywords_splits_comma_separated_like_tags() {
+        assert_eq!(
+            parse_keywords(Some("puerto, port , listen port".into())),
+            vec!["puerto", "port", "listen port"]
+        );
+        assert_eq!(parse_keywords(None), Vec::<String>::new());
+        assert_eq!(parse_keywords(Some("".into())), Vec::<String>::new());
     }
 
     #[test]

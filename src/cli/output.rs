@@ -230,6 +230,7 @@ mod tests {
             id: Some(1),
             uuid: "u".into(),
             title: String::new(),
+            keywords: Vec::new(),
             topic_key: String::new(),
             namespace: "ns".into(),
             memory_type: "fact".into(),

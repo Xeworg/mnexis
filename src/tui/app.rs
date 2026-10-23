@@ -1073,6 +1073,7 @@ mod tests {
             id: Some(1),
             uuid: "u-1".to_string(),
             title: String::new(),
+            keywords: Vec::new(),
             topic_key: String::new(),
             namespace: "ns-a".to_string(),
             memory_type: "fact".to_string(),

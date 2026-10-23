@@ -243,3 +243,38 @@ fn reindex_joins_the_callers_transaction() {
         "committing the caller's transaction keeps the rebuild"
     );
 }
+
+/// The words are part of the index the rebuild writes: the reindex is the way
+/// back for a profile whose words were never indexed (agent-keywords S3).
+#[test]
+fn reindex_restores_the_words_of_a_fact() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    conn.execute(
+        "INSERT INTO memories (
+            uuid, title, topic_key, namespace, memory_type, content, state,
+            actor, channel, assertion_basis, keywords
+         ) VALUES ('uuid-w', 'listen port', '', 'ns', 'fact', 'port = 8081', 'active', \
+         'user', 'cli', 'user_stated', 'puerto, puerto de escucha')",
+        [],
+    )
+    .expect("the fixture row must insert");
+
+    // An index that lost its rows: the words are gone with them.
+    conn.execute("DELETE FROM memories_fts", [])
+        .expect("manual FTS corruption must succeed");
+    assert!(search_ids(&conn, "puerto").is_empty());
+
+    let n = reindex_all(&conn).expect("the reindex must run");
+    assert_eq!(n, 1, "the rebuild reports the row it indexed");
+    assert_eq!(
+        search_ids(&conn, "puerto"),
+        vec!["uuid-w".to_string()],
+        "the rebuild indexes the words of the fact"
+    );
+    assert_eq!(
+        search_ids(&conn, "escucha"),
+        vec!["uuid-w".to_string()],
+        "every word of the list is re-indexed"
+    );
+}

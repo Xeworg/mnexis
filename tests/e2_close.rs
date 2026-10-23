@@ -54,6 +54,8 @@ fn save_req<'a>(uuid: &'a str, content: &'a str) -> mnexis_core::application::Sa
         valid_until: None,
         tags: Vec::new(),
         idempotency_key: None,
+        keywords: Vec::new(),
+        replace_keywords: false,
         state: MemoryState::Active,
         now: "2026-01-01T00:00:00Z".into(),
     }

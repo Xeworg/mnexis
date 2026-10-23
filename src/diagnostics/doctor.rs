@@ -22,7 +22,7 @@ use crate::storage::sqlite::{MEMORIES_FTS_COLUMNS, missing_fts_columns, rebuild_
 /// The binary's current schema version — the highest migration number in
 /// `storage::sqlite::run_migrations`. Read from that module directly so it
 /// stays in sync.
-const EXPECTED_SCHEMA_VERSION: i64 = 6;
+const EXPECTED_SCHEMA_VERSION: i64 = 7;
 
 /// The canonical tables that must be present.
 const CANONICAL_TABLES: &[&str] = &[
@@ -278,7 +278,8 @@ fn check_fts_invariant(conn: &Connection) -> Check {
 /// content-only index built by schema 005 has exactly one row per active
 /// memory and passes it. The **shape** is what distinguishes them — an index
 /// built without the title cannot answer `SELECT title FROM memories_fts`,
-/// and therefore cannot find a memory by its title either.
+/// and one built without the words cannot answer `SELECT keywords FROM
+/// memories_fts`, so neither can find a memory by them either.
 fn check_fts_shape(conn: &Connection) -> Check {
     let name = "fts_shape";
 
@@ -307,10 +308,10 @@ fn check_fts_shape(conn: &Connection) -> Check {
             name: name.into(),
             ok: false,
             detail: format!(
-                "memories_fts was built without {} — the index predates the title \
-                 (schema 006), so a search cannot find a memory by its title or its \
-                 topic key; rebuild it with `mnexis reindex` or `mnexis doctor --repair` \
-                 (INDEX_UNAVAILABLE)",
+                "memories_fts was built without {} — the index predates the current \
+                 schema (007), so a search cannot find a memory by every part of it \
+                 (its content, its title, its topic key or its keywords); rebuild it \
+                 with `mnexis reindex` or `mnexis doctor --repair` (INDEX_UNAVAILABLE)",
                 missing.join(", ")
             ),
         },
@@ -434,7 +435,7 @@ pub fn check_line(check: &Check) -> String {
 
 /// Execute `doctor --repair`: rebuild `memories_fts` and its triggers from
 /// the canonical schema (`storage::sqlite::MEMORIES_FTS_SCHEMA`) and reindex
-/// all active+non-deleted rows, content, title and topic key alike.
+/// all active+non-deleted rows, content, title, topic key and keywords alike.
 ///
 /// The rebuild is one atomic unit of work (a savepoint), so a repair that
 /// fails leaves the profile as it was. On success, re-runs all checks and

@@ -334,6 +334,7 @@ impl ProfileSettings {
             max_content_bytes: self.max_content_bytes.unwrap_or(defaults.max_content_bytes),
             max_query_bytes: self.max_query_bytes.unwrap_or(defaults.max_query_bytes),
             max_tags: self.max_tags.unwrap_or(defaults.max_tags),
+            max_keywords: defaults.max_keywords,
             max_topic_key_bytes: self
                 .max_topic_key_bytes
                 .unwrap_or(defaults.max_topic_key_bytes),

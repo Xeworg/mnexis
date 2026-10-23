@@ -143,7 +143,7 @@ Two things a repository cannot hold, and the engine keeps both:
    `--match all` narrows it to memories that hold every word.
 2. **Save what matters.** After a milestone — a decision, a discovery, a
    user preference — store it immediately, in this project's namespace:
-   `mnexis save --namespace <name> --title "<what the fact IS>" "<one self-contained sentence>" --tags a,b`.
+   `mnexis save --namespace <name> --title "<what the fact IS>" --keywords "<the words it is called by>" "<one self-contained sentence>" --tags a,b`.
    The content must make sense months later with no surrounding chat.
    `--idempotency-key` makes retries safe.
 3. **One fact, one record — the title is what does it.** The **title** is
@@ -159,16 +159,26 @@ Two things a repository cannot hold, and the engine keeps both:
    and whether the project already records it.
    `--topic-key` still exists for the cases where you want to place the
    memory yourself; it accepts lowercase letters, digits, `.`, `-` and `/`.
-4. **A replaced fact says so.** When a search or a list answer carries
+4. **The words of the fact are its other names.** `--keywords "puerto,
+   port, listen port"` holds the words the same fact goes by in another
+   language or another team's jargon: that is how it is found when it is
+   asked for that way, and the index covers them. The words are the topic's
+   **vocabulary, never a value** — `puerto`, not `8081`, for the same reason
+   the title has: a word that carries a value makes the memory match a value
+   that is no longer true. A save **adds** its words to the ones the record
+   already has, so a session that does not remember them cannot erase them;
+   when a word is wrong, replace the whole list with `--replace-keywords`.
+   The answer to a save shows the accumulated words, so read it and prune.
+5. **A replaced fact says so.** When a search or a list answer carries
    `was replaced by`, that memory is the old one and the other is current.
    Answer with the current value, and do not read the replaced one.
-5. **Replace facts by superseding, never by deleting.** Outdated but
+6. **Replace facts by superseding, never by deleting.** Outdated but
    historically true facts keep their record: `mnexis save` the newer fact,
    then `mnexis supersede --older <old-uuid> --newer <new-uuid> --reason "why"`.
    The supersede is atomic, revision-checked on both sides, cycle-free, and
    persists the reason. `mnexis history <uuid>` shows the chain. Both
    memories must live in this project's namespace.
-6. **Correct a record in place** only for typos/formatting:
+7. **Correct a record in place** only for typos/formatting:
    `mnexis update <uuid> --expected-revision <rev> --reason "why" [--content "..."]`.
 
 Soft-delete only on request: `mnexis delete <uuid> [--force]`, reversible
