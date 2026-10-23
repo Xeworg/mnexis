@@ -127,12 +127,12 @@ pub fn save_request(
     tags: Option<String>,
     state: Option<String>,
     content: String,
-    new_topic: bool,
+    title: Option<String>,
 ) -> Result<SaveRequest, MnexisError> {
     let state = parse_state(state.as_deref().unwrap_or("active"))?;
     Ok(SaveRequest {
         uuid: crate::cli::profile::uuid_v4()?,
-        new_topic,
+        title: title.unwrap_or_default(),
         topic_key: topic_key.unwrap_or_default(),
         namespace,
         memory_type: memory_type.unwrap_or_else(|| "fact".to_string()),
@@ -162,13 +162,10 @@ pub fn save(
     tags: Option<String>,
     state: Option<String>,
     content: String,
-    new_topic: bool,
+    title: Option<String>,
 ) -> Result<CommandOutcome, MnexisError> {
     let namespace = namespace.unwrap_or_else(|| profile.default_namespace());
     WorkspaceGuard::resolve(profile)?.authorize(&namespace)?;
-    // The content is kept for the topic check: the engine may already hold
-    // this topic under another key.
-    let saved_content = content.clone();
     let req = save_request(
         "cli",
         namespace.clone(),
@@ -181,62 +178,50 @@ pub fn save(
         tags,
         state,
         content,
-        new_topic,
+        title,
     )?;
     let mem = profile.service_mut().save(req)?;
     let uuid_out = mem.uuid.clone();
     let row_id = mem.id.unwrap_or(0);
-    // A notice, not a refusal: the save happened. The agent can use the key
-    // the namespace already uses (so the record is updated instead of
-    // duplicated) or keep its own.
-    // The notice is advisory: a failure to compute it never fails the
-    // save that already happened.
-    let topic = profile
-        .service_ref()
-        .suggest_topic(&saved_content, Some(&namespace), 1, Some(&uuid_out))
-        .unwrap_or_default();
-    let text = match topic.first() {
-        Some(s) => format!(
-            "saved {uuid_out} (row {row_id})\n\
-             note: this topic is already recorded under the topic key `{}` ({}); \
-             save it again with that key to update that record instead of adding a second one",
-            s.topic_key, s.uuid
-        ),
-        None => format!("saved {uuid_out} (row {row_id})"),
+    let text = if mem.revision > 1 {
+        // The key was already recorded: the fact was updated, not duplicated.
+        format!(
+            "updated {uuid_out} (revision {}, topic key `{}`)",
+            mem.revision, mem.topic_key
+        )
+    } else {
+        format!("saved {uuid_out} (row {row_id})")
     };
     Ok(CommandOutcome::new(
-        json!({ "uuid": uuid_out, "row_id": row_id, "topic_suggestion": topic.first() }),
+        json!({ "uuid": uuid_out, "row_id": row_id, "title": mem.title, "topic_key": mem.topic_key }),
         text,
     ))
 }
 
-/// `mnexis suggest-topic-key "<content>"` — the topic the namespace already
-/// holds for this content.
+/// `mnexis suggest-topic-key "<title>"` — the key a title yields, and the
+/// record that already holds it.
 pub fn suggest_topic_key(
     profile: &mut Profile,
-    content: String,
+    title: String,
     namespace: Option<String>,
-    limit: usize,
 ) -> Result<CommandOutcome, MnexisError> {
     let namespace = namespace.unwrap_or_else(|| profile.default_namespace());
     WorkspaceGuard::resolve(profile)?.authorize(&namespace)?;
-    let suggestions =
-        profile
-            .service_ref()
-            .suggest_topic(&content, Some(&namespace), limit, None)?;
-    let text = if suggestions.is_empty() {
-        "no record holds this topic yet".to_string()
+    let (key, occupier) = profile
+        .service_ref()
+        .topic_for_title(&title, Some(&namespace))?;
+    let text = if key.is_empty() {
+        "this title yields no topic key".to_string()
+    } else if let Some(uuid) = &occupier {
+        format!("the key `{key}` is already recorded by {uuid}")
     } else {
-        suggestions
-            .iter()
-            .map(|s| format!("  [{}] {} ({}) {}", s.state, s.topic_key, s.uuid, s.preview))
-            .collect::<Vec<_>>()
-            .join("\n")
+        format!("the key `{key}` is free")
     };
     Ok(CommandOutcome::new(
         json!({
-            "count": suggestions.len(),
-            "items": suggestions,
+            "title": title,
+            "topic_key": key,
+            "recorded_by": occupier,
         }),
         text,
     ))
@@ -722,6 +707,7 @@ pub fn show(
                 crate::cli::output::memory_block(&crate::domain::memory::Memory {
                     id: None,
                     uuid: entry.memory_uuid.clone(),
+                    title: String::new(),
                     topic_key: String::new(),
                     namespace: String::new(),
                     memory_type: entry.memory_type.clone(),

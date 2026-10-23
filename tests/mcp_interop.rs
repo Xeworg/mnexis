@@ -1304,8 +1304,8 @@ async fn call_tool_text(
 }
 
 #[tokio::test]
-async fn memory_suggest_topic_key_names_the_key_the_namespace_uses()
--> Result<(), Box<dyn std::error::Error>> {
+async fn memory_suggest_topic_key_answers_from_the_title() -> Result<(), Box<dyn std::error::Error>>
+{
     let tmp = tempfile::tempdir_in("target")?;
     let data_dir = tmp.path();
     bootstrap_profile(data_dir)?;
@@ -1317,43 +1317,51 @@ async fn memory_suggest_topic_key_names_the_key_the_namespace_uses()
         }))?;
     let client = ().serve(transport).await?;
 
-    let old = "El servicio payments-api escucha en el puerto TCP 8081, definido como port en la \
-               seccion server de config.toml con 4 workers";
-    call_tool_text(
-        &client,
-        "memory_save",
-        serde_json::json!({ "content": old, "topic_key": "payments-api/port" }),
-    )
-    .await?;
-
-    // The same topic with a new value: the engine names the key it already
-    // uses, so the agent can update that record instead of adding a second.
-    let new = "El servicio payments-api escucha en el puerto TCP 9090, definido como port en la \
-               seccion server de config.toml con 4 workers";
+    // The same title always gives the same key, in any language.
     let text = call_tool_text(
         &client,
         "memory_suggest_topic_key",
-        serde_json::json!({ "content": new }),
+        serde_json::json!({ "title": "Puerto del Servicio" }),
     )
     .await?;
     let json: serde_json::Value = serde_json::from_str(&text)?;
-    assert_eq!(json["count"], 1, "one record holds the topic: {json}");
+    assert_eq!(json["topic_key"], "puerto-del-servicio", "{json}");
     assert_eq!(
-        json["items"][0]["topic_key"], "payments-api/port",
-        "the engine names the key the namespace uses: {json}"
+        json["recorded_by"],
+        serde_json::Value::Null,
+        "the key is free: {json}"
     );
 
-    // A content about something else is not the same topic.
-    let other = call_tool_text(
+    // A title in another language yields a usable key too.
+    let text = call_tool_text(
         &client,
         "memory_suggest_topic_key",
-        serde_json::json!({ "content": "El servidor de metricas escucha en el puerto TCP 7100 con 8 workers" }),
+        serde_json::json!({ "title": "サービスのポート" }),
     )
     .await?;
-    let other_json: serde_json::Value = serde_json::from_str(&other)?;
-    assert_eq!(
-        other_json["count"], 0,
-        "a different service is a different topic: {other_json}"
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(json["topic_key"], "サービスのポート", "{json}");
+
+    // Once the fact is recorded, the key says who holds it.
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": "El servicio escucha en el puerto 8081",
+            "title": "puerto del servicio",
+        }),
+    )
+    .await?;
+    let text = call_tool_text(
+        &client,
+        "memory_suggest_topic_key",
+        serde_json::json!({ "title": "puerto del servicio" }),
+    )
+    .await?;
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+    assert!(
+        json["recorded_by"].is_string(),
+        "the key names the record that holds it: {json}"
     );
 
     client.cancel().await?;

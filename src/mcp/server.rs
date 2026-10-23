@@ -161,7 +161,7 @@ impl McpServer {
         self.authorize_write(&namespace)?;
         let req = crate::application::SaveRequest {
             uuid: uuid.clone(),
-            new_topic: args.new_topic.unwrap_or(false),
+            title: args.title.unwrap_or_default(),
             topic_key: args.topic_key.unwrap_or_default(),
             namespace,
             memory_type: args.memory_type.unwrap_or_else(|| "fact".to_string()),
@@ -291,19 +291,18 @@ impl McpServer {
         Ok(serde_json::to_string_pretty(&prompt).unwrap_or_default())
     }
 
-    /// The topic key this content is already recorded under.
+    /// The topic key a title yields, and the record that already holds it.
     fn do_suggest_topic_key(&self, args: SuggestTopicKeyArgs) -> Result<String, McpError> {
-        let limit = args.limit.clamp(1, 20);
         let svc = self
             .service
             .lock()
             .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
-        let suggestions =
-            svc.suggest_topic(&args.content, args.namespace.as_deref(), limit, None)?;
+        let (key, occupier) = svc.topic_for_title(&args.title, args.namespace.as_deref())?;
         drop(svc);
         let json = serde_json::json!({
-            "count": suggestions.len(),
-            "items": suggestions,
+            "title": args.title,
+            "topic_key": key,
+            "recorded_by": occupier,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
@@ -595,7 +594,7 @@ impl McpServer {
 
     #[tool(
         name = "memory_suggest_topic_key",
-        description = "Call this BEFORE you save a fact you are not sure about: it answers which topic key this content is already recorded under in this project, so you can update that record instead of writing a second one about the same thing."
+        description = "Call this BEFORE you save a fact: it answers which topic key the title you are about to use yields, and whether the namespace already records it. The same title always gives the same key, so the same fact lands on the same record."
     )]
     fn memory_suggest_topic_key(
         &self,

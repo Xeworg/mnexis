@@ -33,26 +33,28 @@ impl SqliteMemoryRepository {
     fn row_to_memory(row: &Row) -> Result<Memory, MnexisError> {
         let id: Option<i64> = row.get(0).map_err(sql_to_domain)?;
         let uuid: String = row.get(1).map_err(sql_to_domain)?;
-        let topic_key: String = row.get(2).map_err(sql_to_domain)?;
-        let namespace: String = row.get(3).map_err(sql_to_domain)?;
-        let memory_type: String = row.get(4).map_err(sql_to_domain)?;
-        let state_str: String = row.get(5).map_err(sql_to_domain)?;
-        let content: String = row.get(6).map_err(sql_to_domain)?;
+        let title: String = row.get(2).map_err(sql_to_domain)?;
+        let topic_key: String = row.get(3).map_err(sql_to_domain)?;
+        let namespace: String = row.get(4).map_err(sql_to_domain)?;
+        let memory_type: String = row.get(5).map_err(sql_to_domain)?;
+        let state_str: String = row.get(6).map_err(sql_to_domain)?;
+        let content: String = row.get(7).map_err(sql_to_domain)?;
         let state = MemoryState::from_db(&state_str)?;
-        let revision: i32 = row.get(7).map_err(sql_to_domain)?;
-        let deleted: i32 = row.get(8).map_err(sql_to_domain)?;
-        let created_at: String = row.get(9).map_err(sql_to_domain)?;
-        let updated_at: String = row.get(10).map_err(sql_to_domain)?;
-        let deleted_at: Option<String> = row.get(11).map_err(sql_to_domain)?;
-        let purge_after: Option<String> = row.get(12).map_err(sql_to_domain)?;
-        let valid_from: Option<String> = row.get(13).map_err(sql_to_domain)?;
-        let valid_until: Option<String> = row.get(14).map_err(sql_to_domain)?;
-        let actor: String = row.get(15).map_err(sql_to_domain)?;
-        let channel: String = row.get(16).map_err(sql_to_domain)?;
-        let assertion_basis: String = row.get(17).map_err(sql_to_domain)?;
+        let revision: i32 = row.get(8).map_err(sql_to_domain)?;
+        let deleted: i32 = row.get(9).map_err(sql_to_domain)?;
+        let created_at: String = row.get(10).map_err(sql_to_domain)?;
+        let updated_at: String = row.get(11).map_err(sql_to_domain)?;
+        let deleted_at: Option<String> = row.get(12).map_err(sql_to_domain)?;
+        let purge_after: Option<String> = row.get(13).map_err(sql_to_domain)?;
+        let valid_from: Option<String> = row.get(14).map_err(sql_to_domain)?;
+        let valid_until: Option<String> = row.get(15).map_err(sql_to_domain)?;
+        let actor: String = row.get(16).map_err(sql_to_domain)?;
+        let channel: String = row.get(17).map_err(sql_to_domain)?;
+        let assertion_basis: String = row.get(18).map_err(sql_to_domain)?;
         Ok(Memory {
             id,
             uuid,
+            title,
             topic_key,
             namespace,
             memory_type,
@@ -177,7 +179,7 @@ fn to_sql_err(e: MnexisError) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(boxed)
 }
 
-const SELECT_COLUMNS: &str = "id, uuid, topic_key, namespace, memory_type, state, content, \
+const SELECT_COLUMNS: &str = "id, uuid, title, topic_key, namespace, memory_type, state, content, \
                                 revision, deleted, created_at, updated_at, deleted_at, purge_after, \
                                 valid_from, valid_until, actor, channel, assertion_basis";
 
@@ -186,18 +188,19 @@ impl MemoryRepository for SqliteMemoryRepository {
         let state_str = mem.state.as_str();
         let result = self.conn.execute(
             "INSERT INTO memories (
-                uuid, topic_key, revision, namespace, memory_type, state, content,
+                uuid, title, topic_key, revision, namespace, memory_type, state, content,
                 actor, channel, assertion_basis,
                 valid_from, valid_until, deleted, deleted_at, purge_after,
                 created_at, updated_at
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7,
-                ?8, ?9, ?10,
-                ?11, ?12, ?13, ?14, ?15,
-                ?16, ?17
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                ?9, ?10, ?11,
+                ?12, ?13, ?14, ?15, ?16,
+                ?17, ?18
             )",
             params![
                 mem.uuid,
+                mem.title,
                 mem.topic_key,
                 mem.revision,
                 mem.namespace,

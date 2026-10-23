@@ -13,7 +13,6 @@ use crate::domain::query::MatchMode;
 use crate::domain::repository::MemoryRepository;
 use crate::domain::scope::{AccessScope, NamespaceScope, Operation};
 use crate::domain::session::{Session, UserPrompt};
-use crate::domain::topic::TopicSuggestion;
 use crate::retrieval::SearchHit;
 
 pub struct ServiceConfig {
@@ -40,10 +39,10 @@ impl Default for ServiceConfig {
 
 pub struct SaveRequest {
     pub uuid: String,
+    /// The short, stable label of the fact. The topic key derives from it
+    /// when the caller does not give one.
+    pub title: String,
     pub topic_key: String,
-    /// Set when the caller has seen the topic the engine already holds and
-    /// decided this is a new one anyway. It turns the refusal into a save.
-    pub new_topic: bool,
     pub namespace: String,
     pub memory_type: String,
     pub content: String,
@@ -124,7 +123,7 @@ impl<R: MemoryRepository> MemoryService<R> {
     /// timestamps. The idempotency replay path returns the *original*
     /// record (not the fresh uuid the client minted), which is the
     /// whole point of an idempotency key.
-    pub fn save(&mut self, req: SaveRequest) -> Result<Memory, MnexisError> {
+    pub fn save(&mut self, mut req: SaveRequest) -> Result<Memory, MnexisError> {
         self.scope.authorize_write(&req.namespace)?;
         self.scope.authorize_operation(Operation::Save)?;
 
@@ -132,6 +131,13 @@ impl<R: MemoryRepository> MemoryService<R> {
         validate_topic_key(&req.topic_key, self.config.max_topic_key_bytes)?;
         validate_namespace(&req.namespace)?;
         validate_tags(&req.tags, self.config.max_tags)?;
+
+        // The key comes from the title: the same title always gives the same
+        // key, so the same fact lands on the same record, in any language,
+        // without anyone having to remember the key.
+        if req.topic_key.is_empty() && !req.title.trim().is_empty() {
+            req.topic_key = crate::domain::title::key_from_title(&req.title);
+        }
 
         // Compute the idempotency hash BEFORE any moves of req fields, so
         // the subsequent borrow-and-move pattern doesn't trigger E0382.
@@ -163,46 +169,24 @@ impl<R: MemoryRepository> MemoryService<R> {
             }
         }
 
-        // The engine already holds this topic: refuse, and name the key.
-        //
-        // This runs AFTER the idempotency replay: saving the same request
-        // twice is a retry, not a second fact, and a retry must never be
-        // refused for a topic it just wrote itself.
-        //
-        // A notice was tried first and it was not enough: the measurement
-        // (three runs) showed the agent reading the notice and writing a
-        // second record anyway. A refusal is what changes the outcome — and
-        // it costs nothing when it is wrong, because the caller can say
-        // "this is a new topic" and the save goes through.
-        // Only when the scope may read the namespace: the engine can name a
-        // topic it is allowed to see, and a write the profile permits must
-        // never be blocked by a read it does not.
-        if req.topic_key.is_empty()
-            && !req.new_topic
-            && self.scope.can_read(&req.namespace)
-            && let Some(existing) = self
-                .suggest_topic(&req.content, Some(&req.namespace), 1, Some(&req.uuid))?
-                .first()
+        // One fact, one record: a key the namespace already uses is not a
+        // second fact, it is the same fact with a new value. The save updates
+        // that record — content, title and tags — keeps its history, and
+        // returns it. The key derives from the title, so this is an equality,
+        // not a guess.
+        if !req.topic_key.is_empty()
+            && let Some(occupier) = self
+                .repo
+                .topic_key_occupier(&req.namespace, &req.topic_key)?
         {
-            return Err(MnexisError::invalid_argument(
-                "topic_key",
-                format!(
-                    "this topic is already recorded under the topic key `{}` ({}); \
-                     save with that key to update that record, or pass --new-topic \
-                     to record a second one on purpose",
-                    if existing.topic_key.is_empty() {
-                        "(none)"
-                    } else {
-                        existing.topic_key.as_str()
-                    },
-                    existing.uuid
-                ),
-            ));
+            let updated = self.update_occupied(&occupier, &req)?;
+            return Ok(updated);
         }
 
         let mem = Memory {
             id: None,
             uuid: req.uuid.clone(),
+            title: req.title.clone(),
             topic_key: req.topic_key.clone(),
             namespace: req.namespace.clone(),
             memory_type: req.memory_type.clone(),
@@ -893,22 +877,98 @@ impl<R: MemoryRepository> MemoryService<R> {
         self.repo.links_between(uuids)
     }
 
-    // --- the topic the namespace already holds ---
-
-    /// The records that already hold this content's topic.
-    ///
-    /// The engine cannot ask the agent whether two memories are the same
-    /// fact; it can notice that two contents are about the same thing and
-    /// say so, with the topic key the namespace already uses. The answer
-    /// is a notice: the save already happened, and a wrong guess costs a
-    /// confusing sentence, never a lost fact.
-    pub fn suggest_topic(
+    /// The memory that holds a topic key in a namespace, if any.
+    pub fn topic_occupier(
         &self,
-        content: &str,
+        namespace: &str,
+        topic_key: &str,
+    ) -> Result<Option<String>, MnexisError> {
+        self.repo.topic_key_occupier(namespace, topic_key)
+    }
+
+    /// Update the record that already holds a topic key, and keep its
+    /// history.
+    ///
+    /// A save with a key that exists is the same fact again: the content and
+    /// the title are replaced, the revision goes up, the previous content
+    /// stays in the history with the reason, and the caller gets the record
+    /// that was actually written.
+    fn update_occupied(&mut self, uuid: &str, req: &SaveRequest) -> Result<Memory, MnexisError> {
+        let current = self
+            .repo
+            .get_by_uuid(uuid)?
+            .ok_or_else(|| MnexisError::not_found(format!("memory:{uuid}")))?;
+        let next_revision = current.revision + 1;
+        let updated = Memory {
+            id: current.id,
+            uuid: current.uuid.clone(),
+            title: if req.title.is_empty() {
+                current.title.clone()
+            } else {
+                req.title.clone()
+            },
+            topic_key: current.topic_key.clone(),
+            namespace: current.namespace.clone(),
+            memory_type: req.memory_type.clone(),
+            content: req.content.clone(),
+            // An upsert is not a resurrection: the state the record has is
+            // the state it keeps.
+            state: current.state,
+            revision: next_revision,
+            deleted: current.deleted,
+            created_at: current.created_at.clone(),
+            updated_at: req.now.clone(),
+            deleted_at: current.deleted_at.clone(),
+            purge_after: current.purge_after.clone(),
+            valid_from: req.valid_from.clone(),
+            valid_until: req.valid_until.clone(),
+            actor: req.actor.clone(),
+            channel: req.channel.clone(),
+            assertion_basis: req.assertion_basis.clone(),
+        };
+        let history = MemoryHistory {
+            id: None,
+            memory_uuid: current.uuid.clone(),
+            revision: next_revision,
+            memory_type: updated.memory_type.clone(),
+            content: updated.content.clone(),
+            state: updated.state,
+            valid_from: updated.valid_from.clone(),
+            valid_until: updated.valid_until.clone(),
+            assertion_basis: updated.assertion_basis.clone(),
+            changed_by: req.actor.clone(),
+            change_reason: format!(
+                "saved again with the topic key `{}`",
+                current.topic_key.as_str()
+            ),
+            changed_at: req.now.clone(),
+        };
+        let tags: Option<&[String]> = if req.tags.is_empty() {
+            None
+        } else {
+            Some(&req.tags)
+        };
+        self.repo
+            .update_with_history_and_tags(&updated, current.revision, &history, tags)
+    }
+
+    // --- the topic a title yields ---
+
+    /// The topic key a title gives, and the record that already holds it.
+    ///
+    /// The key is a function of the title: the same title always gives the
+    /// same key, in any language. Whether the namespace already holds that
+    /// key is an equality, not a guess — and it is what makes one fact one
+    /// record.
+    pub fn topic_for_title(
+        &self,
+        title: &str,
         namespace: Option<&str>,
-        limit: usize,
-        exclude: Option<&str>,
-    ) -> Result<Vec<TopicSuggestion>, MnexisError> {
+    ) -> Result<(String, Option<String>), MnexisError> {
+        let key = crate::domain::title::key_from_title(title);
+        if key.is_empty() {
+            return Ok((String::new(), None));
+        }
         let ns = match namespace {
             Some(ns) => {
                 self.scope.authorize_read(ns)?;
@@ -916,39 +976,8 @@ impl<R: MemoryRepository> MemoryService<R> {
             }
             None => self.scope.default_namespace.clone(),
         };
-        // The candidates come from the index: the words of the content,
-        // counted the way a search counts them.
-        let terms = crate::domain::topic::significant_terms(content);
-        if terms.is_empty() {
-            return Ok(Vec::new());
-        }
-        let query = terms.iter().cloned().collect::<Vec<_>>().join(" ");
-        let hits = self
-            .repo
-            .search(&query, Some(&ns), limit.max(1) * 4, MatchMode::Any)?;
-        let mut suggestions = Vec::new();
-        for hit in hits {
-            if Some(hit.uuid.as_str()) == exclude {
-                continue;
-            }
-            let Some(memory) = self.repo.get_by_uuid(&hit.uuid)? else {
-                continue;
-            };
-            if !crate::domain::topic::is_same_topic(content, &memory.content) {
-                continue;
-            }
-            suggestions.push(TopicSuggestion {
-                uuid: memory.uuid.clone(),
-                topic_key: memory.topic_key.clone(),
-                state: memory.state.as_str().to_string(),
-                preview: crate::domain::topic::preview(&memory.content, 160),
-                overlap: crate::domain::topic::overlap(content, &memory.content),
-            });
-            if suggestions.len() >= limit.max(1) {
-                break;
-            }
-        }
-        Ok(suggestions)
+        let occupier = self.repo.topic_key_occupier(&ns, &key)?;
+        Ok((key, occupier))
     }
 
     // --- search ---

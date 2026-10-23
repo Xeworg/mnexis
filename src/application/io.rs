@@ -154,6 +154,7 @@ impl From<ImportRecord> for Memory {
         Memory {
             id: None,
             uuid: r.uuid,
+            title: String::new(),
             topic_key: r.topic_key,
             namespace: r.namespace,
             memory_type: r.memory_type,
@@ -342,6 +343,7 @@ mod tests {
         Memory {
             id: Some(1),
             uuid: uuid.into(),
+            title: String::new(),
             topic_key: topic.into(),
             namespace: ns.into(),
             memory_type: "fact".into(),

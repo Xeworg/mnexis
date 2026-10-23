@@ -40,7 +40,7 @@ fn make_service() -> (MemoryService<SqliteMemoryRepository>, tempfile::TempDir) 
 fn save_req(uuid: &str, content: &str) -> SaveRequest {
     SaveRequest {
         uuid: uuid.into(),
-        new_topic: false,
+        title: String::new(),
         topic_key: format!("topic.{uuid}"),
         namespace: "proyecto-a".into(),
         memory_type: "fact".into(),
@@ -129,13 +129,17 @@ fn save_validates_tags_count() {
 }
 
 #[test]
-fn save_duplicate_topic_key_returns_topic_conflict() {
+fn save_with_a_taken_topic_key_updates_that_record() {
+    // The same key is the same fact: the save updates the record instead of
+    // failing on the unique index.
     let (mut svc, _dir) = make_service();
     svc.save(save_req("uuid-a", "first")).unwrap();
     let mut dup = save_req("uuid-b", "second");
     dup.topic_key = "topic.uuid-a".into(); // same as the first save
-    let err = svc.save(dup).unwrap_err();
-    assert!(matches!(err, MnexisError::TopicConflict { .. }));
+    let updated = svc.save(dup).expect("the same key updates the record");
+    assert_eq!(updated.uuid, "uuid-a", "the record keeps its identity");
+    assert_eq!(updated.revision, 2);
+    assert_eq!(updated.content, "second");
 }
 
 #[test]
@@ -695,7 +699,7 @@ fn a_prompt_outside_the_write_allowlist_is_refused() {
     let memory_error = svc
         .save(SaveRequest {
             uuid: "uuid-refused".into(),
-            new_topic: false,
+            title: String::new(),
             namespace: "otro".into(),
             content: "contenido".into(),
             ..save_req("uuid-refused", "ok")
@@ -715,105 +719,115 @@ fn a_prompt_outside_the_write_allowlist_is_refused() {
     );
 }
 
-// --- one fact, one record (topic-continuity) ---
+// --- one fact, one record (memory-title) ---
 
 const PORT_8081: &str = "El servicio payments-api escucha en el puerto TCP 8081, \
                          definido como port en la seccion server de config.toml con 4 workers";
 
 #[test]
-fn a_second_record_about_a_topic_the_namespace_holds_is_refused() {
+fn saving_with_a_key_the_namespace_uses_updates_that_record() {
     let (mut svc, _dir) = make_service();
     let mut first = save_req("uuid-t1", PORT_8081);
-    first.topic_key = "payments-api/port".into();
-    svc.save(first).expect("the first record is saved");
+    first.title = "puerto del servicio".into();
+    first.topic_key = "puerto-del-servicio".into();
+    let saved = svc.save(first).expect("the first record is saved");
+    assert_eq!(saved.revision, 1);
 
-    // The same topic, a new value, and no key: the engine refuses and names
-    // the key to use.
-    let new_value = PORT_8081.replace("8081", "9090");
-    let mut duplicate = save_req("uuid-t2", &new_value);
-    duplicate.topic_key = String::new();
-    let error = svc
-        .save(duplicate)
-        .expect_err("a duplicate topic is refused");
-    match &error {
-        MnexisError::InvalidArgument { field, message } => {
-            assert_eq!(field, "topic_key");
-            assert!(
-                message.contains("payments-api/port"),
-                "the refusal names the key: {message}"
-            );
-            assert!(
-                message.contains("--new-topic"),
-                "the refusal names the way out: {message}"
-            );
-        }
-        other => panic!("expected InvalidArgument, got {other:?}"),
-    }
-    // Nothing was written.
+    // The same fact with a new value: same key, so the record is updated —
+    // not duplicated, and not refused.
+    let mut again = save_req("uuid-t2", &PORT_8081.replace("8081", "9090"));
+    again.title = "puerto del servicio".into();
+    again.topic_key = "puerto-del-servicio".into();
+    let updated = svc.save(again).expect("the same key updates the record");
+
+    assert_eq!(updated.uuid, "uuid-t1", "the record keeps its identity");
+    assert_eq!(updated.revision, 2, "and its revision goes up");
+    assert!(updated.content.contains("9090"), "with the new value");
+    // The caller's uuid was not written as a second record.
     assert!(svc.get("uuid-t2").unwrap().is_none());
+    // One record holds the topic.
+    let taken = svc
+        .topic_occupier("proyecto-a", "puerto-del-servicio")
+        .expect("the occupier query");
+    assert_eq!(taken.as_deref(), Some("uuid-t1"));
 }
 
 #[test]
-fn the_caller_can_say_it_is_a_new_topic_on_purpose() {
+fn the_previous_content_stays_in_the_history() {
     let (mut svc, _dir) = make_service();
     let mut first = save_req("uuid-t3", PORT_8081);
-    first.topic_key = "payments-api/port".into();
-    svc.save(first).expect("the first record is saved");
+    first.title = "puerto del servicio".into();
+    first.topic_key = "puerto-del-servicio".into();
+    svc.save(first).expect("the first record");
 
-    let mut second = save_req("uuid-t4", &PORT_8081.replace("8081", "9090"));
-    second.topic_key = String::new();
-    second.new_topic = true;
-    svc.save(second)
-        .expect("the caller decided it is a new topic");
-    assert!(svc.get("uuid-t4").unwrap().is_some());
+    let mut again = save_req("uuid-t4", &PORT_8081.replace("8081", "9090"));
+    again.title = "puerto del servicio".into();
+    again.topic_key = "puerto-del-servicio".into();
+    svc.save(again).expect("the update");
+
+    let history = svc.history("uuid-t3").expect("the history");
+    assert!(
+        history.iter().any(|h| h.content.contains("9090")),
+        "the revision is recorded: {history:?}"
+    );
+    assert!(
+        history
+            .iter()
+            .any(|h| h.change_reason.contains("puerto-del-servicio")),
+        "the reason names the key: {history:?}"
+    );
+}
+
+#[test]
+fn a_title_derives_the_key_when_the_caller_gives_none() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-t5", PORT_8081);
+    req.title = "Puerto del Servicio".into();
+    req.topic_key = String::new();
+    let saved = svc.save(req).expect("the save derives the key");
+    assert_eq!(
+        saved.topic_key, "puerto-del-servicio",
+        "the key comes from the title, lowercased"
+    );
+}
+
+#[test]
+fn a_title_in_another_language_derives_a_usable_key() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-t6", "un hecho sobre el puerto");
+    req.title = "サービスのポート".into();
+    req.topic_key = String::new();
+    let saved = svc.save(req).expect("the save derives the key");
+    assert_eq!(saved.topic_key, "サービスのポート");
+}
+
+#[test]
+fn a_memory_without_a_title_keeps_no_topic_and_no_upsert() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-t7", PORT_8081);
+    req.title = String::new();
+    req.topic_key = String::new();
+    let saved = svc.save(req).expect("the save");
+    assert_eq!(saved.topic_key, "", "no title, no key");
 }
 
 #[test]
 fn saving_the_same_request_twice_is_a_retry_not_a_second_fact() {
     let (mut svc, _dir) = make_service();
-    let mut first = save_req("uuid-t5", PORT_8081);
+    let mut first = save_req("uuid-t8", PORT_8081);
     first.topic_key = String::new();
-    first.idempotency_key = Some(IdempotencyKey::new("idem-t5"));
+    first.idempotency_key = Some(IdempotencyKey::new("idem-t8"));
     let saved = svc.save(first).expect("the first save");
-    assert_eq!(saved.uuid, "uuid-t5");
+    assert_eq!(saved.uuid, "uuid-t8");
 
-    // The same request again (a retry repeats the request, uuid included):
-    // the replay returns the original, and the topic refusal must not fire
-    // on a fact the engine just wrote itself.
-    let mut again = save_req("uuid-t5", PORT_8081);
+    // The same request again: the replay returns the original, without
+    // writing a second record and without bumping the revision.
+    let mut again = save_req("uuid-t8", PORT_8081);
     again.topic_key = String::new();
-    again.idempotency_key = Some(IdempotencyKey::new("idem-t5"));
-    let replayed = svc.save(again).expect("the replay is not refused");
-    assert_eq!(replayed.uuid, "uuid-t5", "the original record comes back");
-}
-
-#[test]
-fn a_write_the_profile_allows_is_not_blocked_by_a_topic_it_cannot_read() {
-    // A profile that writes into a namespace it may not read: the engine
-    // cannot name a topic it is not allowed to see, so it must not refuse.
-    let dir = tempfile::tempdir_in("target").unwrap();
-    let conn = open_sqlite(&dir.path().join("mnexis.db")).unwrap();
-    let repo = SqliteMemoryRepository::new(conn);
-    let scope = AccessScope::new(
-        vec!["ns-a".to_string()],
-        vec!["ns-a".to_string(), "ns-b".to_string()],
-        "ns-a".to_string(),
-        false,
-        vec![Operation::Save, Operation::Get],
-    )
-    .with_disclosure(mnexis_core::domain::scope::ExistenceDisclosure::NotFound);
-    let mut svc = MemoryService::new(repo, scope, ServiceConfig::default());
-
-    let mut first = save_req("uuid-t7", PORT_8081);
-    first.namespace = "ns-b".into();
-    first.topic_key = "payments-api/port".into();
-    svc.save(first).expect("the first write into ns-b");
-
-    let mut second = save_req("uuid-t8", &PORT_8081.replace("8081", "9090"));
-    second.namespace = "ns-b".into();
-    second.topic_key = String::new();
-    svc.save(second)
-        .expect("the write the profile allows is not blocked by a read it does not");
+    again.idempotency_key = Some(IdempotencyKey::new("idem-t8"));
+    let replayed = svc.save(again).expect("the replay");
+    assert_eq!(replayed.uuid, "uuid-t8", "the original record comes back");
+    assert_eq!(replayed.revision, 1, "a replay does not write a revision");
 }
 
 // --- the key a title yields (memory-title) ---

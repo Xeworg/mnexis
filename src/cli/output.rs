@@ -229,6 +229,7 @@ mod tests {
         Memory {
             id: Some(1),
             uuid: "u".into(),
+            title: String::new(),
             topic_key: String::new(),
             namespace: "ns".into(),
             memory_type: "fact".into(),
