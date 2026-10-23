@@ -6,7 +6,7 @@
 //!
 //! Exit-code semantics (e2-core §8):
 //! - all checks ok → exit 0
-//! - missing/broken FTS (checks b/c/f) → exit 6 (`INDEX_UNAVAILABLE`)
+//! - missing/broken/stale FTS (checks b/c/f/g) → exit 6 (`INDEX_UNAVAILABLE`)
 //! - schema newer than binary → exit 9 (`UNSUPPORTED_VERSION`)
 //! - other failures (integrity, WAL) → exit 1 (infrastructure; no stable code)
 //!
@@ -16,13 +16,13 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use super::repair::repair_db;
 use crate::domain::error::MnexisError;
+use crate::storage::sqlite::{MEMORIES_FTS_COLUMNS, missing_fts_columns, rebuild_memories_fts};
 
 /// The binary's current schema version — the highest migration number in
 /// `storage::sqlite::run_migrations`. Read from that module directly so it
 /// stays in sync.
-const EXPECTED_SCHEMA_VERSION: i64 = 5;
+const EXPECTED_SCHEMA_VERSION: i64 = 6;
 
 /// The canonical tables that must be present.
 const CANONICAL_TABLES: &[&str] = &[
@@ -272,6 +272,56 @@ fn check_fts_invariant(conn: &Connection) -> Check {
     }
 }
 
+/// g. `memories_fts` carries the columns the current schema indexes.
+///
+/// The count check above cannot tell a stale index from a good one: a
+/// content-only index built by schema 005 has exactly one row per active
+/// memory and passes it. The **shape** is what distinguishes them — an index
+/// built without the title cannot answer `SELECT title FROM memories_fts`,
+/// and therefore cannot find a memory by its title either.
+fn check_fts_shape(conn: &Connection) -> Check {
+    let name = "fts_shape";
+
+    let table_exists: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='memories_fts'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if table_exists == 0 {
+        return Check {
+            name: name.into(),
+            ok: false,
+            detail: "memories_fts is missing (INDEX_UNAVAILABLE)".into(),
+        };
+    }
+
+    match missing_fts_columns(conn) {
+        Ok(missing) if missing.is_empty() => Check {
+            name: name.into(),
+            ok: true,
+            detail: format!("memories_fts indexes {}", MEMORIES_FTS_COLUMNS.join(", ")),
+        },
+        Ok(missing) => Check {
+            name: name.into(),
+            ok: false,
+            detail: format!(
+                "memories_fts was built without {} — the index predates the title \
+                 (schema 006), so a search cannot find a memory by its title or its \
+                 topic key; rebuild it with `mnexis reindex` or `mnexis doctor --repair` \
+                 (INDEX_UNAVAILABLE)",
+                missing.join(", ")
+            ),
+        },
+        Err(e) => Check {
+            name: name.into(),
+            ok: false,
+            detail: format!("cannot read the shape of memories_fts: {e}"),
+        },
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Purge eligibility count
 // ---------------------------------------------------------------------------
@@ -322,15 +372,21 @@ pub fn run_checks(conn: &Connection) -> DoctorReport {
         check_fts_readable(conn),
         check_wal_mode(conn),
         check_integrity(conn),
+        check_fts_shape(conn),
         check_fts_invariant(conn),
     ];
     let healthy = checks.iter().all(|c| c.ok);
     DoctorReport { checks, healthy }
 }
 
-/// Returns the FTS-related check names (checks b, c, f from the spec).
+/// Returns the FTS-related check names (checks b, c, f and g from the spec).
 fn fts_check_names() -> Vec<&'static str> {
-    vec!["canonical_tables", "fts_readable", "fts_invariant"]
+    vec![
+        "canonical_tables",
+        "fts_readable",
+        "fts_shape",
+        "fts_invariant",
+    ]
 }
 
 /// Classify the failure profile of a `DoctorReport` into an exit code and
@@ -376,12 +432,15 @@ pub fn check_line(check: &Check) -> String {
 // Repair entry point
 // ---------------------------------------------------------------------------
 
-/// Execute `doctor --repair`: drop+recreate memories_fts and its triggers,
-/// then reindex all active+non-deleted rows. Runs inside one transaction.
-/// On success, re-runs all checks and returns both the repair report and the
-/// post-repair health report.
+/// Execute `doctor --repair`: rebuild `memories_fts` and its triggers from
+/// the canonical schema (`storage::sqlite::MEMORIES_FTS_SCHEMA`) and reindex
+/// all active+non-deleted rows, content, title and topic key alike.
+///
+/// The rebuild is one atomic unit of work (a savepoint), so a repair that
+/// fails leaves the profile as it was. On success, re-runs all checks and
+/// returns both the repair report and the post-repair health report.
 pub fn repair_and_rerun(conn: &Connection) -> Result<(RepairReport, DoctorReport), MnexisError> {
-    let reindexed = repair_db(conn)?;
+    let reindexed = rebuild_memories_fts(conn)?;
 
     // Re-run all checks to confirm health after repair.
     let after_report = run_checks(conn);

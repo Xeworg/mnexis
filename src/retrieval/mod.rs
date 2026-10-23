@@ -7,9 +7,13 @@
 //! `MemoryService::reindex`.
 //!
 //! See `odd/tasks/e2-core.md` §9 for the design:
-//! - Plain `fts5(content)` table maintained by triggers (no external-content).
+//! - Plain `fts5(content, title, topic_key)` table maintained by triggers (no
+//!   external-content). The title and the topic key are what makes the
+//!   identity of a fact findable (identity-visibility S2).
 //! - Default filters: `state = 'active'`, `deleted = 0`.
-//! - bm25 ordering; lower (more negative) ranks are more relevant.
+//! - bm25 ordering; lower (more negative) ranks are more relevant. The weights
+//!   are the FTS5 defaults: `search` and `explain` share the same
+//!   `bm25(memories_fts)` expression and must not drift apart.
 
 pub mod explain;
 pub mod fts5;

@@ -105,3 +105,47 @@ fn explain_default_excludes_superseded_and_deleted_rows() {
     );
     assert_eq!(explained[0].uuid, "uuid-a");
 }
+
+// ── the explanation follows the index (identity-visibility S2) ──────────────
+
+/// The explanation runs the same MATCH as the search, so a record that only
+/// carries the word in its title is explained too.
+///
+/// The matched-term list is derived from the row's content by `explain`; a
+/// title-only match is therefore found and ranked but lists no term. That
+/// list is produced outside this task's surfaces and is unchanged for content
+/// queries — it is reported as a follow-up, not pinned as a defect here.
+#[test]
+fn explain_finds_a_record_by_the_words_of_its_title() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    conn.execute(
+        "INSERT INTO memories (
+            uuid, title, topic_key, namespace, memory_type, content, state,
+            actor, channel, assertion_basis
+         ) VALUES ('uuid-t', 'puerto del servicio', '', 'ns', 'fact', 'port = 8081', \
+         'active', 'user', 'cli', 'user_stated')",
+        [],
+    )
+    .unwrap();
+
+    let explained = explain(
+        &conn,
+        "puerto",
+        MatchMode::Any,
+        NamespaceFilter::Any,
+        StateFilter::default(),
+        DeletedFilter::default(),
+        None,
+        10,
+    )
+    .expect("the explanation must run");
+
+    assert_eq!(explained.len(), 1, "the title is in the index");
+    assert_eq!(explained[0].uuid, "uuid-t");
+    assert!(
+        explained[0].rank < 0.0,
+        "bm25 stays negative; got {}",
+        explained[0].rank
+    );
+}

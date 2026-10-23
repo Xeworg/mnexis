@@ -789,3 +789,179 @@ fn no_query_text_can_reach_fts5_as_syntax() {
         "no memory holds that word, but the query ran"
     );
 }
+
+// ── the index knows the title and the topic key (identity-visibility S2) ─────
+
+/// Insert one active memory with a title, so a test can pin what the index is
+/// supposed to know about a record besides its content.
+fn insert_titled(conn: &Connection, uuid: &str, title: &str, topic_key: &str, content: &str) {
+    conn.execute(
+        "INSERT INTO memories (
+            uuid, title, topic_key, namespace, memory_type, content, state,
+            actor, channel, assertion_basis
+         ) VALUES (?1, ?2, ?3, 'ns', 'fact', ?4, 'active', 'user', 'cli', 'user_stated')",
+        params![uuid, title, topic_key, content],
+    )
+    .expect("insert_titled: row insert must succeed for the test fixture to be valid");
+}
+
+fn search_ids(conn: &Connection, query: &str) -> Vec<String> {
+    search(
+        conn,
+        query,
+        MatchMode::Any,
+        NamespaceFilter::Any,
+        StateFilter::default(),
+        DeletedFilter::default(),
+        None,
+        10,
+    )
+    .expect("the query must run")
+    .into_iter()
+    .map(|hit| hit.uuid)
+    .collect()
+}
+
+/// S2: a record whose content does not hold the word is found by the words of
+/// its title. This is the measured failure: content `port = 8081`, title
+/// `puerto del servicio`, and the caller searches `puerto`.
+#[test]
+fn a_memory_is_found_by_the_words_of_its_title() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    insert_titled(
+        &conn,
+        "uuid-puerto",
+        "puerto del servicio",
+        "",
+        "port = 8081",
+    );
+
+    assert_eq!(
+        search_ids(&conn, "puerto"),
+        vec!["uuid-puerto".to_string()],
+        "the title must be in the index: searching 'puerto' finds the record \
+         whose content says 'port = 8081'"
+    );
+    assert_eq!(
+        search_ids(&conn, "servicio"),
+        vec!["uuid-puerto".to_string()],
+        "every word of the title is searchable, not only the first"
+    );
+}
+
+/// S2: the topic key is the identity of the fact and is indexed too, so a
+/// caller who knows the key finds the record without knowing its content.
+#[test]
+fn a_memory_is_found_by_the_words_of_its_topic_key() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    insert_titled(&conn, "uuid-key", "", "puerto-del-servicio", "port = 8081");
+
+    assert_eq!(
+        search_ids(&conn, "puerto"),
+        vec!["uuid-key".to_string()],
+        "the topic key must be in the index"
+    );
+    assert_eq!(
+        search_ids(&conn, "servicio"),
+        vec!["uuid-key".to_string()],
+        "a hyphenated topic key is searchable by its words"
+    );
+}
+
+/// S2: the triggers cover the new columns. A title that changes must be
+/// re-indexed, and the word it no longer holds must leave the index.
+#[test]
+fn a_title_change_is_reindexed() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    insert_titled(
+        &conn,
+        "uuid-renamed",
+        "puerto del servicio",
+        "",
+        "port = 8081",
+    );
+    assert_eq!(
+        search_ids(&conn, "puerto"),
+        vec!["uuid-renamed".to_string()]
+    );
+
+    conn.execute(
+        "UPDATE memories SET title = 'base de datos', topic_key = 'base-de-datos', \
+         revision = revision + 1 WHERE uuid = 'uuid-renamed'",
+        [],
+    )
+    .expect("the title change must succeed");
+
+    assert!(
+        search_ids(&conn, "puerto").is_empty(),
+        "the old title must leave the index when the title changes"
+    );
+    assert_eq!(
+        search_ids(&conn, "datos"),
+        vec!["uuid-renamed".to_string()],
+        "the new title must be in the index after UPDATE of title"
+    );
+}
+
+/// S2 does not weaken the invariant the index already had: it holds the
+/// active, non-deleted records only, whatever their title says.
+#[test]
+fn a_record_that_is_not_alive_is_not_found_by_its_title() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    insert_titled(&conn, "uuid-dead", "puerto del servicio", "", "port = 8081");
+
+    conn.execute(
+        "UPDATE memories SET state = 'superseded' WHERE uuid = 'uuid-dead'",
+        [],
+    )
+    .unwrap();
+
+    assert!(
+        search_ids(&conn, "puerto").is_empty(),
+        "a superseded record must not be found by its title"
+    );
+}
+
+/// S2 keeps the content path intact: a content word still finds the record
+/// and still outranks a record that only carries the word in its title.
+#[test]
+fn a_content_match_still_ranks_above_a_title_only_match() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    insert_titled(
+        &conn,
+        "uuid-title-only",
+        "puerto del servicio",
+        "",
+        "port = 8081",
+    );
+    insert_titled(
+        &conn,
+        "uuid-content",
+        "configuracion del servicio",
+        "",
+        "puerto puerto puerto: el puerto es 8081 y el puerto de reserva 8082",
+    );
+
+    let hits = search(
+        &conn,
+        "puerto",
+        MatchMode::Any,
+        NamespaceFilter::Any,
+        StateFilter::default(),
+        DeletedFilter::default(),
+        None,
+        10,
+    )
+    .expect("the query must run");
+    assert_eq!(hits.len(), 2, "both records carry the word now");
+    assert_eq!(
+        hits[0].uuid, "uuid-content",
+        "a record that repeats the word in its content must rank above one \
+         that only carries it in its title"
+    );
+}

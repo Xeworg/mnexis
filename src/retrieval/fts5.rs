@@ -3,6 +3,14 @@
 //! See `odd/tasks/e2-core.md` §9 for the design. The defaults match PRD §9:
 //! `state = ActiveOnly`, `deleted = NotDeletedOnly`. `ValidWindow` further
 //! filters to memories whose validity interval contains the reference time.
+//!
+//! The index is `fts5(content, title, topic_key)` since identity-visibility
+//! S2, so a `MATCH` searches the identity of a fact as well as its content —
+//! the words of a title or of a topic key find the record whose content says
+//! something else. Nothing else about the query layer changed: the compiled
+//! expression, the three match modes and `bm25(memories_fts)` are the same,
+//! and `bm25` is deliberately left **unweighted** so that this module and
+//! `retrieval::explain` score a query identically.
 
 use rusqlite::{Connection, ToSql};
 
