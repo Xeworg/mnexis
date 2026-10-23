@@ -23,6 +23,7 @@ fn save(profile: &mut Profile, ns: &str, content: &str) -> String {
         .service_mut()
         .save(SaveRequest {
             uuid: uuid.clone(),
+            new_topic: false,
             topic_key: String::new(),
             namespace: ns.to_string(),
             memory_type: "fact".to_string(),

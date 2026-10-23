@@ -48,6 +48,11 @@ pub struct SaveArgs {
     /// Assertion basis (default: "user_stated")
     #[serde(default)]
     pub assertion_basis: Option<String>,
+    /// Record this as a new topic, even if the engine holds one like it
+    /// (default: false). Without it, a content the namespace already holds
+    /// a topic for is refused, naming the key to use.
+    #[serde(default)]
+    pub new_topic: Option<bool>,
     /// Topic key — unique per namespace when non-empty (default: "").
     /// Allowed characters: lowercase letters, digits, '.', '-' and '/'
     #[serde(default)]

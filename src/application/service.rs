@@ -41,6 +41,9 @@ impl Default for ServiceConfig {
 pub struct SaveRequest {
     pub uuid: String,
     pub topic_key: String,
+    /// Set when the caller has seen the topic the engine already holds and
+    /// decided this is a new one anyway. It turns the refusal into a save.
+    pub new_topic: bool,
     pub namespace: String,
     pub memory_type: String,
     pub content: String,
@@ -158,6 +161,43 @@ impl<R: MemoryRepository> MemoryService<R> {
                     ));
                 }
             }
+        }
+
+        // The engine already holds this topic: refuse, and name the key.
+        //
+        // This runs AFTER the idempotency replay: saving the same request
+        // twice is a retry, not a second fact, and a retry must never be
+        // refused for a topic it just wrote itself.
+        //
+        // A notice was tried first and it was not enough: the measurement
+        // (three runs) showed the agent reading the notice and writing a
+        // second record anyway. A refusal is what changes the outcome — and
+        // it costs nothing when it is wrong, because the caller can say
+        // "this is a new topic" and the save goes through.
+        // Only when the scope may read the namespace: the engine can name a
+        // topic it is allowed to see, and a write the profile permits must
+        // never be blocked by a read it does not.
+        if req.topic_key.is_empty()
+            && !req.new_topic
+            && self.scope.can_read(&req.namespace)
+            && let Some(existing) = self
+                .suggest_topic(&req.content, Some(&req.namespace), 1, Some(&req.uuid))?
+                .first()
+        {
+            return Err(MnexisError::invalid_argument(
+                "topic_key",
+                format!(
+                    "this topic is already recorded under the topic key `{}` ({}); \
+                     save with that key to update that record, or pass --new-topic \
+                     to record a second one on purpose",
+                    if existing.topic_key.is_empty() {
+                        "(none)"
+                    } else {
+                        existing.topic_key.as_str()
+                    },
+                    existing.uuid
+                ),
+            ));
         }
 
         let mem = Memory {

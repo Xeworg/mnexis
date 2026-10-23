@@ -161,6 +161,7 @@ impl McpServer {
         self.authorize_write(&namespace)?;
         let req = crate::application::SaveRequest {
             uuid: uuid.clone(),
+            new_topic: args.new_topic.unwrap_or(false),
             topic_key: args.topic_key.unwrap_or_default(),
             namespace,
             memory_type: args.memory_type.unwrap_or_else(|| "fact".to_string()),

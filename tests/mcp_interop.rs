@@ -1276,3 +1276,142 @@ async fn cancel_gracefully_shuts_down_the_server() -> Result<(), Box<dyn std::er
     client.cancel().await?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// memory_suggest_topic_key and the relations (topic-continuity)
+// ---------------------------------------------------------------------------
+
+async fn call_tool_text(
+    client: &rmcp::service::RunningService<rmcp::service::RoleClient, ()>,
+    tool: &str,
+    args: serde_json::Value,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new(tool.to_string())
+                .with_arguments(args.as_object().expect("object").clone()),
+        )
+        .await?;
+    let text = result
+        .content
+        .iter()
+        .find_map(|b| match b {
+            ContentBlock::Text(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    Ok(text)
+}
+
+#[tokio::test]
+async fn memory_suggest_topic_key_names_the_key_the_namespace_uses()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let old = "El servicio payments-api escucha en el puerto TCP 8081, definido como port en la \
+               seccion server de config.toml con 4 workers";
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": old, "topic_key": "payments-api/port" }),
+    )
+    .await?;
+
+    // The same topic with a new value: the engine names the key it already
+    // uses, so the agent can update that record instead of adding a second.
+    let new = "El servicio payments-api escucha en el puerto TCP 9090, definido como port en la \
+               seccion server de config.toml con 4 workers";
+    let text = call_tool_text(
+        &client,
+        "memory_suggest_topic_key",
+        serde_json::json!({ "content": new }),
+    )
+    .await?;
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(json["count"], 1, "one record holds the topic: {json}");
+    assert_eq!(
+        json["items"][0]["topic_key"], "payments-api/port",
+        "the engine names the key the namespace uses: {json}"
+    );
+
+    // A content about something else is not the same topic.
+    let other = call_tool_text(
+        &client,
+        "memory_suggest_topic_key",
+        serde_json::json!({ "content": "El servidor de metricas escucha en el puerto TCP 7100 con 8 workers" }),
+    )
+    .await?;
+    let other_json: serde_json::Value = serde_json::from_str(&other)?;
+    assert_eq!(
+        other_json["count"], 0,
+        "a different service is a different topic: {other_json}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_list_carries_the_relations_between_the_memories()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let older = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "the port was 8081", "topic_key": "svc/port" }),
+    )
+    .await?;
+    let older_json: serde_json::Value = serde_json::from_str(&older)?;
+    let older_uuid = older_json["uuid"].as_str().expect("uuid").to_string();
+
+    let newer = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "the port is 9090" }),
+    )
+    .await?;
+    let newer_json: serde_json::Value = serde_json::from_str(&newer)?;
+    let newer_uuid = newer_json["uuid"].as_str().expect("uuid").to_string();
+
+    call_tool_text(
+        &client,
+        "memory_supersede",
+        serde_json::json!({
+            "older_uuid": older_uuid,
+            "newer_uuid": newer_uuid,
+            "expected_old_revision": 1,
+            "expected_new_revision": 1,
+            "reason": "the port changed"
+        }),
+    )
+    .await?;
+
+    let listed = call_tool_text(&client, "memory_list", serde_json::json!({})).await?;
+    let json: serde_json::Value = serde_json::from_str(&listed)?;
+    let relations = json["relations"].as_array().expect("relations array");
+    assert_eq!(relations.len(), 1, "one relation is reported: {json}");
+    assert_eq!(relations[0]["older"], older_uuid.as_str());
+    assert_eq!(relations[0]["newer"], newer_uuid.as_str());
+
+    client.cancel().await?;
+    Ok(())
+}

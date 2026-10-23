@@ -42,6 +42,7 @@ fn generate_corpus(n: usize) -> Vec<SaveRequest> {
             };
             SaveRequest {
                 uuid: format!("00000000-0000-0000-0000-{i:012}"),
+                new_topic: false,
                 topic_key: format!("mnx.topic.{i:06}"),
                 namespace: namespaces[i % namespaces.len()].to_string(),
                 memory_type: "fact".to_string(),

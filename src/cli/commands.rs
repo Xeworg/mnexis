@@ -127,10 +127,12 @@ pub fn save_request(
     tags: Option<String>,
     state: Option<String>,
     content: String,
+    new_topic: bool,
 ) -> Result<SaveRequest, MnexisError> {
     let state = parse_state(state.as_deref().unwrap_or("active"))?;
     Ok(SaveRequest {
         uuid: crate::cli::profile::uuid_v4()?,
+        new_topic,
         topic_key: topic_key.unwrap_or_default(),
         namespace,
         memory_type: memory_type.unwrap_or_else(|| "fact".to_string()),
@@ -160,6 +162,7 @@ pub fn save(
     tags: Option<String>,
     state: Option<String>,
     content: String,
+    new_topic: bool,
 ) -> Result<CommandOutcome, MnexisError> {
     let namespace = namespace.unwrap_or_else(|| profile.default_namespace());
     WorkspaceGuard::resolve(profile)?.authorize(&namespace)?;
@@ -178,6 +181,7 @@ pub fn save(
         tags,
         state,
         content,
+        new_topic,
     )?;
     let mem = profile.service_mut().save(req)?;
     let uuid_out = mem.uuid.clone();

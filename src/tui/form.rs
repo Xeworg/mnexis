@@ -383,6 +383,7 @@ impl Form {
             blank_to_none(&tags),
             Some(state),
             content,
+            false,
         )
         .map_err(SubmitFailure::Service)?;
         let memory = service.save(req).map_err(SubmitFailure::Service)?;
