@@ -83,3 +83,39 @@ pin/review lifecycle, and any change to the shape of a memory.
   tools are new. It is the first change that touches the schema, so the
   migration is additive only — new tables, new index, new triggers, and no
   change to any existing table.
+- **L4** (2026-10-23) — The delivery, in five work units:
+
+  | commit | unit | slice |
+  | --- | --- | --- |
+  | `4ea9c6e` | migration 004: the tables, the index, the triggers, the doctor | ~240 |
+  | `5e668e8` | the entities, the repository port, the adapter and the service | ~460 |
+  | `d637760` | the store helpers next to the store | ~30 |
+  | `aaa08dd` | the CLI commands and the MCP tools | ~300 |
+  | `5f72a7a` | the pi extension: the four tools and the three hooks | ~250 |
+
+- **L5** (2026-10-23) — The evidence:
+  - `cargo test`: 21 suites green; `cargo fmt --check` clean; clippy at the
+    36-warning baseline.
+  - The extension's own tests: 46 pass, 0 fail.
+  - The installer suite: all installer tests passed (the extension's assets
+    are embedded in the binary, and the installer installs them).
+  - The migration: a profile at version 3 with a memory in it comes out of
+    the migration with the memory and the new tables (a test), and the
+    prompt index follows an insert and a delete (a test).
+  - The live check, in the comparison's container, with the release binary:
+    `mnexis session` → `mnexis prompt` → `mnexis prompts --search` (a
+    hyphenated query included) → `mnexis end` → `mnexis sessions`, and
+    `mnexis doctor` reporting every check passed.
+
+**Risk: item 1** — this is the first change that writes to the schema: a
+migration adds two tables, an index, a trigger pair and an FTS index. It is
+additive (no existing table is touched, no memory is rewritten), it is
+idempotent, and a profile that already holds memories keeps every one of
+them — proven by a test. The no-downgrade rule still holds: a binary that
+does not know version 4 refuses to open the profile (`UNSUPPORTED_VERSION`).
+
+**Risk: item 3** — the MCP surface grows from ten tools to fourteen, and the
+pi extension from five to nine. The new tools are additive; the existing
+ones keep their shape. The `memory_prompts` read accepts a namespace
+filter, and without one it stays inside the scope's read scope, exactly
+like the memory search.
