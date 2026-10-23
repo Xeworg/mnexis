@@ -815,3 +815,33 @@ fn a_write_the_profile_allows_is_not_blocked_by_a_topic_it_cannot_read() {
     svc.save(second)
         .expect("the write the profile allows is not blocked by a read it does not");
 }
+
+// --- the key a title yields (memory-title) ---
+
+#[test]
+fn a_topic_key_in_another_language_is_accepted() {
+    let (mut svc, _dir) = make_service();
+    for (uuid, key) in [
+        ("uuid-k1", "サービスのポート"),
+        ("uuid-k2", "θύρα-υπηρεσίας"),
+        ("uuid-k3", "порт-сервиса"),
+        ("uuid-k4", "puerto.del-servicio"),
+    ] {
+        let mut req = save_req(uuid, "un hecho distinto por cada clave");
+        req.topic_key = key.into();
+        svc.save(req)
+            .unwrap_or_else(|e| panic!("the key {key:?} must be accepted: {e:?}"));
+    }
+}
+
+#[test]
+fn an_uppercase_key_is_still_refused() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-k5", "un hecho");
+    req.topic_key = "Puerto".into();
+    let error = svc.save(req).unwrap_err();
+    assert!(
+        matches!(error, MnexisError::InvalidArgument { .. }),
+        "a key is lowercase by contract: {error:?}"
+    );
+}

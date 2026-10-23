@@ -1000,10 +1000,12 @@ fn validate_topic_key(topic_key: &str, max_bytes: usize) -> Result<(), MnexisErr
         // written the other way. Both are accepted, and nothing else is.
         //
         // "Letter" is not "ASCII letter": the key derives from a title, and
-        // a title is written in the language the team speaks. A Japanese,
-        // Greek or Cyrillic title has to yield a usable key, so the rule is
-        // the character's own case, not its codepoint range.
-        let is_letter = c.is_lowercase() || c.is_numeric();
+        // a title is written in the language the team speaks. The rule is
+        // "alphabetic and not uppercase", not "lowercase": scripts without
+        // case (Japanese kana, Chinese) have no lowercase form, and their
+        // letters are perfectly good in a key. An uppercase letter stays
+        // out, because a key is lowercase by contract.
+        let is_letter = (c.is_alphabetic() && !c.is_uppercase()) || c.is_numeric();
         if !is_letter && !matches!(c, '.' | '-' | '/') {
             return Err(MnexisError::invalid_argument(
                 "topic_key",
