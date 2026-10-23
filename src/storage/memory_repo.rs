@@ -1109,6 +1109,87 @@ impl MemoryRepository for SqliteMemoryRepository {
     }
 }
 
+/// The namespace filter for a scope, in the shape the retrieval layer
+/// expects.
+fn namespace_filter(namespaces: &NamespaceScope) -> crate::retrieval::NamespaceFilter {
+    match namespaces {
+        NamespaceScope::All => crate::retrieval::NamespaceFilter::Any,
+        NamespaceScope::AllExcept(list) => {
+            crate::retrieval::NamespaceFilter::AnyExcept(list.clone())
+        }
+        NamespaceScope::Only(list) => crate::retrieval::NamespaceFilter::Many(list.clone()),
+    }
+}
+
+/// The session query for a namespace filter.
+fn session_query(ns: &crate::retrieval::NamespaceFilter) -> (String, Vec<String>) {
+    let mut sql = String::from(
+        "SELECT id, namespace, directory, started_at, ended_at, summary FROM sessions WHERE 1=1",
+    );
+    let mut params: Vec<String> = Vec::new();
+    match ns {
+        crate::retrieval::NamespaceFilter::Any => {}
+        crate::retrieval::NamespaceFilter::Namespace(one) => {
+            sql.push_str(" AND namespace = ?");
+            params.push(one.clone());
+        }
+        crate::retrieval::NamespaceFilter::AnyExcept(list) => {
+            if !list.is_empty() {
+                sql.push_str(" AND namespace NOT IN (");
+                sql.push_str(&vec!["?"; list.len()].join(", "));
+                sql.push(')');
+                params.extend(list.iter().cloned());
+            }
+        }
+        crate::retrieval::NamespaceFilter::Many(list) => {
+            if list.is_empty() {
+                sql.push_str(" AND 0");
+            } else {
+                sql.push_str(" AND namespace IN (");
+                sql.push_str(&vec!["?"; list.len()].join(", "));
+                sql.push(')');
+                params.extend(list.iter().cloned());
+            }
+        }
+    }
+    sql.push_str(" ORDER BY started_at DESC");
+    (sql, params)
+}
+
+/// The prompt query for a namespace filter.
+fn prompt_query(ns: &crate::retrieval::NamespaceFilter) -> (String, Vec<String>) {
+    let mut sql = String::from(
+        "SELECT id, session_id, namespace, content, created_at FROM user_prompts WHERE 1=1",
+    );
+    let mut params: Vec<String> = Vec::new();
+    match ns {
+        crate::retrieval::NamespaceFilter::Any => {}
+        crate::retrieval::NamespaceFilter::Namespace(one) => {
+            sql.push_str(" AND namespace = ?");
+            params.push(one.clone());
+        }
+        crate::retrieval::NamespaceFilter::AnyExcept(list) => {
+            if !list.is_empty() {
+                sql.push_str(" AND namespace NOT IN (");
+                sql.push_str(&vec!["?"; list.len()].join(", "));
+                sql.push(')');
+                params.extend(list.iter().cloned());
+            }
+        }
+        crate::retrieval::NamespaceFilter::Many(list) => {
+            if list.is_empty() {
+                sql.push_str(" AND 0");
+            } else {
+                sql.push_str(" AND namespace IN (");
+                sql.push_str(&vec!["?"; list.len()].join(", "));
+                sql.push(')');
+                params.extend(list.iter().cloned());
+            }
+        }
+    }
+    (sql, params)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1343,85 +1424,4 @@ mod tests {
             "search must return both rows after a reindex"
         );
     }
-}
-
-/// The namespace filter for a scope, in the shape the retrieval layer
-/// expects.
-fn namespace_filter(namespaces: &NamespaceScope) -> crate::retrieval::NamespaceFilter {
-    match namespaces {
-        NamespaceScope::All => crate::retrieval::NamespaceFilter::Any,
-        NamespaceScope::AllExcept(list) => {
-            crate::retrieval::NamespaceFilter::AnyExcept(list.clone())
-        }
-        NamespaceScope::Only(list) => crate::retrieval::NamespaceFilter::Many(list.clone()),
-    }
-}
-
-/// The session query for a namespace filter.
-fn session_query(ns: &crate::retrieval::NamespaceFilter) -> (String, Vec<String>) {
-    let mut sql = String::from(
-        "SELECT id, namespace, directory, started_at, ended_at, summary FROM sessions WHERE 1=1",
-    );
-    let mut params: Vec<String> = Vec::new();
-    match ns {
-        crate::retrieval::NamespaceFilter::Any => {}
-        crate::retrieval::NamespaceFilter::Namespace(one) => {
-            sql.push_str(" AND namespace = ?");
-            params.push(one.clone());
-        }
-        crate::retrieval::NamespaceFilter::AnyExcept(list) => {
-            if !list.is_empty() {
-                sql.push_str(" AND namespace NOT IN (");
-                sql.push_str(&vec!["?"; list.len()].join(", "));
-                sql.push(')');
-                params.extend(list.iter().cloned());
-            }
-        }
-        crate::retrieval::NamespaceFilter::Many(list) => {
-            if list.is_empty() {
-                sql.push_str(" AND 0");
-            } else {
-                sql.push_str(" AND namespace IN (");
-                sql.push_str(&vec!["?"; list.len()].join(", "));
-                sql.push(')');
-                params.extend(list.iter().cloned());
-            }
-        }
-    }
-    sql.push_str(" ORDER BY started_at DESC");
-    (sql, params)
-}
-
-/// The prompt query for a namespace filter.
-fn prompt_query(ns: &crate::retrieval::NamespaceFilter) -> (String, Vec<String>) {
-    let mut sql = String::from(
-        "SELECT id, session_id, namespace, content, created_at FROM user_prompts WHERE 1=1",
-    );
-    let mut params: Vec<String> = Vec::new();
-    match ns {
-        crate::retrieval::NamespaceFilter::Any => {}
-        crate::retrieval::NamespaceFilter::Namespace(one) => {
-            sql.push_str(" AND namespace = ?");
-            params.push(one.clone());
-        }
-        crate::retrieval::NamespaceFilter::AnyExcept(list) => {
-            if !list.is_empty() {
-                sql.push_str(" AND namespace NOT IN (");
-                sql.push_str(&vec!["?"; list.len()].join(", "));
-                sql.push(')');
-                params.extend(list.iter().cloned());
-            }
-        }
-        crate::retrieval::NamespaceFilter::Many(list) => {
-            if list.is_empty() {
-                sql.push_str(" AND 0");
-            } else {
-                sql.push_str(" AND namespace IN (");
-                sql.push_str(&vec!["?"; list.len()].join(", "));
-                sql.push(')');
-                params.extend(list.iter().cloned());
-            }
-        }
-    }
-    (sql, params)
 }
