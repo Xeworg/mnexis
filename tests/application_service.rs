@@ -859,3 +859,79 @@ fn an_uppercase_key_is_still_refused() {
         "a key is lowercase by contract: {error:?}"
     );
 }
+
+// --- the duplicates of a title ---
+
+/// A namespace that holds enough titles for the ranking to have something to
+/// compare, and one fact that two different titles talk about.
+fn save_named(svc: &mut MemoryService<SqliteMemoryRepository>, uuid: &str, title: &str) {
+    let mut req = save_req(uuid, &format!("el contenido de {title}"));
+    req.title = title.into();
+    req.topic_key = String::new();
+    svc.save(req).expect("the save");
+}
+
+#[test]
+fn the_records_a_title_looks_like_are_proposed() {
+    let (mut svc, _dir) = make_service();
+    save_named(&mut svc, "uuid-d1", "puerto del servicio");
+    save_named(&mut svc, "uuid-d2", "timeout de conexion");
+    save_named(&mut svc, "uuid-d3", "oncall del servicio");
+
+    let candidates = svc
+        .duplicates("proyecto-a", "puerto de pagos", 5, None)
+        .expect("the duplicates of a title");
+
+    assert!(
+        candidates.iter().any(|c| c.uuid == "uuid-d1"),
+        "the record the title looks like is proposed: {candidates:?}"
+    );
+    assert!(
+        !candidates.iter().any(|c| c.uuid == "uuid-d3"),
+        "a record with nothing in common is not: {candidates:?}"
+    );
+    let candidate = candidates
+        .iter()
+        .find(|c| c.uuid == "uuid-d1")
+        .expect("the candidate");
+    assert_eq!(candidate.title, "puerto del servicio");
+    assert_eq!(candidate.topic_key, "puerto-del-servicio");
+    assert!(candidate.shared.contains(&"puerto".to_string()));
+    assert!(candidate.score > 0.0);
+}
+
+#[test]
+fn a_record_is_not_proposed_to_itself() {
+    let (mut svc, _dir) = make_service();
+    save_named(&mut svc, "uuid-d4", "puerto del servicio");
+
+    let candidates = svc
+        .duplicates("proyecto-a", "puerto del servicio", 5, Some("uuid-d4"))
+        .expect("the duplicates of a title");
+    assert!(
+        !candidates.iter().any(|c| c.uuid == "uuid-d4"),
+        "the excluded record is not proposed: {candidates:?}"
+    );
+}
+
+#[test]
+fn a_title_with_nothing_in_common_proposes_nothing() {
+    let (mut svc, _dir) = make_service();
+    save_named(&mut svc, "uuid-d5", "puerto del servicio");
+    let candidates = svc
+        .duplicates("proyecto-a", "un hecho que no se parece a nada", 5, None)
+        .expect("the duplicates of a title");
+    assert!(candidates.is_empty(), "no proposal: {candidates:?}");
+}
+
+#[test]
+fn a_namespace_the_scope_cannot_read_is_refused() {
+    let (mut svc, _dir) = make_service();
+    let error = svc
+        .duplicates("otro-proyecto", "puerto de pagos", 5, None)
+        .unwrap_err();
+    assert!(
+        matches!(error, MnexisError::Forbidden { .. } | MnexisError::NotFound { .. }),
+        "a namespace outside the scope is not read: {error:?}"
+    );
+}

@@ -6,6 +6,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::application::io::{ConflictPolicy, ImportDecision, LocalIndex};
+use crate::domain::duplicates::{DuplicateCandidate, TitleRecord, rank_duplicates};
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::{IdempotencyKey, IdempotencyRecord};
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
@@ -978,6 +979,38 @@ impl<R: MemoryRepository> MemoryService<R> {
         };
         let occupier = self.repo.topic_key_occupier(&ns, &key)?;
         Ok((key, occupier))
+    }
+
+    // --- duplicates ---
+    /// The records of a namespace whose title looks like the given one.
+    ///
+    /// This is a shortlist, not a verdict: the engine cannot tell that two
+    /// different titles are the same fact (measured: a threshold on the
+    /// title separates nothing), but it can put the records that *look*
+    /// like the title in front of the agent, which does understand
+    /// language. The candidate carries the score and the shared words, so
+    /// the agent judges instead of trusting.
+    ///
+    /// `exclude_uuid` leaves a record out of the shortlist — the save that
+    /// just created it does not need to be proposed to itself.
+    pub fn duplicates(
+        &self,
+        namespace: &str,
+        title: &str,
+        limit: usize,
+        exclude_uuid: Option<&str>,
+    ) -> Result<Vec<DuplicateCandidate>, MnexisError> {
+        self.scope.authorize_read(namespace)?;
+        if title.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let scope = NamespaceScope::Only(vec![namespace.to_string()]);
+        let records = self.repo.list_titles_in(&scope)?;
+        let corpus: Vec<TitleRecord> = records
+            .into_iter()
+            .filter(|record| Some(record.uuid.as_str()) != exclude_uuid)
+            .collect();
+        Ok(rank_duplicates(title, &corpus, limit))
     }
 
     // --- search ---

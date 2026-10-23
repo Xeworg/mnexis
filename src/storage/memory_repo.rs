@@ -5,6 +5,7 @@
 
 use rusqlite::{Connection, OptionalExtension, Row, ToSql, params};
 
+use crate::domain::duplicates::TitleRecord;
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyRecord;
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
@@ -71,6 +72,21 @@ impl SqliteMemoryRepository {
             actor,
             channel,
             assertion_basis,
+        })
+    }
+
+    /// A record as the duplicate ranker sees it: the uuid, the title, the
+    /// key and the state. The contents are not read.
+    fn row_to_title(row: &Row) -> Result<TitleRecord, MnexisError> {
+        let uuid: String = row.get(0).map_err(sql_to_domain)?;
+        let title: String = row.get(1).map_err(sql_to_domain)?;
+        let topic_key: String = row.get(2).map_err(sql_to_domain)?;
+        let state_str: String = row.get(3).map_err(sql_to_domain)?;
+        Ok(TitleRecord {
+            uuid,
+            title,
+            topic_key,
+            state: MemoryState::from_db(&state_str)?,
         })
     }
 
@@ -1143,6 +1159,29 @@ impl MemoryRepository for SqliteMemoryRepository {
             Some(row) => Ok(Some(row.get(0).map_err(sql_to_domain)?)),
             None => Ok(None),
         }
+    }
+
+    fn list_titles_in(
+        &self,
+        namespaces: &NamespaceScope,
+    ) -> Result<Vec<TitleRecord>, MnexisError> {
+        let Some((filter, param_refs)) = filter_sql(namespaces, None, false) else {
+            return Ok(Vec::new());
+        };
+        // The contents are not read: the ranking only compares titles, and
+        // the shortlist has to be cheap enough to travel with every save.
+        let sql = format!("SELECT uuid, title, topic_key, state{filter}");
+        let mut stmt = self.conn.prepare(&sql).map_err(sql_to_domain)?;
+        let rows = stmt
+            .query_map(&param_refs[..], |row| {
+                Self::row_to_title(row).map_err(to_sql_err)
+            })
+            .map_err(sql_to_domain)?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row.map_err(sql_to_domain)?);
+        }
+        Ok(result)
     }
 }
 
