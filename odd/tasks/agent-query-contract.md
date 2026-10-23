@@ -34,6 +34,14 @@ with it, and the workspace identity has exactly one form.
 **Not in scope:** the storage schema, the store format, the agent protocol
 (skill and MCP tool descriptions), and the permission model.
 
+**Risk: item 3** — the contracts other code consumes change in two places:
+a multi-word query now returns a wider result set (that is the fix), and the
+registry stores the workspace key in its canonical form. Mitigations: `--match
+all` restores the previous "every word must be there" semantics for anyone who
+wants it; a binding recorded before the rule still resolves; the schema, the
+store format and the memory records are untouched; and the whole suite, the
+installer suite and the extension's tests pass.
+
 ## Tasks
 
 - **T1** (S1, S2) — The query contract: a `MatchMode` (`any`, `all`, `phrase`)
