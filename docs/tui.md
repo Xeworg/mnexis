@@ -124,7 +124,7 @@ the current mode.
 | `Tab`         | next pane                                           |
 | `Shift-Tab`   | previous pane                                       |
 | `Enter`       | open the memory (from the namespace pane: jump to the memory list) |
-| `/`           | FTS5 search in the selected namespace               |
+| `/`           | Search in the selected namespace                    |
 | `Esc`         | clear the search / selection; leave the detail pane |
 | `x`           | toggle the soft-deleted view of the namespace       |
 | `q` / `Ctrl-C`| quit                                                |
@@ -161,7 +161,7 @@ keeping your edits, then `Ctrl-S` retries.
 
 ### Search (`/`)
 
-Typing edits the query live and re-runs the same FTS5 ranked search as
+Typing edits the query live and re-runs the same ranked search as
 `mnexis search --namespace NS`. `Enter` accepts the results and returns to
 normal mode; `Esc` clears the query and restores the plain list. Hits carry
 rank and metadata but no content preview; press `Enter` on one to load its

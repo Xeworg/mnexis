@@ -13,10 +13,9 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::json;
-
 use crate::config::write_atomic;
 use crate::domain::error::MnexisError;
+use crate::domain::workspace::canonical_workspace_key;
 
 /// The registry file inside a profile data directory.
 ///
@@ -78,11 +77,22 @@ impl ProjectRegistry {
     }
 
     /// The binding for a workspace key, if any.
+    ///
+    /// The comparison is canonical: a key written in another spelling names
+    /// the same workspace, and the entry that holds it is the answer.
     pub fn find(&self, key: &str) -> Option<&ProjectBinding> {
-        self.bindings.iter().find(|b| b.key == key)
+        let canonical = canonical_workspace_key(key);
+        self.bindings
+            .iter()
+            .find(|b| canonical_workspace_key(&b.key) == canonical)
     }
 
     /// Bind a workspace key to a namespace.
+    ///
+    /// The key is stored in its canonical form, and a binding that names
+    /// the same workspace in another spelling is **updated in place**: a
+    /// registry written before the canonical rule keeps one entry per
+    /// workspace, and the entry it holds is the one the agent will find.
     ///
     /// Refuses to move an already-bound key to a different namespace
     /// unless `force` is set: the namespace holds memories, and a silent
@@ -96,8 +106,16 @@ impl ProjectRegistry {
     ) -> Result<BindOutcome, MnexisError> {
         validate_key(key)?;
         validate_namespace(namespace)?;
-        match self.bindings.iter_mut().find(|b| b.key == key) {
+        let canonical = canonical_workspace_key(key);
+        let same_workspace = self
+            .bindings
+            .iter()
+            .position(|b| canonical_workspace_key(&b.key) == canonical);
+        match same_workspace.and_then(|i| self.bindings.get_mut(i)) {
             Some(existing) => {
+                // The same workspace, however it was spelled: the entry
+                // keeps its place and takes the canonical key.
+                existing.key = canonical.clone();
                 if existing.namespace == namespace {
                     if let Some(p) = path {
                         existing.path = Some(p.to_string());
@@ -113,7 +131,7 @@ impl ProjectRegistry {
                     Err(MnexisError::invalid_argument(
                         "key",
                         format!(
-                            "workspace key `{key}` is already bound to namespace `{}`; \
+                            "workspace key `{canonical}` is already bound to namespace `{}`; \
                              pass --force to move it to `{namespace}`",
                             existing.namespace
                         ),
@@ -122,7 +140,7 @@ impl ProjectRegistry {
             }
             None => {
                 self.bindings.push(ProjectBinding {
-                    key: key.to_string(),
+                    key: canonical,
                     namespace: namespace.to_string(),
                     path: path.map(|p| p.to_string()),
                 });
@@ -210,21 +228,6 @@ impl ProjectRegistry {
             }
         }
         out
-    }
-
-    /// The JSON envelope for `project list`.
-    pub fn to_json(&self) -> serde_json::Value {
-        json!({
-            "bindings": self
-                .bindings
-                .iter()
-                .map(|b| json!({
-                    "key": b.key,
-                    "namespace": b.namespace,
-                    "path": b.path,
-                }))
-                .collect::<Vec<_>>(),
-        })
     }
 }
 

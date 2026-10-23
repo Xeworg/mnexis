@@ -50,20 +50,6 @@ export function workspaceKey({ remote, repoRoot, cwd }) {
 	return `path:${cwd}`;
 }
 
-/** Derive a short, lowercase, hyphenated namespace name from a directory. */
-export function deriveNamespaceName(directoryPath) {
-	const base = String(directoryPath ?? "")
-		.split(/[\\/]/)
-		.filter(Boolean)
-		.pop();
-	const name = (base ?? "")
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/-+/g, "-")
-		.replace(/^-+|-+$/g, "");
-	return name || "workspace";
-}
-
 /**
  * Decide which namespace to use for a workspace key.
  *

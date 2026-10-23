@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-	deriveNamespaceName,
 	findMarkerNamespace,
 	normalizeRemoteUrl,
 	selectNamespace,
@@ -57,11 +56,7 @@ test("workspaceKey falls back to the cwd outside a repository", () => {
 	assert.equal(workspaceKey({ remote: null, repoRoot: null, cwd: "/tmp/x" }), "path:/tmp/x");
 });
 
-test("deriveNamespaceName produces a short lowercase hyphenated name", () => {
-	assert.equal(deriveNamespaceName("/home/xeworg/Proyectos/AegisPI"), "aegispi");
-	assert.equal(deriveNamespaceName("/home/xeworg/Proyectos/My Project!"), "my-project");
-	assert.equal(deriveNamespaceName("/"), "workspace");
-});
+
 
 test("selectNamespace keeps an existing binding and never renames it", () => {
 	const bindings = [{ key: "git:github.com-xeworg-aegispi", namespace: "aegispi", path: "/w" }];

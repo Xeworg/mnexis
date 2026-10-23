@@ -715,3 +715,77 @@ fn a_query_without_words_is_an_invalid_argument() {
         "an empty query must never be reported as a busy store"
     );
 }
+
+/// No text a caller can send reaches FTS5 as syntax, in any mode.
+#[test]
+fn no_query_text_can_reach_fts5_as_syntax() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    insert_raw(
+        &conn,
+        "uuid-c",
+        "ns",
+        "topic-c",
+        "fact",
+        "active",
+        "El contacto de soporte es el oncall",
+        0,
+        None,
+        None,
+    );
+    // The queries an agent writes, and the ones a hostile caller writes.
+    let queries = [
+        "staging-eu",
+        "v1.2",
+        "user@example.com",
+        "postgres://localhost:5432/payments",
+        "a OR b",
+        "NEAR(x, 3)",
+        "content:puerto",
+        "\"quoted phrase\"",
+        "*",
+        "AND",
+        "\"\"",
+        "say \"hi\" now",
+        "-",
+        "...",
+    ];
+    for q in queries {
+        for mode in [MatchMode::Any, MatchMode::All, MatchMode::Phrase] {
+            match search(
+                &conn,
+                q,
+                mode,
+                NamespaceFilter::Any,
+                StateFilter::default(),
+                DeletedFilter::default(),
+                None,
+                10,
+            ) {
+                Ok(_) => {}
+                Err(e) => assert_eq!(
+                    e.error_code_label(),
+                    "INVALID_ARGUMENT",
+                    "q={q:?} mode={mode:?} must never be BUSY or INDEX_UNAVAILABLE: {e}"
+                ),
+            }
+        }
+    }
+    // And the hyphenated query still finds its memory.
+    let hits = search(
+        &conn,
+        "staging-eu",
+        MatchMode::Any,
+        NamespaceFilter::Any,
+        StateFilter::default(),
+        DeletedFilter::default(),
+        None,
+        10,
+    )
+    .expect("the hyphenated query must run");
+    assert_eq!(
+        hits.len(),
+        0,
+        "no memory holds that word, but the query ran"
+    );
+}

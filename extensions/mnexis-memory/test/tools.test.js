@@ -56,7 +56,7 @@ if (args[0] === "project" && args[1] === "list") {
 	// The engine publishes the canonical key of the workspace it runs in
 	// and the binding for it. MNEXIS_FAKE_NO_BINDING stands for a
 	// workspace nobody bound yet.
-	const key = canonicalKey(process.cwd());
+	const key = process.env.MNEXIS_FAKE_PUBLISHED_KEY || canonicalKey(process.cwd());
 	const bindings = process.env.MNEXIS_FAKE_NO_BINDING ? [] : [{ key, namespace: workspace }];
 	process.stdout.write(JSON.stringify({ bindings, current_key: key }));
 } else if (args[0] === "config" && args[1] === "show") {
@@ -279,6 +279,31 @@ test("a workspace with no binding refuses the write and names the commands", asy
 
 	const bind = calls(log).find((args) => args[0] === "project" && args[1] === "bind");
 	assert.equal(bind, undefined, "the agent does not invent a namespace");
+	delete process.env.MNEXIS_FAKE_NO_BINDING;
+});
+
+test("the engine's published key is the one the extension binds and looks up", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_PUBLISHED_KEY = "git:engine-owned-key";
+	process.env.MNEXIS_FAKE_NO_BINDING = "1";
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+	assert.ok(save, "mnexis_save is registered");
+
+	const result = await save.execute("t9", { content: "a fact" }, undefined, undefined, {
+		...context(),
+		cwd: process.cwd(),
+	});
+	assert.equal(result.isError, true, "no binding under the engine key yet");
+	const text = result.content.map((block) => block.text).join(" ");
+	assert.match(text, /git:engine-owned-key/, `the message must carry the ENGINE key: ${text}`);
+	assert.equal(
+		calls(log).find((args) => args[0] === "project" && args[1] === "bind"),
+		undefined,
+		"the agent does not bind a namespace of its own",
+	);
+	delete process.env.MNEXIS_FAKE_PUBLISHED_KEY;
 	delete process.env.MNEXIS_FAKE_NO_BINDING;
 });
 

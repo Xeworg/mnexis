@@ -47,6 +47,34 @@ impl Profile {
     fn registry_path(&self) -> std::path::PathBuf {
         self.data_dir.join("projects.toml")
     }
+
+    /// Run the command inside a workspace whose identity is fixed: a git
+    /// repository with one known remote. A test that depends on the
+    /// remote of the checkout it runs in is not a test.
+    fn run_in_workspace(&self, remote: &str, args: &[&str]) -> Output {
+        let dir = tempdir_in("target").expect("tempdir under target/");
+        let root = dir.path();
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q", "."]);
+        git(&["remote", "add", "origin", remote]);
+        Command::new(env!("CARGO_BIN_EXE_mnexis"))
+            .current_dir(root)
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn mnexis binary")
+    }
 }
 
 fn stderr_of(out: &Output) -> String {
@@ -282,18 +310,55 @@ fn a_binding_recorded_before_the_rule_still_resolves() {
     // A registry written by an older engine: the raw key, by hand.
     std::fs::write(
         p.registry_path(),
-        "[[project]]\nkey = \"git:github.com/Xeworg/mnexis\"\nnamespace = \"mnexis\"\n",
+        "[[project]]\nkey = \"git:github.com/Xeworg/pagos\"\nnamespace = \"pagos\"\n",
     )
     .expect("write the legacy registry");
-    let out = p.run_silent(&["status"]);
+    let out = p.run_in_workspace("https://github.com/Xeworg/pagos.git", &["status", "--json"]);
     assert!(out.status.success(), "status failed: {}", stderr_of(&out));
-    let text = stdout_of(&out);
-    assert!(
-        text.contains(KEY_CANONICAL),
-        "the status must report the canonical key: {text}"
+    let json: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("status must answer json");
+    assert_eq!(
+        json["workspace"]["namespace"], "pagos",
+        "the legacy binding must resolve to its namespace: {json}"
+    );
+    assert_eq!(
+        json["workspace"]["key"], "git:github.com-xeworg-pagos",
+        "the key is reported in its canonical form: {json}"
+    );
+}
+
+#[test]
+fn a_legacy_raw_binding_is_updated_in_place_not_duplicated() {
+    let p = Profile::new();
+    // The default state of an existing user's registry: one binding, a raw
+    // key. Binding the same workspace again must not leave two entries
+    // behind, and the stale one must not shadow the canonical one.
+    std::fs::write(
+        p.registry_path(),
+        "[[project]]\nkey = \"git:github.com/Xeworg/pagos\"\nnamespace = \"pagos\"\n",
+    )
+    .expect("write the legacy registry");
+    let out = p.run_silent(&[
+        "project",
+        "bind",
+        "web",
+        "--key",
+        "https://github.com/Xeworg/pagos.git",
+        "--force",
+    ]);
+    assert!(out.status.success(), "bind failed: {}", stderr_of(&out));
+    let registry = p.registry_text();
+    assert_eq!(
+        registry.matches("[[project]]").count(),
+        1,
+        "one workspace, one binding, no shadow copy: {registry}"
     );
     assert!(
-        text.contains("mnexis"),
-        "the legacy binding must still resolve to its namespace: {text}"
+        !registry.contains("git:github.com/Xeworg/pagos"),
+        "the stale raw key must be gone: {registry}"
+    );
+    assert!(
+        registry.contains("git:github.com-xeworg-pagos"),
+        "the canonical key is recorded: {registry}"
     );
 }

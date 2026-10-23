@@ -120,6 +120,21 @@ installer suite and the extension's tests pass.
 - **L9** (2026-10-23) — PR **#22** (`feat(query): one contract for the query
   and the workspace key`), base `main`, 5 commits, 32 files, +1084/-58. The
   repository has no PR workflow, so there are no required checks pending.
+- **L10** (2026-10-23) — The independent verification of the change
+  (against the released 0.2.0 binary) confirmed both defects, the whole
+  contract impact and the suites, and found three things this change did
+  not get right: a registry written before the canonical-key rule keeps a
+  stale entry that shadows the canonical one and makes the CLI's own
+  recovery advice unusable (HIGH); the extension's shipped README still
+  described the removed auto-bind, and it is installed into every user's
+  agent directory (MEDIUM); and the new legacy-binding test passed on
+  0.2.0 too and depended on the remote of the checkout it ran in
+  (MEDIUM). All three are fixed in the follow-up branch
+  `fix/canonical-binding-shadow` (PR #23). Two low findings are accepted
+  as trade-offs and documented: `any` + stopwords can return the whole
+  store (the best match still ranks first, and `--match all` is the
+  precise mode), and the operator words can no longer be searched as
+  words (they are terms in `--match phrase`).
 
 ## Delivery
 
