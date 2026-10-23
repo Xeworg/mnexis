@@ -130,8 +130,9 @@ command themselves, or bind that workspace first.
    `mnexis save --namespace <name> "<one self-contained sentence>" --tags a,b --topic-key <stable-key>`.
    The content must make sense months later with no surrounding chat.
    `--topic-key` is unique per namespace: reuse it to group facts about one
-   topic. It accepts lowercase ASCII letters, digits, `.` and `-` only —
-   `snake/design` is rejected, `snake-design` is accepted. `--idempotency-key`
+   topic. It accepts lowercase ASCII letters, digits, `.`, `-` and `/` —
+   `snake/design` and `snake-design` are both accepted, and both group the
+   same facts. `--idempotency-key`
    makes retries safe.
 3. **Replace facts by superseding, never by deleting.** Outdated but
    historically true facts keep their record: `mnexis save` the newer fact,

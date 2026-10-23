@@ -107,7 +107,7 @@ async fn tools_list_contains_all_10_memory_tools_and_no_ping()
             )
         });
     assert!(
-        description.contains("lowercase letters, digits, '.' and '-'"),
+        description.contains("lowercase letters, digits, '.', '-' and '/'"),
         "memory_save topic_key schema must document the charset, got: {description:?}"
     );
 

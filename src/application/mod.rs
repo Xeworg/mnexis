@@ -7,6 +7,7 @@ pub mod budget;
 pub mod context;
 pub mod io;
 pub mod opencode_config;
+pub mod preview;
 pub mod service;
 pub mod update;
 pub mod workspace;
@@ -23,6 +24,7 @@ pub use budget::{Budget, BudgetMode, SUPPORTED_TOKENIZER_V1, token_count_v1};
 pub use context::{ContextItem, ContextRequest, ContextResponse, SearchFilter};
 pub use io::ConflictPolicy;
 pub use opencode_config::{ConfigAction, ConfigOutcome, OpencodeConfig};
+pub use preview::{MemoryPreview, previews};
 pub use service::{
     ImportSummary, ListFilter, MemoryService, SaveRequest, ServiceConfig, SupersedeRequest,
     UpdateRequest,

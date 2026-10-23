@@ -90,7 +90,7 @@ pub enum Command {
         /// Assertion basis (default: user_stated)
         #[arg(long)]
         basis: Option<String>,
-        /// Topic key (unique per namespace when non-empty; allowed: lowercase letters, digits, '.' and '-')
+        /// Topic key (unique per namespace when non-empty; allowed: lowercase letters, digits, '.', '-' and '/')
         #[arg(long)]
         topic_key: Option<String>,
         /// Idempotency key for safe retries
@@ -169,6 +169,9 @@ pub enum Command {
         limit: usize,
         #[arg(long, default_value_t = 0)]
         offset: usize,
+        /// The complete content of every memory, not a preview
+        #[arg(long)]
+        full: bool,
     },
 
     /// Where this workspace may write, and what is already there
@@ -535,6 +538,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             state,
             limit,
             offset,
+            full,
         } => {
             let mut profile = Profile::open(data_dir)?;
             commands::list(
@@ -543,6 +547,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 state.clone(),
                 *limit,
                 *offset,
+                *full,
             )
         }
         Command::Status => status_cmd::status(data_dir),
