@@ -26,7 +26,10 @@ pub use context::{ContextItem, ContextRequest, ContextResponse, SearchFilter};
 pub use io::ConflictPolicy;
 pub use opencode_config::{ConfigAction, ConfigOutcome, OpencodeConfig};
 pub use preview::{MemoryPreview, previews};
-pub use proposal::{SAME_FACT_REASON, duplicates_payload, link_command};
+pub use proposal::{
+    MAX_DUPLICATE_LIMIT, SAME_FACT_REASON, clamp_duplicate_limit, duplicate_item,
+    duplicates_payload, link_command,
+};
 pub use service::{
     ImportSummary, ListFilter, MemoryService, SaveRequest, ServiceConfig, SupersedeRequest,
     UpdateRequest,

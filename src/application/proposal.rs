@@ -14,6 +14,31 @@ use std::fmt::Write as _;
 use crate::domain::duplicates::DuplicateCandidate;
 use crate::domain::memory::Memory;
 
+/// The most candidates a shortlist holds. A shortlist is not a listing: past
+/// this many, the answer stops helping the agent and starts being a dump of
+/// the namespace. The CLI and the MCP tool read the same cap, so their
+/// envelopes cannot disagree.
+pub const MAX_DUPLICATE_LIMIT: usize = 50;
+
+/// The limit a caller asked for, capped at [`MAX_DUPLICATE_LIMIT`].
+pub fn clamp_duplicate_limit(limit: usize) -> usize {
+    limit.min(MAX_DUPLICATE_LIMIT)
+}
+
+/// One candidate in the on-demand envelope: the fields the save proposal
+/// carries, without its `link` command (the agent asking on demand has
+/// saved nothing to link yet). Both front ends build their items with it,
+/// so the CLI and the MCP tool cannot drift.
+pub fn duplicate_item(candidate: &DuplicateCandidate) -> serde_json::Value {
+    serde_json::json!({
+        "uuid": candidate.uuid,
+        "title": candidate.title,
+        "topic_key": candidate.topic_key,
+        "score": candidate.score,
+        "shared": candidate.shared,
+    })
+}
+
 /// Why a duplicate title is linked. The fact's history lives in the
 /// supersede chain; this is the reason the chain carries.
 pub const SAME_FACT_REASON: &str = "same fact, different title";

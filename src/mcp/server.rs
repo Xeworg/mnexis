@@ -13,13 +13,14 @@ use rmcp::{
 
 use crate::ApplicationService;
 use crate::MnexisError;
-use crate::application::{ListFilter, duplicates_payload};
+use crate::application::{ListFilter, clamp_duplicate_limit, duplicate_item, duplicates_payload};
+use crate::domain::duplicates::DEFAULT_DUPLICATE_LIMIT;
 use crate::domain::idempotency::IdempotencyKey;
 use crate::domain::memory::MemoryLink;
 use crate::mcp::tools::{
     DeleteArgs, GetArgs, HistoryArgs, ListArgs, McpError, RestoreArgs, SaveArgs, SavePromptArgs,
-    SearchArgs, SearchPromptsArgs, SessionEndArgs, SessionStartArgs, SuggestTopicKeyArgs,
-    SupersedeArgs, UpdateArgs, clamp_limit, parse_state, parse_tags,
+    ScanDuplicatesArgs, SearchArgs, SearchPromptsArgs, SessionEndArgs, SessionStartArgs,
+    SuggestTopicKeyArgs, SupersedeArgs, UpdateArgs, clamp_limit, parse_state, parse_tags,
 };
 use crate::mcp::transport::stdio;
 use crate::storage::memory_repo::SqliteMemoryRepository;
@@ -44,7 +45,7 @@ fn relations_payload(links: &[MemoryLink]) -> Vec<serde_json::Value> {
 /// How many recent memories the `memory_workspace` tool reports.
 const WORKSPACE_RECENT_LIMIT: usize = 3;
 
-/// The MCP server — owns the MemoryService and exposes 14 tools.
+/// The MCP server — owns the MemoryService and exposes 16 tools.
 ///
 /// All tool functions take `&self`; the Arc<Mutex> provides interior
 /// mutability so the service can be mutated without needing `&mut self`.
@@ -308,6 +309,35 @@ impl McpServer {
             "title": args.title,
             "topic_key": key,
             "recorded_by": occupier,
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+
+    /// The records of a namespace whose titles look like the given one.
+    ///
+    /// The same answer the save carries, asked on demand: the agent can look
+    /// before it saves, instead of learning about the record it duplicated
+    /// afterwards.
+    fn do_scan_duplicates(&self, args: ScanDuplicatesArgs) -> Result<String, McpError> {
+        let namespace = args
+            .namespace
+            .unwrap_or_else(|| self.default_namespace.clone());
+        let limit = clamp_duplicate_limit(args.limit.unwrap_or(DEFAULT_DUPLICATE_LIMIT));
+        let svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        // The shortlist is a read of the namespace: the caller's scope
+        // decides, the same way it decides every other read of that
+        // namespace.
+        let candidates = svc.duplicates(&namespace, &args.title, limit, None)?;
+        drop(svc);
+        let items: Vec<serde_json::Value> = candidates.iter().map(duplicate_item).collect();
+        let json = serde_json::json!({
+            "title": args.title,
+            "namespace": namespace,
+            "count": items.len(),
+            "items": items,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
@@ -606,6 +636,17 @@ impl McpServer {
         Parameters(args): Parameters<SuggestTopicKeyArgs>,
     ) -> Result<String, McpError> {
         self.do_suggest_topic_key(args)
+    }
+
+    #[tool(
+        name = "memory_scan_duplicates",
+        description = "Call this BEFORE you save a fact you are not sure about, or when a save returned duplicates: it returns the records of the namespace whose titles look like the one you give, each with a score and the words it shares with your title. The engine proposes and you decide: if one of them is the same fact, link them with `mnexis supersede --older <candidate> --newer <saved> --reason \"same fact, different title\"`."
+    )]
+    fn memory_scan_duplicates(
+        &self,
+        Parameters(args): Parameters<ScanDuplicatesArgs>,
+    ) -> Result<String, McpError> {
+        self.do_scan_duplicates(args)
     }
 
     #[tool(

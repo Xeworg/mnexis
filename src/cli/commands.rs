@@ -4,13 +4,15 @@
 //! logic lives here — validation, scopes, and state transitions are the
 //! service's job.
 
+use std::fmt::Write as _;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 use serde_json::json;
 
 use crate::application::{
-    ListFilter, SaveRequest, SupersedeRequest, UpdateRequest, duplicates_payload,
+    ListFilter, SaveRequest, SupersedeRequest, UpdateRequest, clamp_duplicate_limit,
+    duplicate_item, duplicates_payload,
 };
 use crate::cli::output::CommandOutcome;
 use crate::cli::profile::Profile;
@@ -242,6 +244,55 @@ pub fn suggest_topic_key(
             "title": title,
             "topic_key": key,
             "recorded_by": occupier,
+        }),
+        text,
+    ))
+}
+
+/// `mnexis duplicates --title "<title>"` — the records of a namespace whose
+/// title looks like the given one.
+///
+/// A save carries the same shortlist at the moment the record would be
+/// created; this is the agent asking **before** it saves, so there is no
+/// record to link yet and no `link` command in the items.
+pub fn duplicates(
+    profile: &mut Profile,
+    title: String,
+    namespace: Option<String>,
+    limit: usize,
+) -> Result<CommandOutcome, MnexisError> {
+    let namespace = namespace.unwrap_or_else(|| profile.default_namespace());
+    // The same boundary the other commands that name a namespace pass: a
+    // namespace this workspace does not own is refused, not answered.
+    WorkspaceGuard::resolve(profile)?.authorize(&namespace)?;
+    // service.duplicates authorizes the read of the namespace itself.
+    let candidates =
+        profile
+            .service_ref()
+            .duplicates(&namespace, &title, clamp_duplicate_limit(limit), None)?;
+    let items: Vec<serde_json::Value> = candidates.iter().map(duplicate_item).collect();
+    let text = if candidates.is_empty() {
+        "no record of this namespace looks like that title".to_string()
+    } else {
+        let mut text = String::from("these records of the namespace look like this title:");
+        for candidate in &candidates {
+            let _ = write!(
+                text,
+                "\n  - {} [{}] score {} shared: {}",
+                candidate.title,
+                candidate.topic_key,
+                candidate.score,
+                candidate.shared.join(", ")
+            );
+        }
+        text
+    };
+    Ok(CommandOutcome::new(
+        json!({
+            "title": title,
+            "namespace": namespace,
+            "count": items.len(),
+            "items": items,
         }),
         text,
     ))

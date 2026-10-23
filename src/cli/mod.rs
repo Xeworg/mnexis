@@ -247,6 +247,26 @@ pub enum Command {
         namespace: Option<String>,
     },
 
+    /// The records of a namespace whose title looks like the given one
+    ///
+    /// A shortlist, not a verdict: the engine cannot tell that two different
+    /// titles are the same fact, so it proposes the records your title looks
+    /// like — with a score and the words they share — and you decide.
+    Duplicates {
+        /// The title you are about to record, or the one you are asking about
+        #[arg(long, value_name = "TITLE")]
+        title: String,
+        /// Namespace (default: the profile's default_namespace)
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Max candidates (default 5, capped at 50)
+        #[arg(
+            long,
+            default_value_t = crate::domain::duplicates::DEFAULT_DUPLICATE_LIMIT
+        )]
+        limit: usize,
+    },
+
     /// Where this workspace may write, and what is already there
     Status,
 
@@ -679,6 +699,14 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::SuggestTopicKey { title, namespace } => {
             let mut profile = Profile::open(data_dir)?;
             commands::suggest_topic_key(&mut profile, title.clone(), namespace.clone())
+        }
+        Command::Duplicates {
+            title,
+            namespace,
+            limit,
+        } => {
+            let mut profile = Profile::open(data_dir)?;
+            commands::duplicates(&mut profile, title.clone(), namespace.clone(), *limit)
         }
         Command::Status => status_cmd::status(data_dir),
         Command::Show { uuid, revision } => {

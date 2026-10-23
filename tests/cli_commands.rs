@@ -1987,3 +1987,145 @@ fn a_hyphenated_prompt_search_finds_the_prompt() {
         .unwrap_status("prompts --search");
     assert_eq!(stdout_json(&found)["count"], 1);
 }
+
+// --- duplicates: the agent can ask on demand (near-duplicate-titles S5) ---
+
+/// The `mnexis duplicates` answer for a title, in JSON mode.
+fn duplicates(profile: &Profile, title: &str, extra: &[&str]) -> serde_json::Value {
+    let mut args = vec!["duplicates", "--title", title, "--namespace", "proyecto-a"];
+    args.extend_from_slice(extra);
+    stdout_json(&profile.run_silent(&args).unwrap_status("duplicates"))
+}
+
+#[test]
+fn duplicates_names_the_record_the_title_looks_like() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    let existing = namespace_with_history(&p);
+
+    let json = duplicates(&p, "puerto de pagos", &[]);
+
+    // The envelope names the question it answered.
+    assert_eq!(json["title"], "puerto de pagos", "{json}");
+    assert_eq!(json["namespace"], "proyecto-a", "{json}");
+    assert_eq!(json["count"], 1, "{json}");
+    let items = json["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the envelope carries the items: {json}"));
+    assert_eq!(items.len(), 1, "one record looks like it: {json}");
+
+    // The candidate carries the same evidence the save proposal carries,
+    // and it is the shortlist the agent adjudicates on its own.
+    let item = &items[0];
+    assert_eq!(item["uuid"], existing["uuid"]);
+    assert_eq!(item["title"], "puerto del servicio");
+    assert_eq!(item["topic_key"], "puerto-del-servicio");
+    assert!(
+        item["score"].as_f64().unwrap_or(0.0) > 0.0,
+        "the candidate carries its score: {json}"
+    );
+    let shared = item["shared"]
+        .as_array()
+        .expect("the candidate carries the words it shares");
+    assert!(
+        shared.contains(&serde_json::json!("puerto")),
+        "the evidence names the shared word: {json}"
+    );
+    // Asking before saving means there is nothing to link yet.
+    assert!(
+        item.get("link").is_none(),
+        "the on-demand list carries no link command: {json}"
+    );
+
+    // The human rendering lists the same candidate, one per line, with the
+    // title, the key, the score and the evidence.
+    let text = run_text(
+        &p,
+        &[
+            "duplicates",
+            "--title",
+            "puerto de pagos",
+            "--namespace",
+            "proyecto-a",
+        ],
+    )
+    .unwrap_status("duplicates (text)");
+    let text = String::from_utf8(text.stdout).expect("utf-8 stdout");
+    assert!(
+        text.contains("  - puerto del servicio [puerto-del-servicio] score "),
+        "the line carries the title, the key and the score: {text:?}"
+    );
+    assert!(
+        text.contains("shared: puerto"),
+        "the line carries the evidence: {text:?}"
+    );
+}
+
+#[test]
+fn a_title_with_nothing_in_common_lists_nothing() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    namespace_with_history(&p);
+
+    let json = duplicates(&p, "facturacion mensual", &[]);
+
+    assert_eq!(json["count"], 0, "nothing looks like that title: {json}");
+    assert_eq!(json["items"], serde_json::json!([]), "{json}");
+}
+
+#[test]
+fn duplicates_limit_bounds_the_shortlist() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    namespace_with_history(&p);
+
+    // `servicio` and `conexion` are each evidence of one record, so two
+    // records of the namespace look like this title.
+    let all = duplicates(&p, "servicio de conexion", &[]);
+    assert_eq!(all["count"], 2, "two records look like it: {all}");
+
+    let one = duplicates(&p, "servicio de conexion", &["--limit", "1"]);
+    assert_eq!(one["count"], 1, "--limit 1 asks for one: {one}");
+    assert_eq!(one["items"].as_array().map(Vec::len), Some(1), "{one}");
+
+    // The limit is clamped, not refused: a huge one answers like the max.
+    let huge = duplicates(&p, "servicio de conexion", &["--limit", "1000"]);
+    assert_eq!(huge["count"], 2, "--limit 1000 is clamped: {huge}");
+}
+
+#[test]
+fn the_duplicates_text_says_when_there_is_nothing() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    namespace_with_history(&p);
+
+    let out = run_text(
+        &p,
+        &[
+            "duplicates",
+            "--title",
+            "facturacion mensual",
+            "--namespace",
+            "proyecto-a",
+        ],
+    )
+    .unwrap_status("duplicates (text)");
+    let text = String::from_utf8(out.stdout).expect("utf-8 stdout");
+    assert!(
+        text.contains("no record of this namespace looks like that title"),
+        "the human rendering says there is nothing: {text:?}"
+    );
+}
+
+#[test]
+fn a_marked_workspace_refuses_duplicates_for_another_namespace() {
+    let p = guard_profile();
+    let ws = Workspace::marked(MARKER_NAMESPACE);
+    let out = p.run_in_dir(
+        ws.path(),
+        &[
+            "duplicates",
+            "--title",
+            "puerto de pagos",
+            "--namespace",
+            OTHER_NAMESPACE,
+        ],
+    );
+    assert_workspace_refusal(&out, MARKER_NAMESPACE);
+}

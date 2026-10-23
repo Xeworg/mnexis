@@ -3,7 +3,8 @@
 //! The argument shapes of the MCP tools: memory_save, memory_get,
 //! memory_list, memory_update, memory_history, memory_supersede,
 //! memory_delete, memory_restore, memory_search, memory_session_start,
-//! memory_session_end, memory_save_prompt and memory_search_prompts.
+//! memory_session_end, memory_save_prompt, memory_search_prompts,
+//! memory_suggest_topic_key and memory_scan_duplicates.
 //!
 //! MCP-required field requirements per e2-core §8:
 //! - memory_supersede: older_uuid, newer_uuid, expected_old_revision,
@@ -145,6 +146,20 @@ pub struct SuggestTopicKeyArgs {
     pub namespace: Option<String>,
 }
 
+/// Arguments for `memory_scan_duplicates`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScanDuplicatesArgs {
+    /// The title to look for: the title of the fact you are about to record,
+    /// or the one you are asking about.
+    pub title: String,
+    /// Namespace (default: the profile's default namespace).
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Max candidates (default 5, clamped to 50).
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 /// Arguments for `memory_search_prompts`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchPromptsArgs {
@@ -252,6 +267,7 @@ pub const TOOL_MEMORY_SESSION_END: &str = "memory_session_end";
 pub const TOOL_MEMORY_SAVE_PROMPT: &str = "memory_save_prompt";
 pub const TOOL_MEMORY_SEARCH_PROMPTS: &str = "memory_search_prompts";
 pub const TOOL_MEMORY_SUGGEST_TOPIC_KEY: &str = "memory_suggest_topic_key";
+pub const TOOL_MEMORY_SCAN_DUPLICATES: &str = "memory_scan_duplicates";
 
 // ---------------------------------------------------------------------------
 // Helpers

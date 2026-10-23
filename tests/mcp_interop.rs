@@ -1516,3 +1516,141 @@ async fn memory_save_carries_the_records_the_title_looks_like()
     client.cancel().await?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// memory_scan_duplicates: the agent can ask on demand
+// (near-duplicate-titles S5)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn memory_scan_duplicates_returns_the_shortlist() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // A namespace with enough titles for a word to be evidence (a word used
+    // by more than half of them is not), one of which the query looks like.
+    let existing = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "el servicio usa 8081", "title": "puerto del servicio" }),
+    )
+    .await?;
+    let existing: serde_json::Value = serde_json::from_str(&existing)?;
+    for (content, title) in [
+        ("treinta segundos", "timeout de conexion"),
+        ("tres reintentos", "reintentos de envio"),
+    ] {
+        call_tool_text(
+            &client,
+            "memory_save",
+            serde_json::json!({ "content": content, "title": title }),
+        )
+        .await?;
+    }
+
+    let text = call_tool_text(
+        &client,
+        "memory_scan_duplicates",
+        serde_json::json!({ "title": "puerto de pagos" }),
+    )
+    .await?;
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+
+    // The same envelope the CLI answers with.
+    assert_eq!(json["title"], "puerto de pagos", "{json}");
+    assert!(
+        json["namespace"].is_string(),
+        "the envelope names the namespace it answered from: {json}"
+    );
+    assert_eq!(json["count"], 1, "{json}");
+    let items = json["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the envelope carries the items: {json}"));
+    assert_eq!(items.len(), 1, "one record looks like it: {json}");
+    let item = &items[0];
+    assert_eq!(item["uuid"], existing["uuid"]);
+    assert_eq!(item["title"], "puerto del servicio");
+    assert_eq!(item["topic_key"], "puerto-del-servicio");
+    assert!(
+        item["score"].as_f64().unwrap_or(0.0) > 0.0,
+        "the candidate carries its score: {json}"
+    );
+    let shared = item["shared"]
+        .as_array()
+        .expect("the candidate carries the words it shares");
+    assert!(
+        shared.contains(&serde_json::json!("puerto")),
+        "the evidence names the shared word: {json}"
+    );
+    // Asking before saving means there is nothing to link yet.
+    assert!(
+        item.get("link").is_none(),
+        "the on-demand list carries no link command: {json}"
+    );
+
+    // Nothing looks like this title: the same envelope, empty.
+    let empty = call_tool_text(
+        &client,
+        "memory_scan_duplicates",
+        serde_json::json!({ "title": "facturacion mensual" }),
+    )
+    .await?;
+    let empty: serde_json::Value = serde_json::from_str(&empty)?;
+    assert_eq!(empty["count"], 0, "{empty}");
+    assert_eq!(empty["items"], serde_json::json!([]), "{empty}");
+
+    client.cancel().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_scan_duplicates_refuses_a_namespace_outside_the_scope()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_scoped_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // The shortlist of a namespace is a read of that namespace: reading one
+    // out of scope is denied the way every other tool denies it.
+    let denied = client
+        .call_tool(
+            CallToolRequestParams::new("memory_scan_duplicates").with_arguments(
+                serde_json::json!({
+                    "title": "puerto de pagos",
+                    "namespace": "definitely-not-in-scope-xyz"
+                })
+                .as_object()
+                .expect("static object")
+                .clone(),
+            ),
+        )
+        .await
+        .expect_err("an out-of-scope namespace must deny");
+    let err_text = format!("{denied}");
+    assert!(
+        err_text.contains("-32050"),
+        "code must reach the client: {err_text}"
+    );
+    assert!(
+        err_text.contains("NOT_FOUND"),
+        "data.error_code must reach the client: {err_text}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
