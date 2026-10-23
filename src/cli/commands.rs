@@ -365,6 +365,9 @@ pub fn search(
     // Which of the hits replaced which.
     let hit_uuids: Vec<String> = hits.iter().map(|h| h.uuid.clone()).collect();
     let relations = profile.service_ref().relations_between(&hit_uuids)?;
+    // What each hit *is*: the title is the identity of the fact, and the
+    // retrieval layer ranks rows without it (identity-visibility S1).
+    let titles = titles_of(profile.service_ref(), &hit_uuids)?;
 
     if explain_hits {
         // Same filters as the repository's search path, on a second
@@ -384,11 +387,15 @@ pub fn search(
             None,
             limit,
         )?;
+        let explained_uuids: Vec<String> = explained.iter().map(|h| h.uuid.clone()).collect();
+        let explained_titles = titles_of(profile.service_ref(), &explained_uuids)?;
         let items: Vec<_> = explained
             .iter()
-            .map(|h| {
+            .zip(explained_titles.iter())
+            .map(|(h, title)| {
                 json!({
                     "uuid": h.uuid,
+                    "title": title,
                     "rank": h.rank,
                     "namespace": h.namespace,
                     "memory_type": h.memory_type,
@@ -401,8 +408,15 @@ pub fn search(
             .collect();
         let text = explained
             .iter()
+            .zip(explained_titles.iter())
             .enumerate()
-            .map(|(i, h)| crate::cli::output::explained_hit_line(h, i + 1))
+            .map(|(i, (h, title))| {
+                format!(
+                    "{}{}",
+                    crate::cli::output::explained_hit_line(h, i + 1),
+                    title_suffix(title)
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         return Ok(CommandOutcome::new(
@@ -422,9 +436,11 @@ pub fn search(
 
     let items: Vec<_> = hits
         .iter()
-        .map(|h| {
+        .zip(titles.iter())
+        .map(|(h, title)| {
             json!({
                 "uuid": h.uuid,
+                "title": title,
                 "rank": h.rank,
                 "namespace": h.namespace,
                 "memory_type": h.memory_type,
@@ -438,8 +454,15 @@ pub fn search(
         .collect();
     let text = hits
         .iter()
+        .zip(titles.iter())
         .enumerate()
-        .map(|(i, h)| crate::cli::output::hit_line(h, i + 1))
+        .map(|(i, (h, title))| {
+            format!(
+                "{}{}",
+                crate::cli::output::hit_line(h, i + 1),
+                title_suffix(title)
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     Ok(CommandOutcome::new(
@@ -456,6 +479,37 @@ pub fn search(
             text
         },
     ))
+}
+
+/// The title of each of `uuids`, in the order given.
+///
+/// A search hit ranks a row and carries no title: the identity of the fact
+/// lives in the canonical record, so the read surface resolves it per hit
+/// (identity-visibility S1). A uuid the scope no longer resolves reports
+/// the empty string, exactly like a memory saved without a title.
+fn titles_of(
+    service: &crate::application::ApplicationService,
+    uuids: &[String],
+) -> Result<Vec<String>, MnexisError> {
+    let mut titles = Vec::with_capacity(uuids.len());
+    for uuid in uuids {
+        titles.push(service.get(uuid)?.map(|m| m.title).unwrap_or_default());
+    }
+    Ok(titles)
+}
+
+/// The title as a human line carries it: quoted, on one line, and absent
+/// when the memory has none, so an untitled record keeps the line it had.
+///
+/// [`crate::cli::output::hit_line`] and `memory_line` own the shape of the
+/// line; the title is appended here because those renderers live outside
+/// this change's edit surface.
+fn title_suffix(title: &str) -> String {
+    if title.is_empty() {
+        String::new()
+    } else {
+        format!(" \"{}\"", title.replace('\n', " "))
+    }
 }
 
 /// The relations between the memories a caller is reading: which one
@@ -497,7 +551,13 @@ pub fn list(
     let memories = profile.service_ref().list(filter)?;
     let text = memories
         .iter()
-        .map(crate::cli::output::memory_line)
+        .map(|m| {
+            format!(
+                "{}{}",
+                crate::cli::output::memory_line(m),
+                title_suffix(&m.title)
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     // A list is a list: the identity of every memory and a preview of its

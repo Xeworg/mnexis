@@ -41,6 +41,21 @@ fn relations_payload(links: &[MemoryLink]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// The title of each of `uuids`, in the order given.
+///
+/// A search hit ranks a row and the workspace projection carries no title:
+/// the identity of the fact lives in the canonical record, so the read
+/// surface resolves it (identity-visibility S1). A uuid the scope no longer
+/// resolves reports the empty string, exactly like a memory saved without a
+/// title.
+fn titles_of(service: &ApplicationService, uuids: &[String]) -> Result<Vec<String>, MnexisError> {
+    let mut titles = Vec::with_capacity(uuids.len());
+    for uuid in uuids {
+        titles.push(service.get(uuid)?.map(|m| m.title).unwrap_or_default());
+    }
+    Ok(titles)
+}
+
 /// How many recent memories the `memory_workspace` tool reports.
 const WORKSPACE_RECENT_LIMIT: usize = 3;
 
@@ -342,8 +357,23 @@ impl McpServer {
             &self.data_dir,
             WORKSPACE_RECENT_LIMIT,
         )?;
+        // The title is the identity of a fact (identity-visibility S1), and
+        // this is the first payload a session reads: the recent list says
+        // what each memory *is*. `RecentMemory` owns the rest of that shape;
+        // the title is added here because the projection lives outside this
+        // change's edit surface.
+        let recent_uuids: Vec<String> = status.recent.iter().map(|m| m.uuid.clone()).collect();
+        let titles = titles_of(&svc, &recent_uuids)?;
         drop(svc);
-        Ok(serde_json::to_string_pretty(&status).unwrap_or_default())
+        let mut payload = serde_json::to_value(&status).unwrap_or(serde_json::Value::Null);
+        if let Some(recent) = payload.get_mut("recent").and_then(|r| r.as_array_mut()) {
+            for (item, title) in recent.iter_mut().zip(titles) {
+                if let Some(object) = item.as_object_mut() {
+                    object.insert("title".to_string(), serde_json::Value::String(title));
+                }
+            }
+        }
+        Ok(serde_json::to_string_pretty(&payload).unwrap_or_default())
     }
 
     fn do_update(&self, args: UpdateArgs) -> Result<String, McpError> {
@@ -482,15 +512,18 @@ impl McpServer {
             None => crate::domain::query::MatchMode::default(),
         };
         let hits = svc.search(&args.query, args.namespace.as_deref(), limit, mode)?;
-        // Which of the hits replaced which.
+        // Which of the hits replaced which, and what each hit *is*.
         let hit_uuids: Vec<String> = hits.iter().map(|h| h.uuid.clone()).collect();
         let relations = svc.relations_between(&hit_uuids)?;
+        let titles = titles_of(&svc, &hit_uuids)?;
         drop(svc);
         let items: Vec<_> = hits
             .iter()
-            .map(|h| {
+            .zip(titles.iter())
+            .map(|(h, title)| {
                 serde_json::json!({
                     "uuid": h.uuid,
+                    "title": title,
                     "rank": h.rank,
                     "namespace": h.namespace,
                     "memory_type": h.memory_type,
