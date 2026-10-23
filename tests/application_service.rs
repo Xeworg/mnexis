@@ -6,6 +6,7 @@ use mnexis_core::application::{
 use mnexis_core::domain::error::MnexisError;
 use mnexis_core::domain::idempotency::IdempotencyKey;
 use mnexis_core::domain::memory::MemoryState;
+use mnexis_core::domain::query::MatchMode;
 use mnexis_core::domain::scope::{AccessScope, Operation};
 use mnexis_core::storage::memory_repo::SqliteMemoryRepository;
 use mnexis_core::storage::sqlite::open_sqlite;
@@ -88,20 +89,33 @@ fn save_validates_topic_key_format() {
 fn save_topic_key_rejection_names_the_character_and_the_allowed_set() {
     let (mut svc, _dir) = make_service();
     let mut req = save_req("uuid-3b", "ok");
-    req.topic_key = "snake/design".into();
+    req.topic_key = "snake design".into();
     let err = svc.save(req).unwrap_err();
     match err {
         MnexisError::InvalidArgument { field, message } => {
             assert_eq!(field, "topic_key");
             assert_eq!(
                 message,
-                "invalid character: '/' (allowed: lowercase letters, digits, '.' and '-')"
+                "invalid character: ' ' (allowed: lowercase letters, digits, '.', '-' and '/')"
             );
         }
         other => panic!("expected InvalidArgument, got {other:?}"),
     }
     // The rejected save must not leave a record behind.
     assert!(svc.get("uuid-3b").unwrap().is_none());
+}
+
+#[test]
+fn save_accepts_the_separator_an_agent_groups_facts_with() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-3c", "the fact");
+    // The slash is how an agent writes a grouped key, and the other
+    // engine's convention: it used to be refused.
+    req.topic_key = "payments-api/server-config".into();
+    let saved = svc.save(req).expect("a grouped topic key must be accepted");
+    assert_eq!(saved.topic_key, "payments-api/server-config");
+    let found = svc.get("uuid-3c").unwrap().expect("the memory is stored");
+    assert_eq!(found.topic_key, "payments-api/server-config");
 }
 
 #[test]
@@ -582,4 +596,119 @@ fn supersede_rejects_when_the_older_side_is_not_active() {
     assert_eq!(mem.state, MemoryState::Proposed, "nothing written");
     assert_eq!(mem.revision, 1);
     assert!(svc.links("st-old").unwrap().is_empty());
+}
+
+// --- sessions and prompts ---
+
+#[test]
+fn a_session_starts_ends_and_keeps_its_summary() {
+    let (mut svc, _dir) = make_service();
+    let started = svc
+        .start_session("01JX", None, "/work/project", "2026-01-01T00:00:00Z")
+        .expect("the session starts");
+    assert_eq!(started.id, "01JX");
+    assert_eq!(started.ended_at, None);
+
+    let ended = svc
+        .end_session("01JX", Some("what the session did"), "2026-01-01T01:00:00Z")
+        .expect("the session ends");
+    assert_eq!(ended.ended_at.as_deref(), Some("2026-01-01T01:00:00Z"));
+    assert_eq!(ended.summary.as_deref(), Some("what the session did"));
+
+    // The session is still there, and it ended once.
+    let again = svc
+        .end_session("01JX", None, "2026-01-01T02:00:00Z")
+        .expect("ending twice keeps the first end");
+    assert_eq!(again.ended_at.as_deref(), Some("2026-01-01T01:00:00Z"));
+    assert_eq!(again.summary.as_deref(), Some("what the session did"));
+}
+
+#[test]
+fn starting_a_session_twice_keeps_the_first_one() {
+    let (mut svc, _dir) = make_service();
+    svc.start_session("01JX", None, "/work/project", "2026-01-01T00:00:00Z")
+        .expect("the session starts");
+    let again = svc
+        .start_session("01JX", None, "/other", "2026-01-02T00:00:00Z")
+        .expect("starting again is not an error");
+    assert_eq!(again.started_at, "2026-01-01T00:00:00Z");
+    assert_eq!(again.directory, "/work/project");
+}
+
+#[test]
+fn ending_a_session_that_does_not_exist_is_not_found() {
+    let (mut svc, _dir) = make_service();
+    let error = svc
+        .end_session("nope", None, "2026-01-01T00:00:00Z")
+        .unwrap_err();
+    assert!(matches!(error, MnexisError::NotFound { .. }));
+}
+
+#[test]
+fn a_prompt_is_stored_and_found_again() {
+    let (mut svc, _dir) = make_service();
+    svc.start_session("01JX", None, "/work/project", "2026-01-01T00:00:00Z")
+        .expect("the session starts");
+    let prompt = svc
+        .save_prompt(
+            "el puerto del servicio es 8081",
+            Some("01JX"),
+            None,
+            "2026-01-01T00:05:00Z",
+        )
+        .expect("the prompt is stored");
+    assert!(prompt.id > 0);
+    assert_eq!(prompt.session_id.as_deref(), Some("01JX"));
+
+    let hits = svc
+        .search_prompts("puerto 8081", 10, MatchMode::Any, None)
+        .expect("the search runs");
+    assert_eq!(hits.len(), 1, "the prompt is found: {hits:?}");
+    assert_eq!(hits[0].content, "el puerto del servicio es 8081");
+}
+
+#[test]
+fn a_hyphenated_prompt_query_still_finds_the_prompt() {
+    let (mut svc, _dir) = make_service();
+    svc.save_prompt(
+        "el deploy por defecto es staging-eu",
+        None,
+        None,
+        "2026-01-01T00:05:00Z",
+    )
+    .expect("the prompt is stored");
+    let hits = svc
+        .search_prompts("staging-eu", 10, MatchMode::Any, None)
+        .expect("the search runs");
+    assert_eq!(hits.len(), 1, "the hyphen is part of a word: {hits:?}");
+}
+
+#[test]
+fn a_prompt_outside_the_write_allowlist_is_refused() {
+    let (mut svc, _dir) = make_service();
+    let error = svc
+        .save_prompt("content", None, Some("otro"), "2026-01-01T00:05:00Z")
+        .unwrap_err();
+    // The refusal is the one a memory write would get: the profile decides
+    // whether an unknown namespace is disclosed or hidden.
+    let memory_error = svc
+        .save(SaveRequest {
+            uuid: "uuid-refused".into(),
+            namespace: "otro".into(),
+            content: "contenido".into(),
+            ..save_req("uuid-refused", "ok")
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.error_code_label(),
+        memory_error.error_code_label(),
+        "a prompt is refused the way a memory is: {error:?} vs {memory_error:?}"
+    );
+    assert!(
+        matches!(
+            error,
+            MnexisError::Forbidden { .. } | MnexisError::NotFound { .. }
+        ),
+        "{error:?}"
+    );
 }

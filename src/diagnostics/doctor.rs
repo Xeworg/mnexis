@@ -22,7 +22,7 @@ use crate::domain::error::MnexisError;
 /// The binary's current schema version — the highest migration number in
 /// `storage::sqlite::run_migrations`. Read from that module directly so it
 /// stays in sync.
-const EXPECTED_SCHEMA_VERSION: i64 = 3;
+const EXPECTED_SCHEMA_VERSION: i64 = 4;
 
 /// The canonical tables that must be present.
 const CANONICAL_TABLES: &[&str] = &[
@@ -32,6 +32,9 @@ const CANONICAL_TABLES: &[&str] = &[
     "memory_tags",
     "idempotency_records",
     "memories_fts",
+    "sessions",
+    "user_prompts",
+    "user_prompts_fts",
 ];
 
 // ---------------------------------------------------------------------------

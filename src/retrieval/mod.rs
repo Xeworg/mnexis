@@ -13,6 +13,8 @@
 
 pub mod explain;
 pub mod fts5;
+pub mod prompts;
 pub mod reindex;
 
 pub use fts5::{DeletedFilter, NamespaceFilter, SearchHit, StateFilter, ValidWindow, search};
+pub use prompts::{PromptHit, prompt_from_hit, search_prompts};

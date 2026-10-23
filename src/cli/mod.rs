@@ -90,7 +90,7 @@ pub enum Command {
         /// Assertion basis (default: user_stated)
         #[arg(long)]
         basis: Option<String>,
-        /// Topic key (unique per namespace when non-empty; allowed: lowercase letters, digits, '.' and '-')
+        /// Topic key (unique per namespace when non-empty; allowed: lowercase letters, digits, '.', '-' and '/')
         #[arg(long)]
         topic_key: Option<String>,
         /// Idempotency key for safe retries
@@ -169,6 +169,70 @@ pub enum Command {
         limit: usize,
         #[arg(long, default_value_t = 0)]
         offset: usize,
+        /// The complete content of every memory, not a preview
+        #[arg(long)]
+        full: bool,
+    },
+
+    /// Register the session this process runs in
+    Session {
+        /// The session id (the caller's own; the agent never invents one)
+        #[arg(long, value_name = "ID")]
+        id: String,
+        /// Namespace (default: the profile's default_namespace)
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Where the session runs (informational)
+        #[arg(long, value_name = "DIR")]
+        directory: Option<String>,
+    },
+
+    /// End a session, with an optional summary of what it did
+    End {
+        /// The session id
+        #[arg(long, value_name = "ID")]
+        id: String,
+        /// What the session was about
+        #[arg(long, value_name = "TEXT")]
+        summary: Option<String>,
+    },
+
+    /// List the sessions this profile can read
+    Sessions {
+        /// Max results (default 20, capped at 100)
+        #[arg(long, default_value_t = commands::DEFAULT_LIMIT)]
+        limit: usize,
+    },
+
+    /// Store what the user said
+    Prompt {
+        /// What the user said (positional)
+        content: String,
+        /// The session it belongs to, when there is one
+        #[arg(long, value_name = "ID")]
+        session: Option<String>,
+        /// Namespace (default: the profile's default_namespace)
+        #[arg(long)]
+        namespace: Option<String>,
+    },
+
+    /// List what the user said, or search it
+    Prompts {
+        /// Search the prompts (every word of the query counts)
+        #[arg(long, value_name = "QUERY")]
+        search: Option<String>,
+        /// Only the prompts of this session
+        #[arg(long, value_name = "ID")]
+        session: Option<String>,
+        /// Namespace to narrow the read to one project
+        #[arg(long)]
+        namespace: Option<String>,
+        /// How the query's words are matched: any (default) | all | phrase
+        #[arg(long = "match", default_value = "any", value_name = "MODE")]
+        match_mode: String,
+        /// Max results (default 20, capped at 100)
+        #[arg(long, default_value_t = commands::DEFAULT_LIMIT)]
+        limit: usize,
     },
 
     /// Where this workspace may write, and what is already there
@@ -535,6 +599,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             state,
             limit,
             offset,
+            full,
         } => {
             let mut profile = Profile::open(data_dir)?;
             commands::list(
@@ -543,6 +608,58 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 state.clone(),
                 *limit,
                 *offset,
+                *full,
+            )
+        }
+        Command::Session {
+            id,
+            namespace,
+            directory,
+        } => {
+            let mut profile = Profile::open(data_dir)?;
+            commands::start_session(
+                &mut profile,
+                id.clone(),
+                namespace.clone(),
+                directory.clone().unwrap_or_default(),
+            )
+        }
+        Command::End { id, summary } => {
+            let mut profile = Profile::open(data_dir)?;
+            commands::end_session(&mut profile, id.clone(), summary.clone())
+        }
+        Command::Sessions { limit } => {
+            let mut profile = Profile::open(data_dir)?;
+            commands::list_sessions(&mut profile, *limit)
+        }
+        Command::Prompt {
+            content,
+            session,
+            namespace,
+        } => {
+            let mut profile = Profile::open(data_dir)?;
+            commands::save_prompt(
+                &mut profile,
+                content.clone(),
+                session.clone(),
+                namespace.clone(),
+            )
+        }
+        Command::Prompts {
+            search,
+            session,
+            namespace,
+            match_mode,
+            limit,
+        } => {
+            let mut profile = Profile::open(data_dir)?;
+            commands::list_prompts(
+                &mut profile,
+                search.clone(),
+                session.clone(),
+                match_mode,
+                *limit,
+                namespace.clone(),
             )
         }
         Command::Status => status_cmd::status(data_dir),

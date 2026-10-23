@@ -16,8 +16,9 @@ use crate::MnexisError;
 use crate::application::ListFilter;
 use crate::domain::idempotency::IdempotencyKey;
 use crate::mcp::tools::{
-    DeleteArgs, GetArgs, HistoryArgs, ListArgs, McpError, RestoreArgs, SaveArgs, SearchArgs,
-    SupersedeArgs, UpdateArgs, clamp_limit, parse_state, parse_tags,
+    DeleteArgs, GetArgs, HistoryArgs, ListArgs, McpError, RestoreArgs, SaveArgs, SavePromptArgs,
+    SearchArgs, SearchPromptsArgs, SessionEndArgs, SessionStartArgs, SupersedeArgs, UpdateArgs,
+    clamp_limit, parse_state, parse_tags,
 };
 use crate::mcp::transport::stdio;
 use crate::storage::memory_repo::SqliteMemoryRepository;
@@ -26,7 +27,7 @@ use crate::storage::sqlite::open_sqlite;
 /// How many recent memories the `memory_workspace` tool reports.
 const WORKSPACE_RECENT_LIMIT: usize = 3;
 
-/// The MCP server — owns the MemoryService and exposes 10 tools.
+/// The MCP server — owns the MemoryService and exposes 14 tools.
 ///
 /// All tool functions take `&self`; the Arc<Mutex> provides interior
 /// mutability so the service can be mutated without needing `&mut self`.
@@ -208,9 +209,80 @@ impl McpServer {
         };
         let memories = svc.list(filter)?;
         drop(svc);
+        // A list is a list: the identity of every memory and a preview of
+        // its content. `full` asks for the whole shape.
+        let items = if args.full.unwrap_or(false) {
+            serde_json::to_value(&memories).unwrap_or(serde_json::Value::Null)
+        } else {
+            serde_json::to_value(crate::application::previews(&memories))
+                .unwrap_or(serde_json::Value::Null)
+        };
         let json = serde_json::json!({
             "count": memories.len(),
-            "items": memories,
+            "items": items,
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+
+    /// Register the session the caller runs in.
+    fn do_session_start(&self, args: SessionStartArgs) -> Result<String, McpError> {
+        let mut svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let now = crate::cli::profile::now_rfc3339();
+        let session = svc.start_session(
+            &args.session_id,
+            args.namespace.as_deref(),
+            args.directory.as_deref().unwrap_or_default(),
+            &now,
+        )?;
+        Ok(serde_json::to_string_pretty(&session).unwrap_or_default())
+    }
+
+    /// End a session, with an optional summary.
+    fn do_session_end(&self, args: SessionEndArgs) -> Result<String, McpError> {
+        let mut svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let now = crate::cli::profile::now_rfc3339();
+        let session = svc.end_session(&args.session_id, args.summary.as_deref(), &now)?;
+        Ok(serde_json::to_string_pretty(&session).unwrap_or_default())
+    }
+
+    /// Store what the user said.
+    fn do_save_prompt(&self, args: SavePromptArgs) -> Result<String, McpError> {
+        let mut svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let now = crate::cli::profile::now_rfc3339();
+        let prompt = svc.save_prompt(
+            &args.content,
+            args.session_id.as_deref(),
+            args.namespace.as_deref(),
+            &now,
+        )?;
+        Ok(serde_json::to_string_pretty(&prompt).unwrap_or_default())
+    }
+
+    /// Search what the user said.
+    fn do_search_prompts(&self, args: SearchPromptsArgs) -> Result<String, McpError> {
+        let limit = clamp_limit(args.limit);
+        let mode = match args.match_mode.as_deref() {
+            Some(name) => crate::domain::query::MatchMode::parse(name)?,
+            None => crate::domain::query::MatchMode::default(),
+        };
+        let svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let prompts = svc.search_prompts(&args.query, limit, mode, args.namespace.as_deref())?;
+        drop(svc);
+        let json = serde_json::json!({
+            "count": prompts.len(),
+            "items": prompts,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
@@ -430,6 +502,50 @@ impl McpServer {
     )]
     fn memory_workspace(&self) -> Result<String, McpError> {
         self.do_workspace()
+    }
+
+    #[tool(
+        name = "memory_session_start",
+        description = "Register the session you are running in, so the engine knows its boundaries. Call it once, at the start of the session, with the session id you were given; the id is yours, never invented. The engine never ends a session for you."
+    )]
+    fn memory_session_start(
+        &self,
+        Parameters(args): Parameters<SessionStartArgs>,
+    ) -> Result<String, McpError> {
+        self.do_session_start(args)
+    }
+
+    #[tool(
+        name = "memory_session_end",
+        description = "End the session you are running in, with a short summary of what it did. The summary is what the next session reads first."
+    )]
+    fn memory_session_end(
+        &self,
+        Parameters(args): Parameters<SessionEndArgs>,
+    ) -> Result<String, McpError> {
+        self.do_session_end(args)
+    }
+
+    #[tool(
+        name = "memory_save_prompt",
+        description = "Store what the user said, verbatim. Use it when the user states a constraint, a preference or a goal that has to survive the session: the conversation is not in the repository, and this is where it goes."
+    )]
+    fn memory_save_prompt(
+        &self,
+        Parameters(args): Parameters<SavePromptArgs>,
+    ) -> Result<String, McpError> {
+        self.do_save_prompt(args)
+    }
+
+    #[tool(
+        name = "memory_search_prompts",
+        description = "Search what the user said before, across sessions. Use it when you need the request behind the work: the prompt is not in the files."
+    )]
+    fn memory_search_prompts(
+        &self,
+        Parameters(args): Parameters<SearchPromptsArgs>,
+    ) -> Result<String, McpError> {
+        self.do_search_prompts(args)
     }
 
     #[tool(

@@ -113,6 +113,22 @@ and expected; writing across them is not. If the user wants something
 recorded for another project, that is their call: ask them to run the
 command themselves, or bind that workspace first.
 
+## The session and what the user said
+
+Two things a repository cannot hold, and the engine keeps both:
+
+- **The session.** `mnexis session --id <id>` registers the session you are
+  running in, with the id you were given (never invented); `mnexis end
+  --id <id> --summary "what happened"` ends it. The summary is what the next
+  session reads first, so it must make sense with no surrounding chat. The
+  extension does both for you when it runs inside pi.
+- **What the user said.** `mnexis prompt "<what the user said>"` stores a
+  constraint, a preference or a goal the user stated, verbatim;
+  `mnexis prompts --search "<query>"` finds it again. Use it when the user
+  says something that has to outlive the conversation: the chat is not in
+  the files, and this is where it goes. A prompt is not a memory — it has
+  no revision and no topic key — but it obeys the same namespace rules.
+
 ## The loop
 
 1. **Recall first.** Before answering from scratch, look for prior context:
@@ -130,8 +146,9 @@ command themselves, or bind that workspace first.
    `mnexis save --namespace <name> "<one self-contained sentence>" --tags a,b --topic-key <stable-key>`.
    The content must make sense months later with no surrounding chat.
    `--topic-key` is unique per namespace: reuse it to group facts about one
-   topic. It accepts lowercase ASCII letters, digits, `.` and `-` only —
-   `snake/design` is rejected, `snake-design` is accepted. `--idempotency-key`
+   topic. It accepts lowercase ASCII letters, digits, `.`, `-` and `/` —
+   `snake/design` and `snake-design` are both accepted, and both group the
+   same facts. `--idempotency-key`
    makes retries safe.
 3. **Replace facts by superseding, never by deleting.** Outdated but
    historically true facts keep their record: `mnexis save` the newer fact,

@@ -12,6 +12,7 @@ use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, Memo
 use crate::domain::query::MatchMode;
 use crate::domain::repository::MemoryRepository;
 use crate::domain::scope::{AccessScope, NamespaceScope, Operation};
+use crate::domain::session::{Session, UserPrompt};
 use crate::retrieval::SearchHit;
 
 pub struct ServiceConfig {
@@ -704,6 +705,142 @@ impl<R: MemoryRepository> MemoryService<R> {
         Ok(summary)
     }
 
+    // --- sessions and prompts ---
+
+    /// Register the session the caller runs in.
+    ///
+    /// The id is the caller's: the agent never invents one, and a session
+    /// that already exists is returned as it is — the engine never restarts
+    /// a session. The namespace obeys the same rules as a memory write.
+    pub fn start_session(
+        &mut self,
+        id: &str,
+        namespace: Option<&str>,
+        directory: &str,
+        now: &str,
+    ) -> Result<Session, MnexisError> {
+        if id.trim().is_empty() {
+            return Err(MnexisError::invalid_argument(
+                "session_id",
+                "must not be empty",
+            ));
+        }
+        let ns = self.target_namespace(namespace)?;
+        self.scope.authorize_write(&ns)?;
+        self.scope.authorize_operation(Operation::Save)?;
+        self.repo.start_session(&Session {
+            id: id.to_string(),
+            namespace: ns,
+            directory: directory.to_string(),
+            started_at: now.to_string(),
+            ended_at: None,
+            summary: None,
+        })
+    }
+
+    /// End a session, with an optional summary of what it did.
+    pub fn end_session(
+        &mut self,
+        id: &str,
+        summary: Option<&str>,
+        now: &str,
+    ) -> Result<Session, MnexisError> {
+        if let Some(summary) = summary {
+            validate_content(summary, self.config.max_content_bytes)?;
+        }
+        let session = self
+            .repo
+            .get_session(id)?
+            .ok_or_else(|| MnexisError::not_found(format!("session:{id}")))?;
+        // Ending a session writes into its namespace: the same rule as a
+        // memory write.
+        self.scope.authorize_write(&session.namespace)?;
+        self.scope.authorize_operation(Operation::Save)?;
+        self.repo.end_session(id, now, summary)
+    }
+
+    /// The sessions the scope can read, newest first.
+    pub fn list_sessions(&self, limit: usize) -> Result<Vec<Session>, MnexisError> {
+        self.repo.list_sessions(&self.scope.read_scope(), limit)
+    }
+
+    /// Store what the user said.
+    ///
+    /// A prompt is not a memory: it has no revision, no topic key and no
+    /// state. It obeys the same namespace rules, because it is still a
+    /// write into a project.
+    pub fn save_prompt(
+        &mut self,
+        content: &str,
+        session_id: Option<&str>,
+        namespace: Option<&str>,
+        now: &str,
+    ) -> Result<UserPrompt, MnexisError> {
+        validate_content(content, self.config.max_content_bytes)?;
+        let ns = self.target_namespace(namespace)?;
+        self.scope.authorize_write(&ns)?;
+        self.scope.authorize_operation(Operation::Save)?;
+        let prompt = UserPrompt {
+            id: 0,
+            session_id: session_id.map(|s| s.to_string()),
+            namespace: ns,
+            content: content.to_string(),
+            created_at: now.to_string(),
+        };
+        let id = self.repo.save_prompt(&prompt)?;
+        Ok(UserPrompt { id, ..prompt })
+    }
+
+    /// The prompts the scope can read, newest first.
+    ///
+    /// A namespace narrows the read to one project; without one, the
+    /// scope's read scope decides, as it does for the memories.
+    pub fn list_prompts(
+        &self,
+        session_id: Option<&str>,
+        limit: usize,
+        namespace: Option<&str>,
+    ) -> Result<Vec<UserPrompt>, MnexisError> {
+        let scope = self.prompt_scope(namespace)?;
+        self.repo.list_prompts(&scope, session_id, limit)
+    }
+
+    /// Search the prompts, the same way the memories are searched: the
+    /// query is compiled, never passed through.
+    pub fn search_prompts(
+        &self,
+        query: &str,
+        limit: usize,
+        mode: MatchMode,
+        namespace: Option<&str>,
+    ) -> Result<Vec<UserPrompt>, MnexisError> {
+        validate_query(query, self.config.max_query_bytes)?;
+        let scope = self.prompt_scope(namespace)?;
+        self.repo.search_prompts(&scope, query, limit, mode)
+    }
+
+    /// The namespaces a prompt read reaches: the one the caller named, or
+    /// every namespace the scope reads.
+    fn prompt_scope(&self, namespace: Option<&str>) -> Result<NamespaceScope, MnexisError> {
+        match namespace {
+            Some(ns) => {
+                self.scope.authorize_read(ns)?;
+                Ok(NamespaceScope::Only(vec![ns.to_string()]))
+            }
+            None => Ok(self.scope.read_scope()),
+        }
+    }
+
+    /// The namespace a write without an explicit one lands in: the
+    /// profile's default, which the workspace binding may narrow.
+    fn target_namespace(&self, namespace: Option<&str>) -> Result<String, MnexisError> {
+        let ns = namespace
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| self.scope.default_namespace.clone());
+        validate_namespace(&ns)?;
+        Ok(ns)
+    }
+
     // --- search ---
     pub fn search(
         &self,
@@ -748,11 +885,14 @@ fn validate_topic_key(topic_key: &str, max_bytes: usize) -> Result<(), MnexisErr
         ));
     }
     for c in topic_key.chars() {
-        if !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '.' && c != '-' {
+        // The slash is what an agent writes when it groups facts
+        // (`payments-api/server-config`), and the dot is the same idea
+        // written the other way. Both are accepted, and nothing else is.
+        if !c.is_ascii_lowercase() && !c.is_ascii_digit() && !matches!(c, '.' | '-' | '/') {
             return Err(MnexisError::invalid_argument(
                 "topic_key",
                 format!(
-                    "invalid character: {c:?} (allowed: lowercase letters, digits, '.' and '-')"
+                    "invalid character: {c:?} (allowed: lowercase letters, digits, '.', '-' and '/')"
                 ),
             ));
         }
