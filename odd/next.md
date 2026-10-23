@@ -16,8 +16,16 @@ out of it:
 | #25 | `session-and-prompts` | the session the agent runs in and what the user said (migration 004), and the hooks where a compaction lands |
 | #27 | `topic-continonomy` | the engine names the topic it already holds — and the measurement showed that was not enough |
 | #28 | `memory-title` | the title derives the key and a save with a key the namespace uses **updates** the record (migration 005) |
+| #29 | `identity-visibility` | the title travels with every read answer and the index covers it (migration 006); two defects fixed (a save writing into a dead record, the on-demand tools in the wrong namespace) |
+| #30 | `agent-keywords` | the words of a fact: the agent's own vocabulary, accumulated and indexed (migration 007) |
 
-Everything is merged. `main` is clean and only `main` remains locally.
+Everything is merged. `main` is clean and only `main` remains locally (plus
+the archived branches of the features that were measured and discarded, and
+`feat/near-duplicate-titles`, archived and **not** merged — see item 1c).
+
+**Released: v0.3.0** (2026-10-23), the identity work. The schema is at
+version 7 and there is no downgrade: an old binary refuses to open a newer
+store.
 
 ## The measurement that runs the board
 
@@ -31,10 +39,16 @@ what every decision comes from. The artifacts are in `tmp/bench/` (gitignored
 - `tmp/bench/topic-continuity-measurement.md` — the notice and the refusal,
   with the variance.
 - `tmp/bench/memory-title-measurement.md` — the title, and the 3 of 3.
+- `tmp/bench/visibility-measurement.md` — the visibility: paired, 11/12
+  against main's 7/12.
+- `tmp/bench/keywords-measurement.md` — the words: the agent writes them
+  3 of 3, and the correction the cycle earns (n=3 is a smoke test).
 
 The harness: `tmp/bench/run/run-conflict.sh` (the conflict experiment),
 `tmp/bench/run/run-all.sh` (the write/recall experiment),
-`tmp/bench/run/summarize.py`, `tmp/bench/run/score-conflict.py`.
+`tmp/bench/run/run-duplicates.sh` (the duplicate experiments, four
+scenarios), `tmp/bench/run/summarize.py`, `tmp/bench/run/score-conflict.py`,
+`tmp/bench/run/score-duplicates.py`.
 
 ## What comes next, with the evidence behind each
 
