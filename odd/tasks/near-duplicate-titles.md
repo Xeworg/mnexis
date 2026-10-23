@@ -164,6 +164,61 @@ already carries both).
 - **L10** (2026-10-23) — The delivery slices of the branch, for the
   review: 0438ed6 (the ranker), c02ac4b (the read and the service), 
   88772b0 (the save carries the shortlist), 4648fd6 (the command and the
-  tool), da18b4f (the skill, the extension and the docs). Each one is a
-  work unit of about 400 authored lines, with the tests and the docs
-  alongside the behaviour.
+  tool), da18b4f (the skill, the extension and the docs), 8397bbb (the
+  corpus of one title). Each one is a work unit of about 400 authored
+  lines, with the tests and the docs alongside the behaviour.
+- **L11** (2026-10-23) — **The measurement** (three runs per arm, four
+  scenarios, same container, same model; the full record in
+  `tmp/bench/duplicates-measurement.md`):
+
+  | | arm A (today) | arm B (the shortlist) |
+  | --- | --- | --- |
+  | the agent linked the two records | 8/12 | **12/12** |
+  | the fact ended in one current record | 11/12 | **12/12** |
+  | the proposal reached the model | — | 11/12 |
+
+  The answer to the board's question is **yes**: the agent acts on the
+  proposal, and in the runs of the first scenario it used the command
+  verbatim — the reason it wrote was the proposal's reason. That is the
+  opposite of what `topic-continuity`'s notice did, which was read and
+  ignored.
+
+  But the measurement also said something the board did not expect: **in
+  three of the four scenarios the proposal is redundant**. Today's engine
+  already ends with the fact in one current record: the agent searches,
+  lists, shows, and either links the old record or saves with its title
+  again (the upsert of `memory-title`). The proposal is a second path to a
+  judgment the agent already makes.
+
+  It earns its place in the fourth scenario — a busy namespace, a content
+  that does not repeat the title's words, and no hint that the fact exists
+  — because **the search indexes the content, not the title**: a record
+  whose content is `port = 8081` cannot be found by searching `puerto`.
+  There, arm A linked 2/3 and left the fact in two records with
+  contradictory values (the recall of that run cost 16 809 tokens, hunting
+  through the namespace, the database and the git history), and arm B
+  linked 3/3.
+
+  The honest limit: n = 3 per arm per scenario and one model. The overall
+  difference is **one run in twelve** — a tendency, not a proof. What is
+  proven is narrow and real: the proposal closed the failure in the
+  scenario it was built for, and the agent acts on it.
+
+- **L12** (2026-10-23) — The verdict: the feature stays. It is the only
+  mechanism in the engine that compares **titles** (the search compares
+  contents), it costs one query per save over the namespace's titles, and
+  it is what kept the fact in one record in the scenario where the agent
+  could not be thorough. What it does **not** do is replace the agent's
+  own recall discipline, and the report says so: in three of the four
+  scenarios it is the slower path.
+- **L13** (2026-10-23) — Two defects the measurement found in the
+  harness, both fixed before the numbers were read: the store dump used a
+  variable that was not in scope (and `set -e` took the script down with
+  it), and the dump was truncated at the 20 records `mnexis list` cuts at
+  by default, which in the busy namespace hid the very records the
+  measurement was about. And one defect the measurement found in the
+  **engine**, fixed before the measurement ran: the rule that a word
+  everybody uses is not evidence needs a corpus of at least two titles to
+  say anything, and with one title in the namespace it said nothing — the
+  one record of the namespace was never proposed, which is the case the
+  feature exists for.

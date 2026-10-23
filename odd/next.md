@@ -31,6 +31,8 @@ what every decision comes from. The artifacts are in `tmp/bench/` (gitignored
 - `tmp/bench/topic-continuity-measurement.md` — the notice and the refusal,
   with the variance.
 - `tmp/bench/memory-title-measurement.md` — the title, and the 3 of 3.
+- `tmp/bench/duplicates-measurement.md` — the near-duplicate titles: four
+  scenarios, three runs per arm, and the agent acting on the proposal.
 
 The harness: `tmp/bench/run/run-conflict.sh` (the conflict experiment),
 `tmp/bench/run/run-all.sh` (the write/recall experiment),
@@ -38,18 +40,39 @@ The harness: `tmp/bench/run/run-conflict.sh` (the conflict experiment),
 
 ## What comes next, with the evidence behind each
 
-### 1. The scan of near-duplicate titles — the gap the title leaves
+### 1. The scan of near-duplicate titles — measured, and it works
 
 Two *different* titles for one fact (`puerto del servicio` and `puerto de
 pagos`) are two keys and two records. The other engine proposes relations
 **afterwards** (`conflicts scan`) and the agent adjudicates them. mnexis has
 the relations (`was replaced by`) and the supersede chain, but no scan.
 
-This is the small version of the conflicts layer that was measured and
-discarded in its candidates-and-verdicts form: not "the agent judges every
-conflict", but "the engine notices two titles that are probably the same
-fact and proposes the link". Measure it with the same harness before
-building it: does the agent act on a proposed link?
+**This one was built and measured** (branch `feat/near-duplicate-titles`,
+7 commits). The engine ranks the namespace's records by how likely they are
+to be the same fact and proposes them with the save; the agent decides and
+links them with the supersede that already exists. The report is in
+`tmp/bench/duplicates-measurement.md`.
+
+What the measurement said, and it is worth reading twice:
+
+- **the agent acts on the proposal** (12 of 12 runs linked with it, and in
+  one scenario it used the command verbatim). That is the opposite of
+  `topic-continuity`'s notice, which was read and ignored;
+- **in three of the four scenarios it is redundant**: today's engine already
+  ends with the fact in one record, because the agent searches, lists and
+  shows before it saves;
+- **it earns its place in the fourth** — a busy namespace, a content that
+  does not repeat the title's words, no hint that the fact exists — because
+  **the search indexes the content, not the title**. There, today's engine
+  left the fact in two records with contradictory values and the recall cost
+  16 809 tokens hunting for the current one.
+
+The honest limit: n = 3 per arm per scenario. The difference is one run in
+twelve — a tendency, not a proof.
+
+The next thing in this area is not another mechanism: it is **the title in
+the search index** (FTS5 covers `content` only), so that the agent's own
+recall finds the duplicate by the title's words too.
 
 ### 2. C3 — `doctor` with a stable JSON envelope
 
