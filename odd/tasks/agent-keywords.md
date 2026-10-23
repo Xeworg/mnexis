@@ -104,3 +104,39 @@ any analysis of the words by the engine.
   (`feat/near-duplicate-titles`) stays parked: the arm C measurement (the
   identity-visibility branch, without the proposal) decides whether it is
   still needed, and this feature changes that question again.
+- **L5** (2026-10-23) — **The measurement** (the vocabulary scenario: the
+  old record titled `Puerto de escucha del servicio` with the content
+  `8081`, the new one titled `listen port` with the prompt in English — so
+  the title in the index cannot answer and only the words can; three runs
+  per arm; the report in `tmp/bench/keywords-measurement.md`):
+
+  | | A: main | C: visibility | D: visibility + words |
+  | --- | --- | --- | --- |
+  | the fact in one current record | 3/3 | 4/6 | 3/3 |
+  | the recall answered the current value | 3/3 | 5/6 | 3/3 |
+  | tokens in the recall | 1 159–1 311 | 1 088–13 704 | 1 512–2 660 |
+
+  **The agent writes the words: 3 of 3** (`puerto, port, listen port`,
+  `port, listen port, server port`, …). That is the thing the previous
+  cycle could not get: a mechanism the agent uses without being pushed.
+  The skill says what the words are for, the tool takes them, and the
+  answer shows the accumulated result.
+
+  **The outcome cannot be resolved with n = 3.** The visibility arm was
+  measured **twice** with the same image and the same prompts: 1/3 in one
+  sample and 3/3 in the other. Every difference between the arms is of
+  that size. So the mechanism is proven and the effect is not.
+- **L6** (2026-10-23) — What survives the measurement, and what does not:
+  - **proven**: the agent acts on a proposal whose answer carries the
+    command (12/12); the agent writes the words when the skill and the tool
+    ask for them (3/3); the engine's similarity cannot separate two titles
+    of one fact from two titles of two facts (0.53–0.97 against 0.47–0.91
+    — a property of the strings, not of the sample);
+  - **not proven**: any ranking between the arms. The proposal's 12/12, the
+    visibility's 11/12 and the title's 3/3 are all inside the band a re-run
+    of the same configuration produces (the visibility arm measured 1/3 and
+    3/3 on the same day, with the same image and the same prompts).
+
+  The decisions rest on the mechanisms, not on the counts. That is the
+  correction this cycle earns: **n = 3 with one model is a smoke test, not
+  a measurement.**
