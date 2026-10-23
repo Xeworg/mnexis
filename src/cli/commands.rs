@@ -234,7 +234,7 @@ pub fn suggest_topic_key(
             "count": suggestions.len(),
             "items": suggestions,
         }),
-        if suggestions.is_empty() { text } else { text },
+        text,
     ))
 }
 
