@@ -108,6 +108,18 @@ installer suite and the extension's tests pass.
     to **5 858 ms / 2 tool calls / 2 343 input tokens**, still 5/5, and now
     faster than the engram arm of the benchmark (9 719 ms / 1 685 tokens).
     Raw run: `tmp/bench/out/mnexis-phase1-after-fix.jsonl`.
+- **L8** (2026-10-23) — The native assessment classified the candidate as
+  `medium` risk (`executable_change`: the benchmark file) with
+  `reviewDue: false`, so no native review was started. The risk line names
+  Task Size item 3 (the search result set and the stored key form are
+  contracts other code consumes), so the assessment was re-run with that
+  escalation and the plan asks for an independent verifier. The first
+  attempt at it died on a full `/tmp` (an orphan 13 GB build directory:
+  Node error -122 is EDQUOT); the scratch was cleaned and the verification
+  relaunched with instructions to build inside the repository's own target.
+- **L9** (2026-10-23) — PR **#22** (`feat(query): one contract for the query
+  and the workspace key`), base `main`, 5 commits, 32 files, +1084/-58. The
+  repository has no PR workflow, so there are no required checks pending.
 
 ## Delivery
 
@@ -117,6 +129,9 @@ Two work units on `feat/agent-query-contract`:
 | --- | --- | --- |
 | `4607be9` | the query contract (T1-T3) | 766 authored lines |
 | `613b8b8` | the canonical workspace key and the extension (T4-T5) | ~300 authored lines |
+| `00b6e78` | the acceptance run and its evidence (T6) | ~50 authored lines |
+| `8f8d2a2` | the delivery record of this document | ~30 authored lines |
+| `7745774` | the match mode on the extension's search tool | ~30 authored lines |
 
 The first slice is over the ~400-line guide because it carries the query
 compiler (239 lines with its tests), the regression tests at the library and
