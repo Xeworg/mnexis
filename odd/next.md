@@ -45,7 +45,7 @@ derived from the title) and the relation that works (`supersedes` +
 `was replaced by`). What it lacked was the ability to **show** that
 identity and to **find** it. Three features, in this order:
 
-**1a. The visibility** (branch `feat/identity-visibility`, 4 commits). The
+**1a. The visibility** (PR **#29**, merged). The
 title travels with what the agent reads (`search`, `list`, `context`, the
 MCP answers) and the index covers it (migration 006: `fts5(content, title,
 topic_key)`, with the rebuild and the doctor's shape check). Two defects
@@ -58,8 +58,7 @@ in **11/12** against main's **9/12**. In the hard scenario (a busy
 namespace, a content that does not repeat the title's words) main left the
 fact in two records in **3 of 3** runs and this one in **2 of 3**.
 
-**1b. The words of the fact** (branch `feat/agent-keywords`, 3 commits,
-stacked on 1a). A memory had a title (what the fact is) and a content
+**1b. The words of the fact** (PR **#30**, merged, stacked on #29). A memory had a title (what the fact is) and a content
 (what it says now) and **no vocabulary**: the words the same fact is
 called in another language, in another team's jargon. The agent says which
 words belong to the fact (`--keywords "puerto, port, listen port"`), the
@@ -69,7 +68,7 @@ runs. That is the thing the previous cycle could not get: a mechanism the
 agent uses without being pushed.
 
 **1c. The scan of near-duplicate titles** (branch
-`feat/near-duplicate-titles`, 8 commits, local and un-pushed). The engine
+`feat/near-duplicate-titles`, 8 commits, **archived, not merged**, local only). The engine
 ranks the namespace's records by how likely they are to be the same fact
 and proposes them with the save; the agent decides and links them with the
 supersede that already exists. **Measured, and superseded**: the agent acts
