@@ -949,7 +949,8 @@ impl MemoryRepository for SqliteMemoryRepository {
         limit: usize,
     ) -> Result<Vec<Session>, MnexisError> {
         let ns_filter = namespace_filter(namespaces);
-        let (sql, owned) = session_query(&ns_filter);
+        let (mut sql, owned) = session_query(&ns_filter);
+        sql.push_str(" LIMIT ?");
         let limit_i64: i64 = limit as i64;
         let mut stmt = self
             .conn

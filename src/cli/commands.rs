@@ -456,6 +456,141 @@ pub fn list(
     ))
 }
 
+// --- sessions and prompts ---
+
+/// `mnexis session --id <id>` — register the session this process runs in.
+pub fn start_session(
+    profile: &mut Profile,
+    id: String,
+    namespace: Option<String>,
+    directory: String,
+) -> Result<CommandOutcome, MnexisError> {
+    let now = crate::cli::profile::now_rfc3339();
+    let session =
+        profile
+            .service_mut()
+            .start_session(&id, namespace.as_deref(), &directory, &now)?;
+    let text = format!(
+        "Session {} in namespace {} started at {}",
+        session.id, session.namespace, session.started_at
+    );
+    Ok(CommandOutcome::new(
+        serde_json::to_value(&session).unwrap_or(serde_json::Value::Null),
+        text,
+    ))
+}
+
+/// `mnexis end --id <id> [--summary <text>]` — end a session.
+pub fn end_session(
+    profile: &mut Profile,
+    id: String,
+    summary: Option<String>,
+) -> Result<CommandOutcome, MnexisError> {
+    let now = crate::cli::profile::now_rfc3339();
+    let session = profile
+        .service_mut()
+        .end_session(&id, summary.as_deref(), &now)?;
+    let text = format!(
+        "Session {} ended at {}",
+        session.id,
+        session.ended_at.clone().unwrap_or_default()
+    );
+    Ok(CommandOutcome::new(
+        serde_json::to_value(&session).unwrap_or(serde_json::Value::Null),
+        text,
+    ))
+}
+
+/// `mnexis sessions` — the sessions this profile can read.
+pub fn list_sessions(profile: &mut Profile, limit: usize) -> Result<CommandOutcome, MnexisError> {
+    let sessions = profile.service_ref().list_sessions(clamp_limit(limit))?;
+    let text = sessions
+        .iter()
+        .map(|s| {
+            format!(
+                "  [{}] {} {} {}",
+                s.namespace,
+                s.id,
+                s.started_at,
+                s.summary.clone().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(CommandOutcome::new(
+        json!({
+            "count": sessions.len(),
+            "items": sessions,
+        }),
+        if text.is_empty() {
+            "no sessions".to_string()
+        } else {
+            text
+        },
+    ))
+}
+
+/// `mnexis prompt "<content>"` — store what the user said.
+pub fn save_prompt(
+    profile: &mut Profile,
+    content: String,
+    session: Option<String>,
+    namespace: Option<String>,
+) -> Result<CommandOutcome, MnexisError> {
+    let now = crate::cli::profile::now_rfc3339();
+    let prompt = profile.service_mut().save_prompt(
+        &content,
+        session.as_deref(),
+        namespace.as_deref(),
+        &now,
+    )?;
+    let text = format!(
+        "Stored the prompt in namespace {} (session {})",
+        prompt.namespace,
+        prompt.session_id.clone().unwrap_or_else(|| "-".to_string())
+    );
+    Ok(CommandOutcome::new(
+        serde_json::to_value(&prompt).unwrap_or(serde_json::Value::Null),
+        text,
+    ))
+}
+
+/// `mnexis prompts [--search <query>]` — what the user said.
+pub fn list_prompts(
+    profile: &mut Profile,
+    search: Option<String>,
+    session: Option<String>,
+    match_mode: &str,
+    limit: usize,
+) -> Result<CommandOutcome, MnexisError> {
+    let limit = clamp_limit(limit);
+    let prompts = match &search {
+        Some(query) => {
+            let mode = MatchMode::parse(match_mode)?;
+            profile.service_ref().search_prompts(query, limit, mode)?
+        }
+        None => profile
+            .service_ref()
+            .list_prompts(session.as_deref(), limit)?,
+    };
+    let text = prompts
+        .iter()
+        .map(|p| format!("  [{}] {} {}", p.namespace, p.id, p.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(CommandOutcome::new(
+        json!({
+            "count": prompts.len(),
+            "items": prompts,
+        }),
+        if text.is_empty() {
+            "no prompts".to_string()
+        } else {
+            text
+        },
+    ))
+}
+
 // --- show ---
 
 pub fn show(

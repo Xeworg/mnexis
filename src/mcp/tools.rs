@@ -92,6 +92,58 @@ pub struct ListArgs {
     pub full: Option<bool>,
 }
 
+/// Arguments for `memory_session_start`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SessionStartArgs {
+    /// The session id: the caller's own (the agent never invents one).
+    pub session_id: String,
+    /// Namespace (default: the profile's default namespace).
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Where the session runs (informational).
+    #[serde(default)]
+    pub directory: Option<String>,
+}
+
+/// Arguments for `memory_session_end`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SessionEndArgs {
+    /// The session id.
+    pub session_id: String,
+    /// What the session was about.
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+/// Arguments for `memory_save_prompt`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SavePromptArgs {
+    /// What the user said, verbatim.
+    pub content: String,
+    /// The session it belongs to, when there is one.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// Namespace (default: the profile's default namespace).
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+/// Arguments for `memory_search_prompts`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SearchPromptsArgs {
+    /// The query, in plain language.
+    pub query: String,
+    /// Namespace (default: every authorised namespace).
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// How the query's words are matched: any (default) | all | phrase.
+    #[serde(default)]
+    pub match_mode: Option<String>,
+    /// Max results (default 20, clamped to 100).
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
 pub(crate) fn default_limit() -> usize {
     20
 }
@@ -178,6 +230,10 @@ pub const TOOL_MEMORY_SUPERSEDE: &str = "memory_supersede";
 pub const TOOL_MEMORY_DELETE: &str = "memory_delete";
 pub const TOOL_MEMORY_RESTORE: &str = "memory_restore";
 pub const TOOL_MEMORY_SEARCH: &str = "memory_search";
+pub const TOOL_MEMORY_SESSION_START: &str = "memory_session_start";
+pub const TOOL_MEMORY_SESSION_END: &str = "memory_session_end";
+pub const TOOL_MEMORY_SAVE_PROMPT: &str = "memory_save_prompt";
+pub const TOOL_MEMORY_SEARCH_PROMPTS: &str = "memory_search_prompts";
 
 // ---------------------------------------------------------------------------
 // Helpers

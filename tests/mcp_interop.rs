@@ -48,7 +48,7 @@ fn bootstrap_scoped_profile(data_dir: &std::path::Path) -> Result<(), Box<dyn st
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn tools_list_contains_all_10_memory_tools_and_no_ping()
+async fn tools_list_contains_all_the_memory_tools_and_no_ping()
 -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir_in("target")?;
     let data_dir = tmp.path();
@@ -75,6 +75,10 @@ async fn tools_list_contains_all_10_memory_tools_and_no_ping()
         "memory_restore",
         "memory_search",
         "memory_workspace",
+        "memory_session_start",
+        "memory_session_end",
+        "memory_save_prompt",
+        "memory_search_prompts",
     ] {
         assert!(
             names.contains(&tool),

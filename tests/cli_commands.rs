@@ -1714,3 +1714,66 @@ fn every_write_still_works_inside_the_workspace_namespace() {
     p.run_in_dir(ws.path(), &["restore", &doomed])
         .unwrap_status("guarded restore");
 }
+
+// --- sessions and prompts ---
+
+#[test]
+fn a_session_starts_ends_and_is_listed() {
+    let p = Profile::new();
+    let started = p
+        .run_silent(&["session", "--id", "01JX", "--directory", "/work/project"])
+        .unwrap_status("session");
+    let json = stdout_json(&started);
+    assert_eq!(json["id"], "01JX");
+    assert_eq!(json["ended_at"], serde_json::Value::Null);
+
+    let ended = p
+        .run_silent(&["end", "--id", "01JX", "--summary", "what we did"])
+        .unwrap_status("end");
+    assert_eq!(stdout_json(&ended)["summary"], "what we did");
+
+    let sessions = p.run_silent(&["sessions"]).unwrap_status("sessions");
+    let json = stdout_json(&sessions);
+    assert_eq!(json["count"], 1);
+    assert_eq!(json["items"][0]["id"], "01JX");
+}
+
+#[test]
+fn a_prompt_is_stored_and_searched() {
+    let p = Profile::new();
+    p.run_silent(&["session", "--id", "01JX"])
+        .unwrap_status("session");
+    let stored = p
+        .run_silent(&[
+            "prompt",
+            "el puerto del servicio es 8081",
+            "--session",
+            "01JX",
+        ])
+        .unwrap_status("prompt");
+    assert_eq!(stdout_json(&stored)["session_id"], "01JX");
+
+    let found = p
+        .run_silent(&["prompts", "--search", "puerto 8081"])
+        .unwrap_status("prompts --search");
+    let json = stdout_json(&found);
+    assert_eq!(json["count"], 1, "{json}");
+    assert_eq!(
+        json["items"][0]["content"],
+        "el puerto del servicio es 8081"
+    );
+
+    let listed = p.run_silent(&["prompts"]).unwrap_status("prompts");
+    assert_eq!(stdout_json(&listed)["count"], 1);
+}
+
+#[test]
+fn a_hyphenated_prompt_search_finds_the_prompt() {
+    let p = Profile::new();
+    p.run_silent(&["prompt", "el deploy por defecto es staging-eu"])
+        .unwrap_status("prompt");
+    let found = p
+        .run_silent(&["prompts", "--search", "staging-eu"])
+        .unwrap_status("prompts --search");
+    assert_eq!(stdout_json(&found)["count"], 1);
+}
