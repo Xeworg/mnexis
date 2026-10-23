@@ -79,3 +79,24 @@ notices "this is the topic you already have".
   worth it, the topic is.
 - **L2** (2026-10-23) — Branch `feat/topic-continuity`, based on `main` at
   the merge of PR #25.
+- **L3** (2026-10-23) — The three runs per arm changed the design twice.
+  First the notice alone: the transcript shows the model **reading** it and
+  writing a second record anyway (1, 2 and 4 records in three runs). So the
+  notice was escalated to a refusal — and the refusal does not guarantee it
+  either (1, 2 and 2 records), and it costs friction: three to five refused
+  retries per run.
+- **L4** (2026-10-23) — What survived every run is the **relation** (S3):
+  with `was replaced by` in the answer the two-record case is unambiguous,
+  and the agent answers with the current value without opening every record.
+  That is the part of this feature that changes the recall reliably.
+- **L5** (2026-10-23) — The harness found a defect the change introduced: the
+  refusal ran **before** the idempotency replay, so a legitimate retry of a
+  save was refused for a topic it had just written itself. It now runs after
+  the replay, and only when the scope may read the namespace (a write the
+  profile allows is never blocked by a read it does not). Both rules have a
+  regression test.
+- **L6** (2026-10-23) — The honest evidence, including the variance, is in
+  `tmp/bench/topic-continuity-measurement.md`: three runs per state of the
+  engine, one model, one prompt. The feature is not claimed as a guarantee —
+  the engine can name the topic and tell which record is current, and it
+  cannot make the agent reuse a key.
