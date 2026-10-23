@@ -246,3 +246,18 @@ already carries both).
   **not part of `main`**. Whoever picks it up should read this Log first:
   the measurement is in `tmp/bench/duplicates-measurement.md`, and the
   question it leaves open is the one in L15.
+- **L17** (2026-10-23) — **The operator's decision: this branch is
+  archived.** The measurement of the two features that came after it
+  (`identity-visibility` and `agent-keywords`) removed the reason it
+  existed: the agent can now **see** the identity of a fact (the title
+  travels with every read answer) and **find** it (the index covers the
+  title), and the **words** the agent writes replace the similarity guess
+  with an exact retrieval — the engine does not have to judge anything,
+  because the agent already did. The proposal's own measurement had said
+  that the engine's similarity cannot separate two titles of one fact from
+  two titles of two facts (0.53–0.97 against 0.47–0.91), so half of what
+  it proposed was noise the agent had to discard.
+  The branch is **not merged**. It stays local as a reference (8 commits,
+  base `main` at `f3a590a`) with its measurement in
+  `tmp/bench/duplicates-measurement.md` and in the archive of
+  `/home/xeworg/lab/mnexis-bench/`. Do not merge it without new evidence.
