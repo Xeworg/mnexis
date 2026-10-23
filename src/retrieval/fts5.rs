@@ -80,6 +80,7 @@ pub struct SearchHit {
 /// Ranked FTS5 search. Returns hits ordered by bm25 rank ascending
 /// (most relevant first). A query with no matching documents returns an
 /// empty `Vec`, not an error.
+#[allow(clippy::too_many_arguments)]
 pub fn search(
     conn: &Connection,
     query: &str,

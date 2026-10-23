@@ -33,6 +33,7 @@ pub struct ExplainedHit {
 /// returned hit includes the subset of query tokens that appeared in the
 /// row's content. A query with no matching documents returns an empty
 /// `Vec`, not an error.
+#[allow(clippy::too_many_arguments)]
 pub fn explain(
     conn: &Connection,
     query: &str,

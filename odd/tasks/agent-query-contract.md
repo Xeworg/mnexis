@@ -91,3 +91,36 @@ with it, and the workspace identity has exactly one form.
   (`no such column: eu`), not a syntax error, and it lands on the `BUSY` path
   because the search maps every `query_map`/`collect` error to it. The fix
   covers both readings: quoting stops the parse error, `any` stops the AND.
+- **L7** (2026-10-23) — Acceptance, against the same container, the same
+  store and the same model the benchmark used:
+  - the retrieval check went from **0/5 to 5/5** paraphrased queries hitting
+    (`out/mnexis-retrieval-after-fix.txt`);
+  - the recall session went from 25 543 ms / 6 tool calls / 6 194 input
+    tokens — with a failed search, a 19 KB skill read and a full store dump —
+    to **5 858 ms / 2 tool calls / 2 343 input tokens**, still 5/5, and now
+    faster than the engram arm of the benchmark (9 719 ms / 1 685 tokens).
+    Raw run: `tmp/bench/out/mnexis-phase1-after-fix.jsonl`.
+
+## Delivery
+
+Two work units on `feat/agent-query-contract`:
+
+| commit | unit | slice |
+| --- | --- | --- |
+| `4607be9` | the query contract (T1-T3) | 766 authored lines |
+| `613b8b8` | the canonical workspace key and the extension (T4-T5) | ~300 authored lines |
+
+The first slice is over the ~400-line guide because it carries the query
+compiler (239 lines with its tests), the regression tests at the library and
+CLI level (269 lines) and the feature document (93 lines). The second slice
+is under it. T6 (the acceptance run) is a separate commit with the evidence.
+
+## Evidence
+
+- `cargo test`: 21 suites green (216 library tests included).
+- `cargo fmt --check`: clean. `cargo clippy --all-targets`: no new warnings.
+- The extension's own tests: 42 pass, 0 fail.
+- The installer suite (`scripts/test-installer.sh`): all installer tests
+  passed, including the opencode MCP configuration (33 assertions).
+- The acceptance run above, in the benchmark's container.
+
