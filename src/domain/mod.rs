@@ -4,6 +4,7 @@
 //! All I/O is described by the `MemoryRepository` port; the `storage/`
 //! adapter (T16) implements it.
 
+pub mod duplicates;
 pub mod error;
 pub mod idempotency;
 pub mod memory;
@@ -14,6 +15,7 @@ pub mod session;
 pub mod title;
 pub mod workspace;
 
+pub use duplicates::{DuplicateCandidate, TitleRecord, rank_duplicates};
 pub use error::MnexisError;
 pub use idempotency::{IdempotencyKey, IdempotencyRecord};
 pub use memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
