@@ -27,7 +27,7 @@ use crate::storage::sqlite::open_sqlite;
 /// How many recent memories the `memory_workspace` tool reports.
 const WORKSPACE_RECENT_LIMIT: usize = 3;
 
-/// The MCP server — owns the MemoryService and exposes 10 tools.
+/// The MCP server — owns the MemoryService and exposes 14 tools.
 ///
 /// All tool functions take `&self`; the Arc<Mutex> provides interior
 /// mutability so the service can be mutated without needing `&mut self`.
@@ -278,7 +278,7 @@ impl McpServer {
             .service
             .lock()
             .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
-        let prompts = svc.search_prompts(&args.query, limit, mode)?;
+        let prompts = svc.search_prompts(&args.query, limit, mode, args.namespace.as_deref())?;
         drop(svc);
         let json = serde_json::json!({
             "count": prompts.len(),

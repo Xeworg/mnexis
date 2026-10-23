@@ -661,7 +661,7 @@ fn a_prompt_is_stored_and_found_again() {
     assert_eq!(prompt.session_id.as_deref(), Some("01JX"));
 
     let hits = svc
-        .search_prompts("puerto 8081", 10, MatchMode::Any)
+        .search_prompts("puerto 8081", 10, MatchMode::Any, None)
         .expect("the search runs");
     assert_eq!(hits.len(), 1, "the prompt is found: {hits:?}");
     assert_eq!(hits[0].content, "el puerto del servicio es 8081");
@@ -678,7 +678,7 @@ fn a_hyphenated_prompt_query_still_finds_the_prompt() {
     )
     .expect("the prompt is stored");
     let hits = svc
-        .search_prompts("staging-eu", 10, MatchMode::Any)
+        .search_prompts("staging-eu", 10, MatchMode::Any, None)
         .expect("the search runs");
     assert_eq!(hits.len(), 1, "the hyphen is part of a word: {hits:?}");
 }

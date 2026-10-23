@@ -70,6 +70,16 @@ mnexis search "wrap mode borde"                            # ranked search
 mnexis status                                             # namespace, allowlists, recent
 ```
 
+The engine also keeps what a repository cannot: the session the agent runs
+in, and what the user said.
+
+```sh
+mnexis session --id 01JX                     # register the session
+mnexis prompt "el puerto es 8081"             # what the user said
+mnexis prompts --search "puerto 8081"         # find it again
+mnexis end --id 01JX --summary "qué hicimos"  # end it with a summary
+```
+
 A search query is plain language: every word counts, a hyphen is part of a
 word, and `--match all` narrows it to the memories that hold every word.
 
@@ -156,8 +166,13 @@ mcp serve         run the MCP stdio server
 save              save a new memory
 update            update a memory (optimistic revision)
 supersede         mark an older memory superseded by a newer one
-search            FTS5 ranked search
+search            ranked search (every word of the query counts)
 list              list memories
+session           register the session this process runs in
+end               end a session, with an optional summary
+sessions          the sessions this profile can read
+prompt            store what the user said
+prompts           list or search what the user said
 status            where this workspace may write, and what is already there
 show              show a memory (current or specific revision)
 history           show revision history
@@ -215,9 +230,11 @@ command line. Example `mcp.json` entry:
 }
 ```
 
-The server exposes 10 tools (`memory_save`, `memory_get`,
+The server exposes 14 tools (`memory_save`, `memory_get`,
 `memory_list`, `memory_update`, `memory_history`, `memory_supersede`,
-`memory_delete`, `memory_restore`, `memory_search`, `memory_workspace`).
+`memory_delete`, `memory_restore`, `memory_search`, `memory_workspace`,
+`memory_session_start`, `memory_session_end`, `memory_save_prompt`,
+`memory_search_prompts`).
 `memory_workspace` answers "where may I write, and what is already there?"
 with the same payload as `mnexis status`: the bound namespace, the read and
 write allowlists, the memory count and the most recent memories. All errors

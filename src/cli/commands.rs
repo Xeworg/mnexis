@@ -562,16 +562,21 @@ pub fn list_prompts(
     session: Option<String>,
     match_mode: &str,
     limit: usize,
+    namespace: Option<String>,
 ) -> Result<CommandOutcome, MnexisError> {
     let limit = clamp_limit(limit);
     let prompts = match &search {
         Some(query) => {
             let mode = MatchMode::parse(match_mode)?;
-            profile.service_ref().search_prompts(query, limit, mode)?
+            profile
+                .service_ref()
+                .search_prompts(query, limit, mode, namespace.as_deref())?
         }
-        None => profile
-            .service_ref()
-            .list_prompts(session.as_deref(), limit)?,
+        None => {
+            profile
+                .service_ref()
+                .list_prompts(session.as_deref(), limit, namespace.as_deref())?
+        }
     };
     let text = prompts
         .iter()

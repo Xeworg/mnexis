@@ -792,13 +792,17 @@ impl<R: MemoryRepository> MemoryService<R> {
     }
 
     /// The prompts the scope can read, newest first.
+    ///
+    /// A namespace narrows the read to one project; without one, the
+    /// scope's read scope decides, as it does for the memories.
     pub fn list_prompts(
         &self,
         session_id: Option<&str>,
         limit: usize,
+        namespace: Option<&str>,
     ) -> Result<Vec<UserPrompt>, MnexisError> {
-        self.repo
-            .list_prompts(&self.scope.read_scope(), session_id, limit)
+        let scope = self.prompt_scope(namespace)?;
+        self.repo.list_prompts(&scope, session_id, limit)
     }
 
     /// Search the prompts, the same way the memories are searched: the
@@ -808,10 +812,23 @@ impl<R: MemoryRepository> MemoryService<R> {
         query: &str,
         limit: usize,
         mode: MatchMode,
+        namespace: Option<&str>,
     ) -> Result<Vec<UserPrompt>, MnexisError> {
         validate_query(query, self.config.max_query_bytes)?;
-        self.repo
-            .search_prompts(&self.scope.read_scope(), query, limit, mode)
+        let scope = self.prompt_scope(namespace)?;
+        self.repo.search_prompts(&scope, query, limit, mode)
+    }
+
+    /// The namespaces a prompt read reaches: the one the caller named, or
+    /// every namespace the scope reads.
+    fn prompt_scope(&self, namespace: Option<&str>) -> Result<NamespaceScope, MnexisError> {
+        match namespace {
+            Some(ns) => {
+                self.scope.authorize_read(ns)?;
+                Ok(NamespaceScope::Only(vec![ns.to_string()]))
+            }
+            None => Ok(self.scope.read_scope()),
+        }
     }
 
     /// The namespace a write without an explicit one lands in: the

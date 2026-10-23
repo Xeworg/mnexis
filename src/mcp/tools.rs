@@ -1,7 +1,9 @@
 //! Tool definitions for the MCP server (T20; e2-core §3, §5).
 //!
-//! 9 tools: memory_save, memory_get, memory_list, memory_update,
-//! memory_history, memory_supersede, memory_delete, memory_restore, memory_search.
+//! The argument shapes of the MCP tools: memory_save, memory_get,
+//! memory_list, memory_update, memory_history, memory_supersede,
+//! memory_delete, memory_restore, memory_search, memory_session_start,
+//! memory_session_end, memory_save_prompt and memory_search_prompts.
 //!
 //! MCP-required field requirements per e2-core §8:
 //! - memory_supersede: older_uuid, newer_uuid, expected_old_revision,

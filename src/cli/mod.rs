@@ -224,6 +224,9 @@ pub enum Command {
         /// Only the prompts of this session
         #[arg(long, value_name = "ID")]
         session: Option<String>,
+        /// Namespace to narrow the read to one project
+        #[arg(long)]
+        namespace: Option<String>,
         /// How the query's words are matched: any (default) | all | phrase
         #[arg(long = "match", default_value = "any", value_name = "MODE")]
         match_mode: String,
@@ -645,6 +648,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Prompts {
             search,
             session,
+            namespace,
             match_mode,
             limit,
         } => {
@@ -655,6 +659,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 session.clone(),
                 match_mode,
                 *limit,
+                namespace.clone(),
             )
         }
         Command::Status => status_cmd::status(data_dir),
