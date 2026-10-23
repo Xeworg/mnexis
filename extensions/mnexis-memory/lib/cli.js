@@ -97,8 +97,11 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(["config", "show"], { json: true, cwd });
 		},
 
-		async save({ namespace, content, tags, topicKey, idempotencyKey }, cwd) {
+		async save({ namespace, content, title, tags, topicKey, idempotencyKey }, cwd) {
 			const args = ["save", "--namespace", namespace];
+			if (title) {
+				args.push("--title", title);
+			}
 			if (tags) {
 				args.push("--tags", tags);
 			}
@@ -181,13 +184,10 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
-		async suggestTopicKey({ content, namespace, limit }, cwd) {
-			const args = ["suggest-topic-key", content];
+		async suggestTopicKey({ title, namespace }, cwd) {
+			const args = ["suggest-topic-key", title];
 			if (namespace) {
 				args.push("--namespace", namespace);
-			}
-			if (typeof limit === "number") {
-				args.push("--limit", String(limit));
 			}
 			return run(args, { json: true, cwd });
 		},

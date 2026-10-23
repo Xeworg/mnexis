@@ -81,7 +81,7 @@ if (args[0] === "project" && args[1] === "list") {
 } else if (args[0] === "search" || args[0] === "prompts") {
 	process.stdout.write(JSON.stringify({ count: 0, items: [] }));
 } else if (args[0] === "suggest-topic-key") {
-	process.stdout.write(JSON.stringify({ count: 0, items: [] }));
+	process.stdout.write(JSON.stringify({ title: args[2], topic_key: "puerto-del-servicio", recorded_by: null }));
 } else if (args[0] === "session" || args[0] === "end" || args[0] === "prompt") {
 	process.stdout.write(JSON.stringify({ id: args[3] || "s1", session_id: args[3] || "s1" }));
 } else {
@@ -407,14 +407,34 @@ test("the topic suggestion reaches the engine", async () => {
 
 	await suggest.execute(
 		"s6",
-		{ content: "el puerto es 8081" },
+		{ title: "puerto del servicio" },
 		undefined,
 		undefined,
 		context(),
 	);
 	const call = calls(log).find((args) => args[0] === "suggest-topic-key");
 	assert.ok(call, "the engine was asked");
-	assert.ok(call.includes("el puerto es 8081"), "the content reaches the engine");
+	assert.ok(call.includes("puerto del servicio"), "the title reaches the engine");
+});
+
+test("the save carries the title the agent gave", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+	assert.ok(save, "mnexis_save is registered");
+
+	await save.execute(
+		"s6b",
+		{ content: "el puerto es 8081", title: "puerto del servicio" },
+		undefined,
+		undefined,
+		context(),
+	);
+	const call = calls(log).find((args) => args[0] === "save");
+	assert.ok(call, "the engine was asked");
+	assert.ok(call.includes("--title"), `the title reaches the engine: ${JSON.stringify(call)}`);
+	assert.ok(call.includes("puerto del servicio"), "and it is the title the agent gave");
 });
 
 test("the relations travel with the list the model reads", async () => {

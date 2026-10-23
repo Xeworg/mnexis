@@ -143,21 +143,22 @@ Two things a repository cannot hold, and the engine keeps both:
    `--match all` narrows it to memories that hold every word.
 2. **Save what matters.** After a milestone — a decision, a discovery, a
    user preference — store it immediately, in this project's namespace:
-   `mnexis save --namespace <name> "<one self-contained sentence>" --tags a,b --topic-key <stable-key>`.
+   `mnexis save --namespace <name> --title "<what the fact IS>" "<one self-contained sentence>" --tags a,b`.
    The content must make sense months later with no surrounding chat.
-   `--topic-key` is unique per namespace: reuse it to group facts about one
-   topic. It accepts lowercase ASCII letters, digits, `.`, `-` and `/` —
-   `snake/design` and `snake-design` are both accepted, and both group the
-   same facts. `--idempotency-key`
-   makes retries safe.
-3. **One fact, one record.** When the engine tells you that a topic is
-   already recorded under a topic key (the save says so, or
-   `mnexis suggest-topic-key "<content>"` answers it), save the new value
-   **with that key**: the record is updated instead of a second one being
-   added next to it. Two records about the same thing mean the next
-   session has to read both to find out which one is current. A key that
-   carries the value inside it (`payments-api/port-9090`) guarantees the
-   duplicate; a key that names the topic (`payments-api/port`) does not.
+   `--idempotency-key` makes retries safe.
+3. **One fact, one record — the title is what does it.** The **title** is
+   what the fact *is*; the content is what it says *right now*. The topic
+   key derives from the title, so the same title always lands on the same
+   record: saving the same fact again with the same title **updates** that
+   record (its revision goes up and the previous content stays in the
+   history) instead of adding a second one next to it.
+   Write the title as the topic, never with the value inside it:
+   `puerto del servicio`, not `puerto 9090` — a title that carries the
+   value guarantees the duplicate next time the value changes.
+   `mnexis suggest-topic-key "<title>"` answers which key a title yields
+   and whether the project already records it.
+   `--topic-key` still exists for the cases where you want to place the
+   memory yourself; it accepts lowercase letters, digits, `.`, `-` and `/`.
 4. **A replaced fact says so.** When a search or a list answer carries
    `was replaced by`, that memory is the old one and the other is current.
    Answer with the current value, and do not read the replaced one.
