@@ -2001,3 +2001,292 @@ fn the_human_line_of_a_search_and_a_list_names_the_title() {
         "the list line names the title: {text}"
     );
 }
+
+// --- the words of a fact (agent-keywords S1, S4) ---
+//
+// A memory carries the words its fact is called by in another language or
+// another team's jargon, so a search in one vocabulary finds a record
+// written in another. The agent supplies them on the save, they accumulate
+// across sessions, and every read answer carries them back — a memory with
+// no words reports the empty list, never `null`.
+
+#[test]
+fn a_save_carries_the_words_and_the_answer_carries_them_back() {
+    let p = Profile::new();
+    let out = p
+        .run_silent(&[
+            "save",
+            "--type",
+            "fact",
+            "--title",
+            "puerto del servicio",
+            "--keywords",
+            "puerto, port, listen port",
+            "El servicio escucha en el puerto 8081",
+        ])
+        .unwrap_status("save --keywords");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["keywords"],
+        serde_json::json!(["puerto", "port", "listen port"]),
+        "the save's answer carries the words the record kept: {json}"
+    );
+    let uuid = json["uuid"]
+        .as_str()
+        .expect("uuid in save output")
+        .to_string();
+
+    let shown = p.run_silent(&["show", &uuid]).unwrap_status("show");
+    assert_eq!(
+        stdout_json(&shown)["keywords"],
+        serde_json::json!(["puerto", "port", "listen port"]),
+        "the record itself keeps them"
+    );
+}
+
+#[test]
+fn the_human_answer_of_a_save_shows_the_words() {
+    let p = Profile::new();
+    let out = p.run_text(&[
+        "save",
+        "--title",
+        "puerto del servicio",
+        "--keywords",
+        "puerto, port",
+        "El servicio escucha en el puerto 8081",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("puerto, port"),
+        "the human answer shows the accumulated words: {text}"
+    );
+}
+
+#[test]
+fn a_second_save_accumulates_the_words_of_the_first() {
+    let p = Profile::new();
+    let first = save(
+        &p,
+        "El servicio escucha en el puerto 8081",
+        &[
+            "--title",
+            "puerto del servicio",
+            "--keywords",
+            "puerto, port",
+        ],
+    );
+    let out = p
+        .run_silent(&[
+            "save",
+            "--type",
+            "fact",
+            "--title",
+            "puerto del servicio",
+            "--keywords",
+            "listen port",
+            "El servicio escucha en el puerto 9090",
+        ])
+        .unwrap_status("save (second)");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["uuid"], first,
+        "the same title lands on the same record: {json}"
+    );
+    assert_eq!(
+        json["keywords"],
+        serde_json::json!(["listen port", "puerto", "port"]),
+        "the words accumulate, the requested ones first: {json}"
+    );
+}
+
+#[test]
+fn replace_keywords_replaces_the_accumulated_words() {
+    let p = Profile::new();
+    save(
+        &p,
+        "El servicio escucha en el puerto 8081",
+        &[
+            "--title",
+            "puerto del servicio",
+            "--keywords",
+            "puerto, port",
+        ],
+    );
+    let out = p
+        .run_silent(&[
+            "save",
+            "--type",
+            "fact",
+            "--title",
+            "puerto del servicio",
+            "--keywords",
+            "listen port",
+            "--replace-keywords",
+            "El servicio escucha en el puerto 9090",
+        ])
+        .unwrap_status("save --replace-keywords");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["keywords"],
+        serde_json::json!(["listen port"]),
+        "a wrong word is replaced, not accumulated: {json}"
+    );
+}
+
+#[test]
+fn a_save_without_words_answers_with_the_empty_list() {
+    let p = Profile::new();
+    let out = p
+        .run_silent(&["save", "--type", "fact", "sin palabras"])
+        .unwrap_status("save");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["keywords"],
+        serde_json::json!([]),
+        "no words is the empty list, never null: {json}"
+    );
+}
+
+#[test]
+fn a_search_hit_carries_the_words_of_the_memory() {
+    let p = Profile::new();
+    save(
+        &p,
+        "listen on port 8081",
+        &["--title", "listen port", "--keywords", "puerto, port"],
+    );
+    let out = p
+        .run_silent(&["search", "listen", "--limit", "10"])
+        .unwrap_status("search");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 1, "search: {json}");
+    assert_eq!(
+        json["items"][0]["keywords"],
+        serde_json::json!(["puerto", "port"]),
+        "the hit carries the words: {json}"
+    );
+
+    save(&p, "sin palabras pero encontrable", &[]);
+    let out = p
+        .run_silent(&["search", "encontrable", "--limit", "10"])
+        .unwrap_status("search (no words)");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["items"][0]["keywords"],
+        serde_json::json!([]),
+        "a memory with no words is the empty list, never null: {json}"
+    );
+}
+
+#[test]
+fn the_explain_hits_carry_the_words_and_keep_the_matched_terms() {
+    let p = Profile::new();
+    save(
+        &p,
+        "listen on port 8081",
+        &["--title", "listen port", "--keywords", "puerto, port"],
+    );
+    let out = p
+        .run_silent(&["search", "--explain", "listen"])
+        .unwrap_status("search --explain");
+    let json = stdout_json(&out);
+    let item = &json["items"][0];
+    assert_eq!(
+        item["keywords"],
+        serde_json::json!(["puerto", "port"]),
+        "explain: {json}"
+    );
+    assert!(
+        item["matched_terms"]
+            .as_array()
+            .map(|terms| !terms.is_empty())
+            .unwrap_or(false),
+        "the explanation still explains: {json}"
+    );
+}
+
+#[test]
+fn the_compact_list_carries_the_words_and_still_carries_the_preview() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    save(
+        &p,
+        "listable content",
+        &[
+            "--namespace",
+            "proyecto-a",
+            "--title",
+            "contenido listable",
+            "--keywords",
+            "puerto, port",
+        ],
+    );
+    save(&p, "sin palabras", &["--namespace", "proyecto-a"]);
+    let out = p
+        .run_silent(&["list", "--namespace", "proyecto-a"])
+        .unwrap_status("list");
+    let json = stdout_json(&out);
+    let items = json["items"].as_array().expect("items array");
+
+    let worded = items
+        .iter()
+        .find(|item| item["preview"] == "listable content")
+        .unwrap_or_else(|| panic!("the worded memory is listed: {json}"));
+    assert_eq!(
+        worded["keywords"],
+        serde_json::json!(["puerto", "port"]),
+        "the words travel with the preview: {json}"
+    );
+    assert_eq!(
+        worded["preview"], "listable content",
+        "the compact list still shows the preview: {json}"
+    );
+
+    let wordless = items
+        .iter()
+        .find(|item| item["preview"] == "sin palabras")
+        .unwrap_or_else(|| panic!("the wordless memory is listed: {json}"));
+    assert_eq!(
+        wordless["keywords"],
+        serde_json::json!([]),
+        "no words is the empty list, never null: {json}"
+    );
+}
+
+#[test]
+fn a_context_item_carries_the_words() {
+    let p = namespaced_profile(&["default"]);
+    save(
+        &p,
+        "listen on port 8081",
+        &["--title", "listen port", "--keywords", "puerto, port"],
+    );
+    let out = p
+        .run_silent(&[
+            "context",
+            "--namespace",
+            "default",
+            "--token-budget",
+            "1024",
+            "--budget-mode",
+            "exact",
+            "listen",
+        ])
+        .unwrap_status("context");
+    let json = stdout_json(&out);
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "context: {json}");
+    assert_eq!(
+        items[0]["keywords"],
+        serde_json::json!(["puerto", "port"]),
+        "the context carries the words of its items: {json}"
+    );
+    assert_eq!(
+        items[0]["content"], "listen on port 8081",
+        "additive: the content stays: {json}"
+    );
+}

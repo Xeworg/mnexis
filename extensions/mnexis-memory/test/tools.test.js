@@ -78,6 +78,27 @@ if (args[0] === "project" && args[1] === "list") {
 			relations: [{ older: "m1", newer: "m2", type: "supersedes", reason: "el puerto cambió" }],
 		}),
 	);
+} else if (args[0] === "save") {
+	// The words the engine answers with: the ones this save asked for, plus
+	// the ones the record already carried. MNEXIS_FAKE_KEYWORDS stands for a
+	// record a previous session wrote.
+	const requested = [];
+	for (let i = 0; i < args.length; i += 1) {
+		if (args[i] === "--keywords") {
+			requested.push(
+				...String(args[i + 1])
+					.split(",")
+					.map((word) => word.trim())
+					.filter(Boolean),
+			);
+		}
+	}
+	const accumulated = process.env.MNEXIS_FAKE_KEYWORDS
+		? JSON.parse(process.env.MNEXIS_FAKE_KEYWORDS)
+		: requested;
+	process.stdout.write(
+		JSON.stringify({ uuid: "u-1", row_id: 1, keywords: accumulated }),
+	);
 } else if (args[0] === "search" || args[0] === "prompts") {
 	process.stdout.write(JSON.stringify({ count: 0, items: [] }));
 } else if (args[0] === "suggest-topic-key") {
@@ -529,4 +550,92 @@ test("a supersede of another project's memory is refused", async () => {
 	const call = calls(log).find((args) => args[0] === "supersede");
 	assert.equal(call, undefined, "no supersede reached the CLI");
 	delete process.env.MNEXIS_FAKE_MEMORY_NAMESPACE;
+});
+
+test("the save declares the words it accepts", async () => {
+	setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+	assert.ok(save, "mnexis_save is registered");
+
+	const keywords = save.parameters.properties.keywords;
+	assert.ok(keywords, `the tool declares a keywords parameter: ${JSON.stringify(save.parameters)}`);
+	assert.equal(keywords.type, "string", "the words arrive comma-separated, like tags");
+});
+
+test("the save passes the words to the engine", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+
+	await save.execute(
+		"k1",
+		{ content: "el puerto es 8081", keywords: "puerto, port" },
+		undefined,
+		undefined,
+		context(),
+	);
+	const call = calls(log).find((args) => args[0] === "save");
+	assert.ok(call, "the engine was asked");
+	assert.ok(call.includes("--keywords"), `the words reach the engine: ${JSON.stringify(call)}`);
+	assert.equal(
+		call[call.indexOf("--keywords") + 1],
+		"puerto, port",
+		`and they are the words the agent gave: ${JSON.stringify(call)}`,
+	);
+});
+
+test("the save message shows the accumulated words", async () => {
+	const { log } = setup();
+	// The record already carries a vocabulary a previous session wrote; this
+	// save only names one word, so a message that showed the request instead
+	// of the answer could not contain `puerto`.
+	process.env.MNEXIS_FAKE_KEYWORDS = JSON.stringify(["listen port", "puerto"]);
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+
+	const result = await save.execute(
+		"k2",
+		{ content: "el puerto es 8081", keywords: "listen port" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.notEqual(result.isError, true);
+	const text = result.content.map((block) => block.text).join(" ");
+	assert.match(text, /puerto/, `the accumulated words are in the message: ${text}`);
+	assert.match(text, /listen port/, `the new word is there too: ${text}`);
+	delete process.env.MNEXIS_FAKE_KEYWORDS;
+
+	const call = calls(log).find((args) => args[0] === "save");
+	assert.ok(call, "the engine was asked");
+});
+
+test("a save with no words says nothing about them", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+
+	const result = await save.execute(
+		"k3",
+		{ content: "sin palabras" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.notEqual(result.isError, true);
+	const text = result.content.map((block) => block.text).join(" ");
+	assert.doesNotMatch(text, /words/i, `nothing to report: ${text}`);
+
+	const call = calls(log).find((args) => args[0] === "save");
+	assert.ok(call, "the engine was asked");
+	assert.equal(
+		call.includes("--keywords"),
+		false,
+		`no words means no flag: ${JSON.stringify(call)}`,
+	);
 });

@@ -90,6 +90,13 @@ same record, so a fact that changed updates its record instead of adding a
 second one next to it. `mnexis suggest-topic-key "<title>"` answers which key
 a title yields and whether the project already records it.
 
+A memory also carries **the words its fact is called by** in another
+language or another team's jargon (`--keywords "puerto, port, listen
+port"`), the full-text index covers them, and every read answer carries them
+back. A save **adds** its words to the ones the record already has, so a
+session that does not remember them cannot erase them; `--replace-keywords`
+replaces the list when a word is wrong.
+
 The repository also ships a pi extension that exposes the memory engine as
 native tools, so an agent can store and recall project memory without being
 asked to, and without choosing a namespace itself:
@@ -170,7 +177,7 @@ The full surface (25 command groups; see `mnexis --help`):
 version           print the version and exit
 init              create a new profile (mnexis.db + mnexis.toml)
 mcp serve         run the MCP stdio server
-save              save a new memory (--title names the fact)
+save              save a new memory (--title names the fact, --keywords its words)
 update            update a memory (optimistic revision)
 supersede         mark an older memory superseded by a newer one
 search            ranked search (every word of the query counts)
@@ -243,6 +250,8 @@ The server exposes 14 tools (`memory_save`, `memory_get`,
 `memory_delete`, `memory_restore`, `memory_search`, `memory_workspace`,
 `memory_session_start`, `memory_session_end`, `memory_save_prompt`,
 `memory_search_prompts`).
+`memory_save` takes the same identity the CLI takes: `title`, `keywords`
+(the comma-separated words of the fact) and `replace_keywords`.
 `memory_workspace` answers "where may I write, and what is already there?"
 with the same payload as `mnexis status`: the bound namespace, the read and
 write allowlists, the memory count and the most recent memories. All errors

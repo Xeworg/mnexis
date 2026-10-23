@@ -62,6 +62,10 @@ pub struct ContextItem {
     /// has none, exactly like its `topic_key`. The context is what the
     /// agent reads first, so the identity travels with it.
     pub title: String,
+    /// The words the fact is called by in another language or another
+    /// jargon (agent-keywords S4). Empty when the memory has none, never
+    /// `null`.
+    pub keywords: Vec<String>,
     pub revision: i32,
     pub namespace: String,
     pub content: String,
@@ -122,6 +126,7 @@ fn project(out: &mut Vec<ContextItem>, mems: Vec<Memory>) {
         out.push(ContextItem {
             uuid: mem.uuid,
             title: mem.title,
+            keywords: mem.keywords,
             revision: mem.revision,
             namespace: mem.namespace,
             content: mem.content,
@@ -389,6 +394,33 @@ mod tests {
         assert_eq!(out.items[0].title, "titulo de u1");
         // Additive: the content the item already carried stays.
         assert_eq!(out.items[0].content, "alpha");
+    }
+
+    #[test]
+    fn a_context_item_carries_the_words_of_its_memory() {
+        let budget = Budget::new(10_000, BudgetMode::Exact);
+        let mut m = memory("u1", "listen on port 8081", "fact", MemoryState::Active);
+        m.keywords = vec!["puerto".into(), "port".into()];
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m]).unwrap();
+        assert_eq!(out.items.len(), 1);
+        assert_eq!(
+            out.items[0].keywords,
+            vec!["puerto", "port"],
+            "the words travel with the context"
+        );
+    }
+
+    #[test]
+    fn a_context_item_with_no_words_reports_the_empty_list() {
+        let budget = Budget::new(10_000, BudgetMode::Exact);
+        let m = memory("u1", "sin palabras", "fact", MemoryState::Active);
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m]).unwrap();
+        let json = serde_json::to_value(&out.items[0]).expect("serialise item");
+        assert_eq!(
+            json["keywords"],
+            serde_json::json!([]),
+            "no words is the empty list, never null: {json}"
+        );
     }
 
     #[test]

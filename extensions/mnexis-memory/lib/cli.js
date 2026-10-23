@@ -97,13 +97,16 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(["config", "show"], { json: true, cwd });
 		},
 
-		async save({ namespace, content, title, tags, topicKey, idempotencyKey }, cwd) {
+		async save({ namespace, content, title, tags, keywords, topicKey, idempotencyKey }, cwd) {
 			const args = ["save", "--namespace", namespace];
 			if (title) {
 				args.push("--title", title);
 			}
 			if (tags) {
 				args.push("--tags", tags);
+			}
+			if (keywords) {
+				args.push("--keywords", keywords);
 			}
 			if (topicKey) {
 				args.push("--topic-key", topicKey);

@@ -26,6 +26,12 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 Every tool is declared to the model in every session: availability does not
 depend on the model discovering a skill.
 
+`mnexis_save` also takes `keywords`: the comma-separated words the fact is
+called by in another language or another team's jargon (`puerto, port,
+listen port`). They are the topic's vocabulary, never a value, and they
+accumulate on the record across sessions, so the tool's answer shows the
+words the memory carries now — read it and prune a word that is wrong.
+
 ## Read across projects, write inside one
 
 Reads are open: `mnexis_search` and `mnexis_list` reach every project

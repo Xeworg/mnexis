@@ -30,6 +30,10 @@ pub struct MemoryPreview {
     /// The memory's title: what the fact *is*. Empty when it has none,
     /// exactly like its `topic_key`.
     pub title: String,
+    /// The words the fact is called by in another language or another
+    /// jargon (agent-keywords S4). Empty when the memory has none, never
+    /// `null`.
+    pub keywords: Vec<String>,
     /// The namespace the memory lives in.
     pub namespace: String,
     /// The memory's type (`fact`, `decision`, …).
@@ -54,6 +58,7 @@ impl MemoryPreview {
         Self {
             uuid: memory.uuid.clone(),
             title: memory.title.clone(),
+            keywords: memory.keywords.clone(),
             namespace: memory.namespace.clone(),
             memory_type: memory.memory_type.clone(),
             state: memory.state.as_str().to_string(),
@@ -136,6 +141,24 @@ mod tests {
             json["title"],
             serde_json::json!(""),
             "the key is there and it is empty: {json}"
+        );
+    }
+
+    #[test]
+    fn a_preview_carries_the_words_and_the_empty_list_when_there_are_none() {
+        let mut memory = memory_with("listen on port 8081");
+        memory.keywords = vec!["puerto".to_string(), "port".to_string()];
+        let preview = MemoryPreview::of(&memory);
+        assert_eq!(preview.keywords, vec!["puerto", "port"]);
+
+        let mut wordless = memory_with("sin palabras");
+        wordless.keywords = Vec::new();
+        let preview = MemoryPreview::of(&wordless);
+        let json = serde_json::to_value(&preview).expect("serialise preview");
+        assert_eq!(
+            json["keywords"],
+            serde_json::json!([]),
+            "no words is the empty list, never null: {json}"
         );
     }
 

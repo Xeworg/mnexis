@@ -1570,3 +1570,204 @@ async fn memory_workspace_carries_the_title_of_the_recent_memories()
     client.cancel().await?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// S1, S4: the words of a fact (agent-keywords T3)
+// ---------------------------------------------------------------------------
+//
+// The agent supplies the vocabulary of the fact through the tool, the words
+// accumulate on the record across sessions, `replace_keywords` replaces
+// them, and every read payload carries them back — the empty list when the
+// memory has none, never `null`.
+
+#[tokio::test]
+async fn memory_save_answers_with_the_accumulated_words() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let first = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": "listen on port 8081",
+            "title": "listen port",
+            "keywords": "puerto, port"
+        }),
+    )
+    .await?;
+    let parsed: serde_json::Value = serde_json::from_str(&first)?;
+    assert_eq!(
+        parsed["keywords"],
+        serde_json::json!(["puerto", "port"]),
+        "the save's answer carries the words: {parsed}"
+    );
+
+    // A new session does not remember the old words, so a save adds its own.
+    let second = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": "listen on port 9090",
+            "title": "listen port",
+            "keywords": "listen port"
+        }),
+    )
+    .await?;
+    let parsed: serde_json::Value = serde_json::from_str(&second)?;
+    assert_eq!(
+        parsed["keywords"],
+        serde_json::json!(["listen port", "puerto", "port"]),
+        "the words accumulate, the requested ones first: {parsed}"
+    );
+
+    // A word that is wrong is replaced instead of accumulated.
+    let replaced = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": "listen on port 7070",
+            "title": "listen port",
+            "keywords": "puerto",
+            "replace_keywords": true
+        }),
+    )
+    .await?;
+    let parsed: serde_json::Value = serde_json::from_str(&replaced)?;
+    assert_eq!(
+        parsed["keywords"],
+        serde_json::json!(["puerto"]),
+        "replace_keywords replaces the accumulated words: {parsed}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_save_without_words_answers_with_the_empty_list() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let text = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "sin palabras" }),
+    )
+    .await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(
+        parsed["keywords"],
+        serde_json::json!([]),
+        "no words is the empty list, never null: {parsed}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_read_payloads_carry_the_words() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": "listen on port 8081",
+            "title": "listen port",
+            "keywords": "puerto, port"
+        }),
+    )
+    .await?;
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "sin palabras" }),
+    )
+    .await?;
+
+    // Search: the hit carries the words of the record it points at.
+    let text = call_tool_text(
+        &client,
+        "memory_search",
+        serde_json::json!({ "query": "listen" }),
+    )
+    .await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(parsed["count"], 1, "search: {parsed}");
+    assert_eq!(
+        parsed["items"][0]["keywords"],
+        serde_json::json!(["puerto", "port"]),
+        "the hit carries the words: {parsed}"
+    );
+
+    // List: the compact item carries them beside the preview, and the
+    // memory with no words says so with the empty list.
+    let text = call_tool_text(&client, "memory_list", serde_json::json!({})).await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    let items = parsed["items"].as_array().expect("items array");
+    let worded = items
+        .iter()
+        .find(|item| item["preview"] == "listen on port 8081")
+        .unwrap_or_else(|| panic!("the worded memory is listed: {parsed}"));
+    assert_eq!(
+        worded["keywords"],
+        serde_json::json!(["puerto", "port"]),
+        "the words travel with the preview: {parsed}"
+    );
+    let wordless = items
+        .iter()
+        .find(|item| item["preview"] == "sin palabras")
+        .unwrap_or_else(|| panic!("the wordless memory is listed: {parsed}"));
+    assert_eq!(
+        wordless["keywords"],
+        serde_json::json!([]),
+        "no words is the empty list, never null: {parsed}"
+    );
+
+    // Workspace: the first payload a session reads carries them too.
+    let text = call_tool_text(&client, "memory_workspace", serde_json::json!({})).await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    let recent = parsed["recent"]
+        .as_array()
+        .expect("the payload must carry the recent list");
+    let worded = recent
+        .iter()
+        .find(|item| item["content"] == "listen on port 8081")
+        .unwrap_or_else(|| panic!("the worded memory is recent: {parsed}"));
+    assert_eq!(
+        worded["keywords"],
+        serde_json::json!(["puerto", "port"]),
+        "the recent list carries the words: {parsed}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
