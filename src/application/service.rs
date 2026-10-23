@@ -174,11 +174,24 @@ impl<R: MemoryRepository> MemoryService<R> {
         // that record — content, title and tags — keeps its history, and
         // returns it. The key derives from the title, so this is an equality,
         // not a guess.
+        //
+        // The occupier is found in any state and with any deletion status, so
+        // the record has to be alive for the upsert to apply: writing into a
+        // superseded or deleted record would leave the new value invisible to
+        // the search and to the index, and releasing the key would create a
+        // second record for a fact the engine already knows.
         if !req.topic_key.is_empty()
-            && let Some(occupier) = self
+            && let Some(occupier_uuid) = self
                 .repo
                 .topic_key_occupier(&req.namespace, &req.topic_key)?
         {
+            let occupier = self
+                .repo
+                .get_by_uuid_including_deleted(&occupier_uuid)?
+                .ok_or_else(|| MnexisError::not_found(format!("memory:{occupier_uuid}")))?;
+            if occupier.state != MemoryState::Active || occupier.deleted {
+                return self.refuse_dead_occupier(&occupier, &req);
+            }
             let updated = self.update_occupied(&occupier, &req)?;
             return Ok(updated);
         }
@@ -886,18 +899,70 @@ impl<R: MemoryRepository> MemoryService<R> {
         self.repo.topic_key_occupier(namespace, topic_key)
     }
 
+    /// Refuse a save whose key is held by a record that is not alive.
+    ///
+    /// The refusal is atomic: the occupier is not written, and no second
+    /// record is created for the fact. The message names the key, what
+    /// happened to the record, and the way out — the successor in the
+    /// supersession chain when there is one, otherwise the record itself.
+    ///
+    /// The error kind is the existing `INVALID_ARGUMENT` (exit 2), the same
+    /// one the supersede state gate uses for "that record is not alive".
+    fn refuse_dead_occupier(
+        &self,
+        occupier: &Memory,
+        req: &SaveRequest,
+    ) -> Result<Memory, MnexisError> {
+        let uuid = occupier.uuid.as_str();
+        let situation = if occupier.state == MemoryState::Superseded {
+            match self.successor_of(uuid)? {
+                Some(successor) => format!(
+                    "which was replaced by {successor}; update {successor} instead, \
+                     or save with another title"
+                ),
+                None => "which was replaced and its successor is not recorded; \
+                         save with another title"
+                    .to_string(),
+            }
+        } else if occupier.deleted {
+            format!("which was deleted; restore {uuid}, or save with another title")
+        } else {
+            format!(
+                "which is {}; update that record, or save with another title",
+                occupier.state.as_str()
+            )
+        };
+        Err(MnexisError::invalid_argument(
+            "title",
+            format!(
+                "the topic key `{}` is held in {} by {uuid}, {situation}",
+                req.topic_key, req.namespace
+            ),
+        ))
+    }
+
+    /// The record that replaced `uuid`, read from the supersession chain:
+    /// the newest outgoing `supersedes` link of that record.
+    fn successor_of(&self, uuid: &str) -> Result<Option<String>, MnexisError> {
+        let mut links = self.relations_between(&[uuid.to_string()])?;
+        links.retain(|link| link.older_uuid == uuid);
+        links.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        Ok(links.pop().map(|link| link.newer_uuid))
+    }
+
     /// Update the record that already holds a topic key, and keep its
     /// history.
     ///
     /// A save with a key that exists is the same fact again: the content and
     /// the title are replaced, the revision goes up, the previous content
     /// stays in the history with the reason, and the caller gets the record
-    /// that was actually written.
-    fn update_occupied(&mut self, uuid: &str, req: &SaveRequest) -> Result<Memory, MnexisError> {
-        let current = self
-            .repo
-            .get_by_uuid(uuid)?
-            .ok_or_else(|| MnexisError::not_found(format!("memory:{uuid}")))?;
+    /// that was actually written. Only an alive occupier reaches this path
+    /// ([`MemoryService::refuse_dead_occupier`] refuses the rest).
+    fn update_occupied(
+        &mut self,
+        current: &Memory,
+        req: &SaveRequest,
+    ) -> Result<Memory, MnexisError> {
         let next_revision = current.revision + 1;
         let updated = Memory {
             id: current.id,
