@@ -352,7 +352,12 @@ impl App {
                 .map_err(|e| format!("list failed: {e}"))
         } else {
             service
-                .search(&self.query, Some(&ns), MAX_LIMIT)
+                .search(
+                    &self.query,
+                    Some(&ns),
+                    MAX_LIMIT,
+                    crate::domain::query::MatchMode::Any,
+                )
                 .map(|hits| hits.iter().map(MemoryRow::from).collect::<Vec<_>>())
                 .map_err(|e| format!("search failed: {e}"))
         };

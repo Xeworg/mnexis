@@ -6,6 +6,7 @@
 
 use rusqlite::{Connection, params};
 
+use mnexis_core::domain::query::MatchMode;
 use mnexis_core::retrieval::reindex::reindex_all;
 use mnexis_core::retrieval::{DeletedFilter, NamespaceFilter, StateFilter, search};
 use mnexis_core::storage::sqlite::open_sqlite;
@@ -48,6 +49,7 @@ fn reindex_rebuilds_fts5_from_canonical_data() {
     let before = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::default(),
         DeletedFilter::default(),
@@ -69,6 +71,7 @@ fn reindex_rebuilds_fts5_from_canonical_data() {
     let after = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::default(),
         DeletedFilter::default(),
@@ -102,6 +105,7 @@ fn reindex_handles_dropped_fts5_table() {
     let hits = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::default(),
         DeletedFilter::default(),
@@ -143,6 +147,7 @@ fn reindex_is_idempotent() {
     let hits = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::default(),
         DeletedFilter::default(),

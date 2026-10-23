@@ -40,6 +40,15 @@ drop a trailing `.git`, lowercase the whole URL, and replace `/` and `:`
 with `-` — the host's dots survive. A git remote is preferred over a path
 because it survives clones, renames and moves between machines.
 
+**The key has one form.** The engine owns the rule, and it applies it when
+the key is recorded, when it is looked up and when it is shown: a binding
+written with the raw remote (`git:github.com/owner/repo`) is stored as
+`git:github.com-owner-repo`, and a binding recorded by an older version
+still resolves. The bind command accepts either form, and
+`mnexis project list --json` publishes the canonical key of the workspace
+it runs in (`current_key`), so an agent never has to compute the key
+itself.
+
 The marker (`.mnexis-namespace`, a one-line file) exists for workspaces
 that are not repositories: it names the namespace of the workspace, so a
 working directory nested inside it still resolves to the same project.
@@ -132,6 +141,16 @@ A workspace resolves to a namespace in this order: the binding recorded
 for its key, then the nearest `.mnexis-namespace` marker at or above the
 working directory, then nothing — and "nothing" means the profile
 allowlist keeps deciding, as it always did.
+
+**A namespace is never invented.** The name of a directory is not a
+namespace: the pi extension used to derive one from the working
+directory, bind the workspace to it, and leave the agent with a write the
+allowlist did not allow and a binding the human did not ask for. Now a
+workspace with no binding and no marker simply has no namespace, and the
+write is refused with the two commands the human has to run: the bind
+command with the canonical key, and the allow-namespace command for the
+namespace. Reading keeps working: the recall of an unbound workspace
+reaches every namespace the profile allows.
 
 ## Example
 

@@ -9,6 +9,7 @@ use crate::application::io::{ConflictPolicy, ImportDecision, LocalIndex};
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::{IdempotencyKey, IdempotencyRecord};
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
+use crate::domain::query::MatchMode;
 use crate::domain::repository::MemoryRepository;
 use crate::domain::scope::{AccessScope, NamespaceScope, Operation};
 use crate::retrieval::SearchHit;
@@ -553,7 +554,9 @@ impl<R: MemoryRepository> MemoryService<R> {
         // default; the pipeline's eligibility pass re-enforces the
         // same invariant as defence in depth).
         let max_items = req.max_items.unwrap_or(20);
-        let hits = self.repo.search(&req.task, Some(&ns), max_items)?;
+        let hits = self
+            .repo
+            .search(&req.task, Some(&ns), max_items, req.match_mode)?;
 
         // Steps 3+4: revalidate the canonical record and pair the
         // (hit, memory) tuples the pipeline consumes.
@@ -707,16 +710,19 @@ impl<R: MemoryRepository> MemoryService<R> {
         query: &str,
         namespace: Option<&str>,
         limit: usize,
+        mode: MatchMode,
     ) -> Result<Vec<SearchHit>, MnexisError> {
         validate_query(query, self.config.max_query_bytes)?;
         match namespace {
             Some(ns) => {
                 self.scope.authorize_read(ns)?;
-                self.repo.search(query, Some(ns), limit)
+                self.repo.search(query, Some(ns), limit, mode)
             }
             // The cross-namespace recall is bounded by the scope: open
             // reads reach every project, scoped reads only their own.
-            None => self.repo.search_in(&self.scope.read_scope(), query, limit),
+            None => self
+                .repo
+                .search_in(&self.scope.read_scope(), query, limit, mode),
         }
     }
 }

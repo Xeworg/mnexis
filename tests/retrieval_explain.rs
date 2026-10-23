@@ -5,6 +5,7 @@
 
 use rusqlite::{Connection, params};
 
+use mnexis_core::domain::query::MatchMode;
 use mnexis_core::retrieval::explain::explain;
 use mnexis_core::retrieval::{DeletedFilter, NamespaceFilter, StateFilter};
 use mnexis_core::storage::sqlite::open_sqlite;
@@ -43,6 +44,7 @@ fn explain_returns_hit_with_matched_terms_and_rank() {
     let explained = explain(
         &conn,
         "Rust language",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::default(),
         DeletedFilter::default(),
@@ -87,6 +89,7 @@ fn explain_default_excludes_superseded_and_deleted_rows() {
     let explained = explain(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::default(),
         DeletedFilter::default(),

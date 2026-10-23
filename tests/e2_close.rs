@@ -11,6 +11,7 @@ use std::process::{Command, Stdio};
 use mnexis_core::application::MemoryService;
 use mnexis_core::config::ProfileSettings;
 use mnexis_core::domain::memory::MemoryState;
+use mnexis_core::domain::query::MatchMode;
 use mnexis_core::domain::scope::{AccessScope, Operation};
 use mnexis_core::storage::memory_repo::SqliteMemoryRepository;
 use mnexis_core::storage::sqlite::open_sqlite;
@@ -297,11 +298,13 @@ fn delete_removes_from_fts() {
     svc.save(save_req("u1", "petgraph replaced by custom engine"))
         .unwrap();
     // FTS finds it first.
-    let hits = svc.search("petgraph", None, 10).expect("search");
+    let hits = svc
+        .search("petgraph", None, 10, MatchMode::Any)
+        .expect("search");
     assert_eq!(hits.len(), 1, "before delete: {hits:?}");
     svc.soft_delete("u1", 1).unwrap();
     let hits = svc
-        .search("petgraph", None, 10)
+        .search("petgraph", None, 10, MatchMode::Any)
         .expect("search after delete");
     assert!(hits.is_empty(), "after delete: {hits:?}");
 }
@@ -315,9 +318,13 @@ fn restore_reindexes_into_fts() {
     svc.save(save_req("u1", "petgraph replaced by custom engine"))
         .unwrap();
     svc.soft_delete("u1", 1).unwrap();
-    assert!(svc.search("petgraph", None, 10).unwrap().is_empty());
+    assert!(
+        svc.search("petgraph", None, 10, MatchMode::Any)
+            .unwrap()
+            .is_empty()
+    );
     svc.restore("u1").unwrap();
-    let hits = svc.search("petgraph", None, 10).unwrap();
+    let hits = svc.search("petgraph", None, 10, MatchMode::Any).unwrap();
     assert_eq!(hits.len(), 1);
 }
 
@@ -364,7 +371,7 @@ fn doctor_detects_missing_fts_and_search_degrades() {
         permissive_scope(),
         Default::default(),
     );
-    let res = svc.search("petgraph", None, 10);
+    let res = svc.search("petgraph", None, 10, MatchMode::Any);
     // The service.search passes the query through to the FTS-backed
     // retrieval; with memories_fts gone, the SQL fails and the
     // retrieval layer surfaces a domain IndexUnavailable.
@@ -445,7 +452,9 @@ fn concurrent_update_three_processes_one_winner_two_conflicts() {
     let stored = svc.get("u1").unwrap().unwrap();
     assert_eq!(stored.revision, 2);
     let winning_content = stored.content.clone();
-    let hits = svc.search(&winning_content, None, 10).unwrap();
+    let hits = svc
+        .search(&winning_content, None, 10, MatchMode::Any)
+        .unwrap();
     assert_eq!(hits.len(), 1);
 }
 
@@ -501,9 +510,9 @@ fn partial_failure_no_partial_writes_on_update() {
     assert_eq!(stored.content, "original");
     assert_eq!(stored.revision, 1);
     // FTS still has the original row.
-    let hits = svc.search("original", None, 10).unwrap();
+    let hits = svc.search("original", None, 10, MatchMode::Any).unwrap();
     assert_eq!(hits.len(), 1);
-    let hits = svc.search("updated", None, 10).unwrap();
+    let hits = svc.search("updated", None, 10, MatchMode::Any).unwrap();
     assert!(hits.is_empty());
 }
 

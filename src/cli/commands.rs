@@ -16,6 +16,7 @@ use crate::diagnostics::doctor::purge_eligible_count;
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyKey;
 use crate::domain::memory::MemoryState;
+use crate::domain::query::MatchMode;
 use crate::retrieval::explain;
 use crate::retrieval::fts5::{DeletedFilter, NamespaceFilter, StateFilter};
 
@@ -311,12 +312,14 @@ pub fn search(
     namespace: Option<String>,
     limit: usize,
     explain_hits: bool,
+    match_mode: &str,
 ) -> Result<CommandOutcome, MnexisError> {
     let limit = clamp_limit(limit);
+    let mode = MatchMode::parse(match_mode)?;
     // service.search validates the query and authorizes the namespace.
     let hits = profile
         .service_ref()
-        .search(&query, namespace.as_deref(), limit)?;
+        .search(&query, namespace.as_deref(), limit, mode)?;
 
     if explain_hits {
         // Same filters as the repository's search path, on a second
@@ -329,6 +332,7 @@ pub fn search(
         let explained = explain::explain(
             &conn,
             &query,
+            mode,
             ns_filter,
             StateFilter::default(),
             DeletedFilter::default(),
@@ -792,6 +796,7 @@ pub fn context(
     tokenizer_id: Option<String>,
     max_items: usize,
     budget_mode: &str,
+    match_mode: &str,
     task: String,
 ) -> Result<CommandOutcome, MnexisError> {
     use crate::application::budget::BudgetMode;
@@ -811,6 +816,7 @@ pub fn context(
     let req = ContextRequest {
         task,
         namespace,
+        match_mode: MatchMode::parse(match_mode)?,
         token_budget,
         tokenizer_id,
         max_items: Some(max_items),

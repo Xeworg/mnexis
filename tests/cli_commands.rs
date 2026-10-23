@@ -380,6 +380,85 @@ fn search_explain_includes_matched_terms() {
 }
 
 #[test]
+fn a_natural_language_query_finds_the_memory() {
+    let p = Profile::new();
+    save(&p, "El servicio escucha en el puerto 8081", &[]);
+
+    // The query an agent actually writes: several words, none of them the
+    // whole phrase that is stored.
+    let out = p
+        .run_silent(&["search", "puerto base de datos", "--limit", "10"])
+        .unwrap_status("search");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 1, "search: {json}");
+}
+
+#[test]
+fn a_hyphenated_query_finds_the_memory() {
+    let p = Profile::new();
+    save(&p, "El deploy por defecto apunta a staging-eu", &[]);
+
+    let out = p
+        .run_silent(&["search", "staging-eu", "--limit", "10"])
+        .unwrap_status("search");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 1, "search: {json}");
+}
+
+#[test]
+fn the_match_mode_is_callers_choice() {
+    let p = Profile::new();
+    save(&p, "El servicio escucha en el puerto 8081", &[]);
+
+    let all = p
+        .run_silent(&["search", "puerto 8081", "--match", "all", "--limit", "10"])
+        .unwrap_status("search --match all");
+    assert_eq!(stdout_json(&all)["count"], 1, "both words are there");
+
+    let phrase = p
+        .run_silent(&[
+            "search",
+            "8081 puerto",
+            "--match",
+            "phrase",
+            "--limit",
+            "10",
+        ])
+        .unwrap_status("search --match phrase");
+    assert_eq!(
+        stdout_json(&phrase)["count"],
+        0,
+        "the words are out of order"
+    );
+}
+
+#[test]
+fn an_unknown_match_mode_is_an_invalid_argument() {
+    let p = Profile::new();
+    save(&p, "contenido", &[]);
+    let out = p.run_silent(&["search", "contenido", "--match", "nope"]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn an_empty_query_is_an_invalid_argument() {
+    let p = Profile::new();
+    save(&p, "contenido", &[]);
+    let out = p.run_silent(&["search", "   "]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
 fn delete_without_force_prompts_and_stdin_no_aborts() {
     let p = Profile::new();
     let uuid = save(&p, "prompted deletion", &[]);

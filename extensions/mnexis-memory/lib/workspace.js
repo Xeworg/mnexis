@@ -68,6 +68,11 @@ export function deriveNamespaceName(directoryPath) {
  * Decide which namespace to use for a workspace key.
  *
  * An existing binding is never renamed: its namespace wins.
+ *
+ * The fallback is only the marker: a namespace the human wrote down. The
+ * name of a directory is never a namespace — inventing one leaves the
+ * workspace bound to a namespace the allowlist does not know, and the
+ * write is refused with a dead end the agent cannot get out of.
  */
 export function selectNamespace({ bindings, key, fallbackName }) {
 	const list = Array.isArray(bindings) ? bindings : [];
@@ -75,7 +80,10 @@ export function selectNamespace({ bindings, key, fallbackName }) {
 	if (existing && typeof existing.namespace === "string" && existing.namespace !== "") {
 		return { namespace: existing.namespace, bound: true };
 	}
-	return { namespace: fallbackName, bound: false };
+	return {
+		namespace: typeof fallbackName === "string" && fallbackName !== "" ? fallbackName : null,
+		bound: false,
+	};
 }
 
 /** The marker file a workspace can drop to name its namespace. */

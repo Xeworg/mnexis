@@ -147,7 +147,8 @@ pub struct RestoreArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchArgs {
-    /// The FTS5 query string (required).
+    /// The query, in plain language (required). The engine compiles it:
+    /// every word counts, a hyphen is part of a word.
     pub query: String,
     /// Namespace to search within (default: all authorised).
     #[serde(default)]
@@ -155,6 +156,9 @@ pub struct SearchArgs {
     /// Max results (default 20, clamped to 100).
     #[serde(default = "default_limit")]
     pub limit: usize,
+    /// How the query's words are matched: any (default) | all | phrase.
+    #[serde(default)]
+    pub match_mode: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

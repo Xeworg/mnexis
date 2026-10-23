@@ -12,6 +12,7 @@
 
 use rusqlite::{Connection, params};
 
+use mnexis_core::domain::query::MatchMode;
 use mnexis_core::retrieval::{DeletedFilter, NamespaceFilter, StateFilter, ValidWindow, search};
 use mnexis_core::storage::sqlite::open_sqlite;
 
@@ -83,6 +84,7 @@ fn search_default_excludes_non_active_states() {
     let hits = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::default(),
         DeletedFilter::default(),
@@ -115,6 +117,7 @@ fn search_default_excludes_soft_deleted_rows() {
     let hits = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::default(),
         DeletedFilter::default(),
@@ -165,6 +168,7 @@ fn search_namespace_filter_isolates_results() {
     let hits_a = search(
         &conn,
         "graph",
+        MatchMode::Any,
         NamespaceFilter::Namespace("proyecto-a".to_string()),
         StateFilter::default(),
         DeletedFilter::default(),
@@ -209,6 +213,7 @@ fn search_state_filter_any_matches_default_when_index_is_active_only() {
     let hits_default = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::default(),
         DeletedFilter::default(),
@@ -219,6 +224,7 @@ fn search_state_filter_any_matches_default_when_index_is_active_only() {
     let hits_any = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::Any,
         DeletedFilter::default(),
@@ -255,6 +261,7 @@ fn search_deleted_filter_any_matches_default_when_index_is_not_deleted_only() {
     let hits_default = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::Any,
         DeletedFilter::default(),
@@ -265,6 +272,7 @@ fn search_deleted_filter_any_matches_default_when_index_is_not_deleted_only() {
     let hits_any = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::Any,
         DeletedFilter::Any,
@@ -323,6 +331,7 @@ fn search_valid_window_excludes_out_of_window_records() {
     let hits = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::Any,
         DeletedFilter::Any,
@@ -361,6 +370,7 @@ fn search_hit_carries_full_column_set() {
     let hits = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::Any,
         DeletedFilter::Any,
@@ -399,6 +409,7 @@ fn search_empty_query_returns_empty_vec_not_error() {
     let hits = search(
         &conn,
         "xyzzyx plugh",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::default(),
         DeletedFilter::default(),
@@ -436,6 +447,7 @@ fn search_update_of_content_reindexes_after_update_trigger() {
     let hits_before = search(
         &conn,
         "graph",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::Any,
         DeletedFilter::Any,
@@ -460,6 +472,7 @@ fn search_update_of_content_reindexes_after_update_trigger() {
     let hits_for_graph = search(
         &conn,
         "graph",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::Any,
         DeletedFilter::Any,
@@ -475,6 +488,7 @@ fn search_update_of_content_reindexes_after_update_trigger() {
     let hits_for_forest = search(
         &conn,
         "forest",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::Any,
         DeletedFilter::Any,
@@ -515,6 +529,7 @@ fn search_survives_reopen() {
     let hits = search(
         &conn,
         "Rust",
+        MatchMode::Any,
         NamespaceFilter::Any,
         StateFilter::Any,
         DeletedFilter::Any,
@@ -524,4 +539,179 @@ fn search_survives_reopen() {
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
     assert_eq!(hits.len(), 1, "search must work after reopen");
     assert_eq!(hits[0].uuid, "uuid-a");
+}
+
+// ── the query contract: what the agent asks, the engine answers ──────────────
+//
+// These are the rules the benchmark could not see: a hyphen is part of a
+// word, a multi-word query is not a phrase, and a query with FTS5 syntax in
+// it is still just words.
+
+/// A hyphenated query finds the memory instead of failing to parse.
+#[test]
+fn a_hyphenated_query_finds_the_memory() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    insert_raw(
+        &conn,
+        "uuid-h",
+        "ns",
+        "topic-h",
+        "fact",
+        "active",
+        "El deploy por defecto apunta a staging-eu",
+        0,
+        None,
+        None,
+    );
+    let hits = search(
+        &conn,
+        "staging-eu",
+        MatchMode::Any,
+        NamespaceFilter::Any,
+        StateFilter::default(),
+        DeletedFilter::default(),
+        None,
+        10,
+    )
+    .expect("a hyphenated query must not fail");
+    assert_eq!(hits.len(), 1, "the hyphenated query must find its memory");
+    assert_eq!(hits[0].uuid, "uuid-h");
+}
+
+/// A multi-word query counts every word: it is not an implicit phrase.
+#[test]
+fn a_multi_word_query_is_not_a_phrase() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    insert_raw(
+        &conn,
+        "uuid-m",
+        "ns",
+        "topic-m",
+        "fact",
+        "active",
+        "El servicio escucha en el puerto 8081",
+        0,
+        None,
+        None,
+    );
+    let hits = search(
+        &conn,
+        "puerto base de datos",
+        MatchMode::Any,
+        NamespaceFilter::Any,
+        StateFilter::default(),
+        DeletedFilter::default(),
+        None,
+        10,
+    )
+    .expect("a natural-language query must not fail");
+    assert_eq!(
+        hits.len(),
+        1,
+        "a natural-language query must find the memory that holds one of its words"
+    );
+}
+
+/// `all` requires every word; `phrase` requires them in order.
+#[test]
+fn the_match_mode_decides_what_the_query_means() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    insert_raw(
+        &conn,
+        "uuid-a",
+        "ns",
+        "topic-a",
+        "fact",
+        "active",
+        "El servicio escucha en el puerto 8081",
+        0,
+        None,
+        None,
+    );
+    let all = search(
+        &conn,
+        "puerto 8081",
+        MatchMode::All,
+        NamespaceFilter::Any,
+        StateFilter::default(),
+        DeletedFilter::default(),
+        None,
+        10,
+    )
+    .expect("all-mode search must succeed");
+    assert_eq!(all.len(), 1, "both words are present");
+
+    let phrase = search(
+        &conn,
+        "8081 puerto",
+        MatchMode::Phrase,
+        NamespaceFilter::Any,
+        StateFilter::default(),
+        DeletedFilter::default(),
+        None,
+        10,
+    )
+    .expect("phrase search must succeed");
+    assert!(
+        phrase.is_empty(),
+        "the words are not in that order in the content, so the phrase must not match"
+    );
+}
+
+/// FTS5 syntax inside the query is just words, never a parse error.
+#[test]
+fn fts5_syntax_inside_a_query_is_treated_as_words() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    insert_raw(
+        &conn,
+        "uuid-c",
+        "ns",
+        "topic-c",
+        "fact",
+        "active",
+        "El contacto de soporte es el oncall",
+        0,
+        None,
+        None,
+    );
+    let hits = search(
+        &conn,
+        "contacto: oncall NEAR something",
+        MatchMode::Any,
+        NamespaceFilter::Any,
+        StateFilter::default(),
+        DeletedFilter::default(),
+        None,
+        10,
+    )
+    .expect("a query with FTS5 syntax must not fail the parse");
+    assert_eq!(hits.len(), 1, "the query must find the memory");
+}
+
+/// A query with nothing to search for is the caller's mistake, not the
+/// index's: it has to be an invalid argument, not a busy store.
+#[test]
+fn a_query_without_words_is_an_invalid_argument() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    let error = search(
+        &conn,
+        "   ",
+        MatchMode::Any,
+        NamespaceFilter::Any,
+        StateFilter::default(),
+        DeletedFilter::default(),
+        None,
+        10,
+    )
+    .expect_err("an empty query must fail");
+    assert_eq!(error.error_code_label(), "INVALID_ARGUMENT");
+    assert!(
+        !matches!(error, mnexis_core::domain::error::MnexisError::Busy { .. }),
+        "an empty query must never be reported as a busy store"
+    );
 }

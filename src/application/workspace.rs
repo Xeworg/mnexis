@@ -197,6 +197,38 @@ pub fn find_marker_namespace(start: &Path) -> Option<String> {
     None
 }
 
+/// The canonical form of a workspace key.
+///
+/// One rule, in one place: a key is `git:<normalized remote>` or
+/// `path:<absolute directory>`, and the remote is normalized the same way
+/// the pi extension normalizes it. Every form of the same workspace lands
+/// on the same key, so a binding recorded by a human with the raw remote
+/// (`git:github.com/owner/repo`) is the binding the agent looks up
+/// (`git:github.com-owner-repo`).
+///
+/// The function is idempotent: canonicalizing a canonical key changes
+/// nothing.
+pub fn canonical_workspace_key(key: &str) -> String {
+    let key = key.trim();
+    if key.is_empty() {
+        return String::new();
+    }
+    if let Some(rest) = key.strip_prefix("git:") {
+        return match normalize_remote_url(rest) {
+            Some(normalized) => format!("git:{normalized}"),
+            None => key.to_string(),
+        };
+    }
+    if key.starts_with("path:") {
+        return key.to_string();
+    }
+    // A bare remote: the human wrote the URL, not the key.
+    match normalize_remote_url(key) {
+        Some(normalized) => format!("git:{normalized}"),
+        None => key.to_string(),
+    }
+}
+
 /// Which namespace a workspace works in: the binding for `key`, else the
 /// marker, else none.
 pub fn resolve_namespace(
@@ -204,7 +236,15 @@ pub fn resolve_namespace(
     key: &str,
     marker: Option<String>,
 ) -> Option<String> {
-    match registry.find(key) {
+    let canonical = canonical_workspace_key(key);
+    // The binding is looked up by the canonical key, and a binding that was
+    // recorded before the rule existed is compared in its canonical form
+    // too: both sides have to mean the same workspace.
+    let found = registry
+        .bindings
+        .iter()
+        .find(|b| canonical_workspace_key(&b.key) == canonical);
+    match found {
         Some(binding) if !binding.namespace.trim().is_empty() => Some(binding.namespace.clone()),
         _ => marker,
     }

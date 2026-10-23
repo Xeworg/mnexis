@@ -24,6 +24,7 @@ use std::{fs, path::Path, time::Instant};
 use mnexis_core::application::{MemoryService, SaveRequest, ServiceConfig};
 use mnexis_core::domain::idempotency::IdempotencyKey;
 use mnexis_core::domain::memory::MemoryState;
+use mnexis_core::domain::query::MatchMode;
 use mnexis_core::domain::scope::{AccessScope, Operation};
 use mnexis_core::retrieval::{DeletedFilter, NamespaceFilter, SearchHit, StateFilter, search};
 use mnexis_core::storage::memory_repo::SqliteMemoryRepository;
@@ -172,6 +173,7 @@ fn run_evaluation(n_memories: usize, db_path: &Path) -> Result<(), Box<dyn std::
         let _cold_hits: Vec<SearchHit> = search(
             &cold_conn,
             &rel_queries[0].0,
+            MatchMode::Any,
             NamespaceFilter::Any,
             StateFilter::default(),
             DeletedFilter::default(),
@@ -194,6 +196,7 @@ fn run_evaluation(n_memories: usize, db_path: &Path) -> Result<(), Box<dyn std::
         let hits: Vec<SearchHit> = search(
             &warm_conn,
             text,
+            MatchMode::Any,
             NamespaceFilter::Any,
             StateFilter::default(),
             DeletedFilter::default(),
@@ -242,6 +245,7 @@ fn run_evaluation(n_memories: usize, db_path: &Path) -> Result<(), Box<dyn std::
         let hits: Vec<SearchHit> = search(
             &warm2,
             text,
+            MatchMode::Any,
             NamespaceFilter::Any,
             StateFilter::default(),
             DeletedFilter::default(),

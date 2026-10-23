@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::application::budget::{Budget, BudgetMode, SUPPORTED_TOKENIZER_V1, token_count_v1};
 use crate::domain::error::MnexisError;
 use crate::domain::memory::Memory;
+use crate::domain::query::MatchMode;
 use crate::retrieval::SearchHit;
 
 /// Filters that layer on top of the FTS5 candidate set (PRD §9 step 3).
@@ -39,6 +40,10 @@ pub struct SearchFilter {
 pub struct ContextRequest {
     pub task: String,
     pub namespace: Option<String>,
+    /// How the task's words are matched: `any` (the default) counts every
+    /// term, `all` requires all of them, `phrase` keeps the task as one
+    /// exact phrase.
+    pub match_mode: MatchMode,
     pub token_budget: i64,
     pub tokenizer_id: Option<String>,
     pub max_items: Option<usize>,

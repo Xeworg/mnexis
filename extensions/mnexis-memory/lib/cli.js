@@ -112,13 +112,16 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
-		async search({ query, namespace, limit }, cwd) {
+		async search({ query, namespace, limit, match }, cwd) {
 			const args = ["search", query];
 			if (namespace) {
 				args.push("--namespace", namespace);
 			}
 			if (typeof limit === "number") {
 				args.push("--limit", String(limit));
+			}
+			if (typeof match === "string" && match !== "") {
+				args.push("--match", match);
 			}
 			return run(args, { json: true, cwd });
 		},

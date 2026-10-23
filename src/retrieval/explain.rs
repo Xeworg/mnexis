@@ -9,6 +9,7 @@
 use rusqlite::{Connection, ToSql};
 
 use crate::domain::error::MnexisError;
+use crate::domain::query::MatchMode;
 
 use super::fts5::{DeletedFilter, NamespaceFilter, StateFilter, ValidWindow};
 
@@ -32,15 +33,20 @@ pub struct ExplainedHit {
 /// returned hit includes the subset of query tokens that appeared in the
 /// row's content. A query with no matching documents returns an empty
 /// `Vec`, not an error.
+#[allow(clippy::too_many_arguments)]
 pub fn explain(
     conn: &Connection,
     query: &str,
+    mode: MatchMode,
     namespace: NamespaceFilter,
     state: StateFilter,
     deleted: DeletedFilter,
     valid_window: Option<ValidWindow>,
     limit: usize,
 ) -> Result<Vec<ExplainedHit>, MnexisError> {
+    // The same compilation as the search path: the explanation has to
+    // describe the query that was actually run.
+    let expression = crate::domain::query::compile(query, mode)?;
     let mut sql = String::from(
         "SELECT m.uuid, bm25(memories_fts) AS rank, m.namespace, m.memory_type, m.state, \
          m.revision, m.created_at, m.content \
@@ -48,7 +54,7 @@ pub fn explain(
          JOIN memories AS m ON memories_fts.rowid = m.id \
          WHERE memories_fts MATCH ?1",
     );
-    let mut params: Vec<&dyn ToSql> = vec![&query];
+    let mut params: Vec<&dyn ToSql> = vec![&expression];
 
     match state {
         StateFilter::ActiveOnly => sql.push_str(" AND m.state = 'active'"),

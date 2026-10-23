@@ -16,6 +16,31 @@ import mnexisMemory from "../index.js";
 /** A fake `mnexis` that records its arguments and answers envelopes. */
 const FAKE_BINARY = `#!/usr/bin/env node
 import { appendFileSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+
+// The canonical key of a workspace, the way the engine computes it: the
+// normalized remote when the workspace is a repository, its path otherwise.
+function canonicalKey(cwd) {
+	try {
+		const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
+		const remote = execFileSync("git", ["config", "--get", "remote.origin.url"], { cwd: root, encoding: "utf8" }).trim();
+		if (remote) {
+			const normalized = remote
+				.replace(/^git\\+/i, "")
+				.replace(/^[a-z][a-z0-9+.-]*:\\/\\//i, "")
+				.replace(/^[^/@]+@/, "")
+				.replace(/\\.git$/i, "")
+				.toLowerCase()
+				.replace(/[/:]+/g, "-")
+				.replace(/-+/g, "-")
+				.replace(/^-+|-+$/g, "");
+			return "git:" + normalized;
+		}
+		return "path:" + root;
+	} catch {
+		return "path:" + cwd;
+	}
+}
 const log = process.env.MNEXIS_FAKE_LOG;
 const args = process.argv.slice(2);
 appendFileSync(log, JSON.stringify(args) + "\\n");
@@ -28,7 +53,12 @@ const calls = readFileSync(log, "utf8")
 const bind = calls.filter((call) => call[0] === "project" && call[1] === "bind").pop();
 const workspace = bind ? bind[2] : "mnexis";
 if (args[0] === "project" && args[1] === "list") {
-	process.stdout.write(JSON.stringify({ bindings: [] }));
+	// The engine publishes the canonical key of the workspace it runs in
+	// and the binding for it. MNEXIS_FAKE_NO_BINDING stands for a
+	// workspace nobody bound yet.
+	const key = canonicalKey(process.cwd());
+	const bindings = process.env.MNEXIS_FAKE_NO_BINDING ? [] : [{ key, namespace: workspace }];
+	process.stdout.write(JSON.stringify({ bindings, current_key: key }));
 } else if (args[0] === "config" && args[1] === "show") {
 	process.stdout.write(
 		JSON.stringify({ scope: { read_namespaces: [workspace], write_namespaces: [workspace] } }),
@@ -109,6 +139,21 @@ test("search reads across projects unless a namespace is given", async () => {
 		false,
 		`search must not narrow to one project: ${JSON.stringify(searchCall)}`,
 	);
+});
+
+test("the search tool can ask for a match mode", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const search = tools.get("mnexis_search");
+	assert.ok(search, "mnexis_search is registered");
+
+	await search.execute("t1b", { query: "puerto", match: "all" }, undefined, undefined, context());
+
+	const searchCall = calls(log).find((args) => args[0] === "search");
+	assert.ok(searchCall, "search was called");
+	assert.ok(searchCall.includes("--match"), `the mode reaches the CLI: ${JSON.stringify(searchCall)}`);
+	assert.ok(searchCall.includes("all"), `the mode is the one asked for: ${JSON.stringify(searchCall)}`);
 });
 
 test("an explicit namespace still narrows the search", async () => {
@@ -197,6 +242,7 @@ test("a supersede inside the workspace namespace goes through", async () => {
 
 test("a marker names the namespace the extension binds", async () => {
 	const { log, dir } = setup();
+	process.env.MNEXIS_FAKE_NO_BINDING = "1";
 	writeFileSync(join(dir, ".mnexis-namespace"), "ns-marcado\n");
 	const { tools, pi } = fakeHost();
 	mnexisMemory(pi);
@@ -211,6 +257,29 @@ test("a marker names the namespace the extension binds", async () => {
 	const bind = calls(log).find((args) => args[0] === "project" && args[1] === "bind");
 	assert.ok(bind, "the workspace was bound");
 	assert.equal(bind[2], "ns-marcado", "the marker names the namespace");
+	delete process.env.MNEXIS_FAKE_NO_BINDING;
+});
+
+test("a workspace with no binding refuses the write and names the commands", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_NO_BINDING = "1";
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+	assert.ok(save, "mnexis_save is registered");
+
+	const result = await save.execute("t8", { content: "a fact" }, undefined, undefined, {
+		...context(),
+		cwd: process.cwd(),
+	});
+	assert.equal(result.isError, true, "the write is refused");
+	const text = result.content.map((block) => block.text).join(" ");
+	assert.match(text, /mnexis project bind/, "the message names the bind command");
+	assert.match(text, /mnexis config allow-namespace/, "the message names the allow command");
+
+	const bind = calls(log).find((args) => args[0] === "project" && args[1] === "bind");
+	assert.equal(bind, undefined, "the agent does not invent a namespace");
+	delete process.env.MNEXIS_FAKE_NO_BINDING;
 });
 
 test("a supersede of another project's memory is refused", async () => {
