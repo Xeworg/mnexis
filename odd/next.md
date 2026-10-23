@@ -38,18 +38,66 @@ The harness: `tmp/bench/run/run-conflict.sh` (the conflict experiment),
 
 ## What comes next, with the evidence behind each
 
-### 1. The scan of near-duplicate titles — the gap the title leaves
+### 1. The identity of a fact — visible, findable, and with a vocabulary
 
-Two *different* titles for one fact (`puerto del servicio` and `puerto de
-pagos`) are two keys and two records. The other engine proposes relations
-**afterwards** (`conflicts scan`) and the agent adjudicates them. mnexis has
-the relations (`was replaced by`) and the supersede chain, but no scan.
+The engine had the identity of a fact (`topic_key`, unique per namespace,
+derived from the title) and the relation that works (`supersedes` +
+`was replaced by`). What it lacked was the ability to **show** that
+identity and to **find** it. Three features, in this order:
 
-This is the small version of the conflicts layer that was measured and
-discarded in its candidates-and-verdicts form: not "the agent judges every
-conflict", but "the engine notices two titles that are probably the same
-fact and proposes the link". Measure it with the same harness before
-building it: does the agent act on a proposed link?
+**1a. The visibility** (branch `feat/identity-visibility`, 4 commits). The
+title travels with what the agent reads (`search`, `list`, `context`, the
+MCP answers) and the index covers it (migration 006: `fts5(content, title,
+topic_key)`, with the rebuild and the doctor's shape check). Two defects
+came with it, both found by the measurement of the previous feature: a save
+that wrote into a **dead record** (the fact lost, 0 hits) and the on-demand
+tools that answered in the **wrong namespace** (26 refused calls).
+Measured, paired, four scenarios: the agent linked the two records in
+**11/12** against main's **7/12**, and the fact ended in one current record
+in **11/12** against main's **9/12**. In the hard scenario (a busy
+namespace, a content that does not repeat the title's words) main left the
+fact in two records in **3 of 3** runs and this one in **2 of 3**.
+
+**1b. The words of the fact** (branch `feat/agent-keywords`, 3 commits,
+stacked on 1a). A memory had a title (what the fact is) and a content
+(what it says now) and **no vocabulary**: the words the same fact is
+called in another language, in another team's jargon. The agent says which
+words belong to the fact (`--keywords "puerto, port, listen port"`), the
+engine stores them (accumulating; `--replace-keywords` prunes) and the
+index covers them (migration 007). **The agent writes the words: 3 of 3**
+runs. That is the thing the previous cycle could not get: a mechanism the
+agent uses without being pushed.
+
+**1c. The scan of near-duplicate titles** (branch
+`feat/near-duplicate-titles`, 8 commits, local and un-pushed). The engine
+ranks the namespace's records by how likely they are to be the same fact
+and proposes them with the save; the agent decides and links them with the
+supersede that already exists. **Measured, and superseded**: the agent acts
+on the proposal (12 of 12 runs linked with it, in one scenario with the
+command verbatim — the opposite of `topic-continuity`'s notice, which was
+read and ignored), but in three of the four scenarios the proposal is
+**redundant**, and the engine's similarity **cannot separate** two titles
+of one fact from two titles of two facts (0.53–0.97 against 0.47–0.91): a
+proposal built on that similarity proposes noise half the time. The
+visibility removes the reason the proposal existed, and the words replace
+the similarity guess with an exact retrieval — the engine does not have to
+judge anything, because the agent already did. Do not merge it without new
+evidence.
+
+### 1d. The correction the cycle earns
+
+**n = 3 per arm with one model is a smoke test, not a measurement.** The
+same image and the same prompts measured **1/3** and **3/3** on the same
+day. Every difference between the arms in this cycle is of that size.
+
+What survives, because it is a mechanism and not a count:
+
+- the agent **acts** on a proposal whose answer carries the command (12/12);
+- the agent **writes** the words when the skill and the tool ask (3/3);
+- the engine's **similarity cannot separate** two titles of one fact from
+  two titles of two facts — a property of the strings.
+
+Everything else needs more runs before it is claimed.
 
 ### 2. C3 — `doctor` with a stable JSON envelope
 

@@ -446,7 +446,9 @@ export default function mnexisMemoryExtension(pi) {
 			"Give it a title: the title is what the fact IS, the content is what it says " +
 			"now, and the title decides which record the memory lands on. The same title " +
 			"always means the same record, so a fact that changed updates its record " +
-			"instead of adding a second one.",
+			"instead of adding a second one. Give it keywords too: the words the same fact " +
+			"is called by in another language or another team's jargon, so it is found " +
+			"when it is asked for that way. They are the topic's vocabulary, never a value.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -458,6 +460,13 @@ export default function mnexisMemoryExtension(pi) {
 						"The same title always lands on the same record.",
 				},
 				tags: { type: "string", description: "Comma-separated tags." },
+				keywords: {
+					type: "string",
+					description:
+						"Comma-separated words the fact is called by in another language or " +
+						"another team's jargon (e.g. `puerto, port, listen port`). They are the " +
+						"topic's vocabulary, never a value, and they accumulate across saves.",
+				},
 				topic_key: { type: "string", description: "Stable key grouping facts about one topic." },
 				idempotency_key: { type: "string", description: "Makes retries safe." },
 			},
@@ -475,6 +484,7 @@ export default function mnexisMemoryExtension(pi) {
 					content: params.content,
 					title: params.title,
 					tags: params.tags,
+					keywords: params.keywords,
 					topicKey: params.topic_key,
 					idempotencyKey: params.idempotency_key,
 				},
@@ -495,12 +505,20 @@ export default function mnexisMemoryExtension(pi) {
 				typeof revision === "number" && revision > 1
 					? `Updated the memory in namespace '${workspace.namespace}' (revision ${revision}, topic key \`${topicKey}\`).`
 					: `Saved a memory in namespace '${workspace.namespace}'.`;
+			// The words the record keeps after the save, not the ones this call
+			// named: the vocabulary accumulates, so the answer is the only place
+			// that knows what the memory carries now.
+			const words =
+				result.data && Array.isArray(result.data.keywords) ? result.data.keywords : [];
+			const whatWithWords =
+				words.length > 0 ? `${what} Words: ${words.join(", ")}.` : what;
 			return ok(
-				what,
+				whatWithWords,
 				{
 					namespace: workspace.namespace,
 					uuid: result.data && result.data.uuid ? result.data.uuid : null,
 					title: (result.data && result.data.title) || params.title || null,
+					keywords: words,
 					topic_key: topicKey || null,
 					revision: revision || null,
 					output: result.stdout.trim(),

@@ -51,10 +51,12 @@ impl SqliteMemoryRepository {
         let actor: String = row.get(16).map_err(sql_to_domain)?;
         let channel: String = row.get(17).map_err(sql_to_domain)?;
         let assertion_basis: String = row.get(18).map_err(sql_to_domain)?;
+        let keywords_text: String = row.get(19).map_err(sql_to_domain)?;
         Ok(Memory {
             id,
             uuid,
             title,
+            keywords: Memory::keywords_from_column(&keywords_text),
             topic_key,
             namespace,
             memory_type,
@@ -181,22 +183,23 @@ fn to_sql_err(e: MnexisError) -> rusqlite::Error {
 
 const SELECT_COLUMNS: &str = "id, uuid, title, topic_key, namespace, memory_type, state, content, \
                                 revision, deleted, created_at, updated_at, deleted_at, purge_after, \
-                                valid_from, valid_until, actor, channel, assertion_basis";
+                                valid_from, valid_until, actor, channel, assertion_basis, keywords";
 
 impl MemoryRepository for SqliteMemoryRepository {
     fn save(&mut self, mem: &Memory) -> Result<i64, MnexisError> {
         let state_str = mem.state.as_str();
+        let keywords = Memory::keywords_column(&mem.keywords);
         let result = self.conn.execute(
             "INSERT INTO memories (
                 uuid, title, topic_key, revision, namespace, memory_type, state, content,
                 actor, channel, assertion_basis,
                 valid_from, valid_until, deleted, deleted_at, purge_after,
-                created_at, updated_at
+                created_at, updated_at, keywords
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
                 ?9, ?10, ?11,
                 ?12, ?13, ?14, ?15, ?16,
-                ?17, ?18
+                ?17, ?18, ?19
             )",
             params![
                 mem.uuid,
@@ -217,6 +220,7 @@ impl MemoryRepository for SqliteMemoryRepository {
                 mem.purge_after,
                 mem.created_at,
                 mem.updated_at,
+                keywords,
             ],
         );
         match result {
@@ -333,6 +337,7 @@ impl MemoryRepository for SqliteMemoryRepository {
             .id
             .ok_or_else(|| MnexisError::invalid_argument("id", "memory has no rowid"))?;
         let state_str = mem.state.as_str();
+        let keywords = Memory::keywords_column(&mem.keywords);
         let new_revision = expected_revision + 1;
         let affected = self
             .conn
@@ -341,8 +346,8 @@ impl MemoryRepository for SqliteMemoryRepository {
                     content = ?1, state = ?2, topic_key = ?3, memory_type = ?4,
                     actor = ?5, channel = ?6, assertion_basis = ?7,
                     valid_from = ?8, valid_until = ?9,
-                    revision = ?10, updated_at = ?11
-                 WHERE id = ?12 AND revision = ?13",
+                    revision = ?10, updated_at = ?11, keywords = ?12
+                 WHERE id = ?13 AND revision = ?14",
                 params![
                     mem.content,
                     state_str,
@@ -355,6 +360,7 @@ impl MemoryRepository for SqliteMemoryRepository {
                     mem.valid_until,
                     new_revision,
                     mem.updated_at,
+                    keywords,
                     id,
                     expected_revision,
                 ],
@@ -727,6 +733,7 @@ impl MemoryRepository for SqliteMemoryRepository {
         tags: Option<&[String]>,
     ) -> Result<Memory, MnexisError> {
         let tx = self.conn.unchecked_transaction().map_err(sql_to_domain)?;
+        let keywords = Memory::keywords_column(&updated.keywords);
         let result: Result<Memory, MnexisError> = (|| {
             let rows = tx
                 .execute(
@@ -735,8 +742,8 @@ impl MemoryRepository for SqliteMemoryRepository {
                        updated_at = ?3, assertion_basis = ?4, \
                        topic_key = ?5, memory_type = ?6, \
                        valid_from = ?7, valid_until = ?8, \
-                       actor = ?9, channel = ?10 \
-                     WHERE uuid = ?11 AND revision = ?12",
+                       actor = ?9, channel = ?10, keywords = ?11 \
+                     WHERE uuid = ?12 AND revision = ?13",
                     params![
                         updated.content,
                         updated.state.as_str(),
@@ -748,6 +755,7 @@ impl MemoryRepository for SqliteMemoryRepository {
                         updated.valid_until,
                         updated.actor,
                         updated.channel,
+                        keywords,
                         updated.uuid,
                         expected_revision,
                     ],

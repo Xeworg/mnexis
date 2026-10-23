@@ -251,14 +251,47 @@ const MIGRATION_005: &str = r#"
 ALTER TABLE memories ADD COLUMN title TEXT NOT NULL DEFAULT '';
 "#;
 
+/// Migration 007, step one: the words of a fact, in the shape the index reads
+/// them — comma-separated, one `, ` between words, no spaces inside a word.
+///
+/// The column is additive and defaults to empty, so every memory saved before
+/// the words existed reads back with none and every existing query works. It
+/// is applied by [`ensure_keywords_column`] rather than by the version gate
+/// alone: a rebuild builds the index from the *current* schema (one definition
+/// for every migration), and that schema reads this column, so the column —
+/// not the ledger — is what decides whether it still has to be added.
+const MIGRATION_007_ADD_KEYWORDS: &str = r#"
+ALTER TABLE memories ADD COLUMN keywords TEXT NOT NULL DEFAULT '';
+"#;
+
+/// Add `memories.keywords` when the table does not have it yet.
+///
+/// `ALTER TABLE ... ADD COLUMN` cannot be made conditional in SQL and a
+/// migration that failed halfway leaves the column without its ledger row, so
+/// the probe is the column itself (migration 005's lesson). Re-running is
+/// therefore always safe.
+fn ensure_keywords_column(conn: &Connection) -> Result<(), MnexisError> {
+    let has_keywords: i64 = conn
+        .prepare("SELECT count(*) FROM pragma_table_info('memories') WHERE name = 'keywords'")
+        .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
+        .map_err(|e| MnexisError::busy(format!("migration 007 (probe): {e}")))?;
+    if has_keywords == 0 {
+        conn.execute_batch(MIGRATION_007_ADD_KEYWORDS)
+            .map_err(|e| MnexisError::busy(format!("migration 007: {e}")))?;
+    }
+    Ok(())
+}
+
 /// The columns the full-text index carries, in declaration order — which is
 /// also the order `bm25` reads its weights in.
 ///
 /// The index keeps the **identity** of a fact next to its content: a caller
 /// remembers `puerto del servicio` when the content has moved on to
 /// `port = 8081`, so the words of the title and of the topic key have to be
-/// searchable exactly like the words of the content.
-pub const MEMORIES_FTS_COLUMNS: [&str; 3] = ["content", "title", "topic_key"];
+/// searchable exactly like the words of the content. The **keywords** are the
+/// vocabulary the agent supplies (agent-keywords S3): the same fact named in
+/// another language, in another jargon, in another document.
+pub const MEMORIES_FTS_COLUMNS: [&str; 4] = ["content", "title", "topic_key", "keywords"];
 
 /// The one definition of `memories_fts`: the table and the five triggers that
 /// keep it in step with `memories`.
@@ -276,7 +309,7 @@ pub const MEMORIES_FTS_COLUMNS: [&str; 3] = ["content", "title", "topic_key"];
 /// the bare `bm25(memories_fts)` expression, and that is public behaviour.
 const MEMORIES_FTS_SCHEMA: &str = r#"
 DROP TABLE IF EXISTS memories_fts;
-CREATE VIRTUAL TABLE memories_fts USING fts5(content, title, topic_key);
+CREATE VIRTUAL TABLE memories_fts USING fts5(content, title, topic_key, keywords);
 
 -- Insert trigger: index into FTS5 only when the new memory is active and not
 -- deleted (maintains the invariant state='active' AND deleted=0 ⇔ row in FTS5).
@@ -285,8 +318,8 @@ CREATE TRIGGER memories_after_insert_content
 AFTER INSERT ON memories
 WHEN new.state = 'active' AND new.deleted = 0
 BEGIN
-    INSERT INTO memories_fts(rowid, content, title, topic_key)
-    VALUES (new.id, new.content, new.title, new.topic_key);
+    INSERT INTO memories_fts(rowid, content, title, topic_key, keywords)
+    VALUES (new.id, new.content, new.title, new.topic_key, new.keywords);
 END;
 
 DROP TRIGGER IF EXISTS memories_after_update_into_active;
@@ -295,8 +328,8 @@ AFTER UPDATE OF state, deleted ON memories
 WHEN new.state = 'active' AND new.deleted = 0
 BEGIN
     DELETE FROM memories_fts WHERE rowid = new.id;
-    INSERT INTO memories_fts(rowid, content, title, topic_key)
-    VALUES (new.id, new.content, new.title, new.topic_key);
+    INSERT INTO memories_fts(rowid, content, title, topic_key, keywords)
+    VALUES (new.id, new.content, new.title, new.topic_key, new.keywords);
 END;
 
 DROP TRIGGER IF EXISTS memories_after_update_out_of_active;
@@ -307,17 +340,18 @@ BEGIN
     DELETE FROM memories_fts WHERE rowid = new.id;
 END;
 
--- The indexed text of a memory is three columns now, so a title or a topic key
--- change re-indexes the row exactly like a content change does. The body
--- updates an existing row instead of inserting one, so a memory that is not
--- alive stays out of the index.
+-- The indexed text of a memory is four columns now, so a title, a topic key or
+-- a word that changes re-indexes the row exactly like a content change does.
+-- The body updates an existing row instead of inserting one, so a memory that
+-- is not alive stays out of the index.
 DROP TRIGGER IF EXISTS memories_after_update_content;
 CREATE TRIGGER memories_after_update_content
-AFTER UPDATE OF content, title, topic_key ON memories
+AFTER UPDATE OF content, title, topic_key, keywords ON memories
 WHEN new.deleted = 0
 BEGIN
     UPDATE memories_fts
-    SET content = new.content, title = new.title, topic_key = new.topic_key
+    SET content = new.content, title = new.title, topic_key = new.topic_key,
+        keywords = new.keywords
     WHERE rowid = new.id;
 END;
 
@@ -334,8 +368,8 @@ END;
 ///
 /// Drops the index, rebuilds the table and the triggers from
 /// [`MEMORIES_FTS_SCHEMA`], then re-indexes every `state = 'active' AND
-/// deleted = 0` row with its content, title and topic key. Returns the number
-/// of rows indexed.
+/// deleted = 0` row with its content, title, topic key and keywords. Returns
+/// the number of rows indexed.
 ///
 /// The rebuild is **atomic**: it runs in a savepoint, so a failure leaves the
 /// index exactly as it was before, and a caller that already opened a
@@ -363,8 +397,8 @@ fn rebuild_memories_fts_inner(conn: &Connection) -> Result<usize, MnexisError> {
     conn.execute_batch(MEMORIES_FTS_SCHEMA)
         .map_err(|e| MnexisError::busy(format!("rebuild memories_fts: {e}")))?;
     conn.execute(
-        "INSERT INTO memories_fts(rowid, content, title, topic_key) \
-         SELECT id, content, title, topic_key FROM memories \
+        "INSERT INTO memories_fts(rowid, content, title, topic_key, keywords) \
+         SELECT id, content, title, topic_key, keywords FROM memories \
          WHERE state = 'active' AND deleted = 0",
         [],
     )
@@ -377,9 +411,10 @@ fn rebuild_memories_fts_inner(conn: &Connection) -> Result<usize, MnexisError> {
 ///
 /// The probe asks the table what it can answer instead of reading its `CREATE`
 /// statement, so it agrees with what a search can actually do. Migration 006
-/// uses it to decide whether the rebuild has already happened (a half-applied
-/// migration leaves the schema and the ledger out of sync — the schema is what
-/// decides), and the doctor uses it to tell a pre-006 index from a good one.
+/// and migration 007 use it to decide whether the rebuild has already happened
+/// (a half-applied migration leaves the schema and the ledger out of sync —
+/// the schema is what decides), and the doctor uses it to tell a stale index
+/// from a good one.
 pub fn missing_fts_columns(conn: &Connection) -> Result<Vec<&'static str>, MnexisError> {
     let mut missing = Vec::new();
     for column in MEMORIES_FTS_COLUMNS {
@@ -401,7 +436,7 @@ pub fn missing_fts_columns(conn: &Connection) -> Result<Vec<&'static str>, Mnexi
 }
 
 /// Applies pending migrations. Creates the `schema_migrations` ledger if
-/// absent. Applies migrations 001 through 006 if not already recorded. A
+/// absent. Applies migrations 001 through 007 if not already recorded. A
 /// recorded version higher than the binary's known migrations returns
 /// `MnexisError::UnsupportedVersion` (no-downgrade rule).
 pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
@@ -421,7 +456,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
         )
         .map_err(|e| MnexisError::busy(format!("read schema_migrations: {e}")))?;
 
-    if applied > 6 {
+    if applied > 7 {
         return Err(MnexisError::unsupported_version(applied));
     }
 
@@ -481,6 +516,13 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
         // shape of the index — not the ledger — is what decides whether the
         // rebuild still has to happen. The rebuild is atomic, so a crash can
         // no longer leave a new-shape index without its rows.
+        //
+        // The rebuild builds the index from the *current* schema, which since
+        // migration 007 also reads `memories.keywords`: the canonical column
+        // has to exist before the rebuild runs, even on a profile whose ledger
+        // stopped at 5. The column, not the ledger, decides (it is a probe).
+        ensure_keywords_column(conn)
+            .map_err(|e| MnexisError::busy(format!("migration 006 (column): {e}")))?;
         let missing = missing_fts_columns(conn)
             .map_err(|e| MnexisError::busy(format!("migration 006 (probe): {e}")))?;
         if !missing.is_empty() {
@@ -489,6 +531,33 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
         }
         conn.execute("INSERT INTO schema_migrations (version) VALUES (6)", [])
             .map_err(|e| MnexisError::busy(format!("record migration 006: {e}")))?;
+    }
+
+    if applied < 7 {
+        // Migration 007: the index knows the words.
+        //
+        // The vocabulary of a fact is what makes a memory findable by another
+        // language or another jargon — a record titled `listen port` whose
+        // content says `port = 8081` is what `puerto` has to find. The words
+        // are a canonical column, and an FTS5 table cannot change its shape in
+        // place, so the shape has to be rebuilt for the rows that already
+        // exist.
+        //
+        // Same shape of migration as 006, and for the same reason: the column
+        // is probed (it may already be there from the 006 path above), the
+        // index is probed, and only a missing shape triggers the one rebuild
+        // function. A half-applied migration therefore heals on the next run
+        // instead of failing.
+        ensure_keywords_column(conn)
+            .map_err(|e| MnexisError::busy(format!("migration 007 (column): {e}")))?;
+        let missing = missing_fts_columns(conn)
+            .map_err(|e| MnexisError::busy(format!("migration 007 (probe): {e}")))?;
+        if !missing.is_empty() {
+            rebuild_memories_fts(conn)
+                .map_err(|e| MnexisError::busy(format!("migration 007: {e}")))?;
+        }
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (7)", [])
+            .map_err(|e| MnexisError::busy(format!("record migration 007: {e}")))?;
     }
 
     Ok(())
@@ -510,7 +579,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 6, "migrations 001 through 006 should be recorded");
+        assert_eq!(version, 7, "migrations 001 through 007 should be recorded");
 
         // Migration 003 added the persisted supersede reason column.
         let (col_type, dflt, notnull): (String, String, i64) = conn
@@ -532,7 +601,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version_again, 6, "005 must not double-record on a re-run");
+        assert_eq!(version_again, 7, "005 must not double-record on a re-run");
     }
 
     #[test]
@@ -609,7 +678,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 6, "the migration was applied");
+        assert_eq!(version, 7, "the migration was applied");
     }
 
     #[test]
@@ -663,7 +732,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 6, "the ledger records it");
+        assert_eq!(version, 7, "the ledger records it");
     }
 
     #[test]

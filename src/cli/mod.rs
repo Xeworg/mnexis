@@ -93,6 +93,13 @@ pub enum Command {
         /// Short, stable label of the fact; the topic key derives from it
         #[arg(long, value_name = "TEXT")]
         title: Option<String>,
+        /// Comma-separated words the fact is called by in another language or
+        /// another jargon (max 32, 48 bytes each); they accumulate across saves
+        #[arg(long, value_name = "WORD[,...]")]
+        keywords: Option<String>,
+        /// Replace the words the record already carries instead of adding to them
+        #[arg(long)]
+        replace_keywords: bool,
         /// Topic key (unique per namespace when non-empty; allowed: lowercase letters, digits, '.', '-' and '/')
         #[arg(long)]
         topic_key: Option<String>,
@@ -536,6 +543,8 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             state,
             content,
             title,
+            keywords,
+            replace_keywords,
         } => {
             let mut profile = Profile::open(data_dir)?;
             commands::save(
@@ -551,6 +560,8 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 state.clone(),
                 content.clone(),
                 title.clone(),
+                keywords.clone(),
+                *replace_keywords,
             )
         }
         Command::Update {

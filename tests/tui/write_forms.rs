@@ -42,6 +42,8 @@ fn save_tagged(profile: &mut Profile, ns: &str, content: &str, tags: Vec<String>
             valid_until: None,
             tags,
             idempotency_key: None,
+            keywords: Vec::new(),
+            replace_keywords: false,
             state: MemoryState::Active,
             now: now_rfc3339(),
         })

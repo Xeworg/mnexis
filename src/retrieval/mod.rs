@@ -7,9 +7,10 @@
 //! `MemoryService::reindex`.
 //!
 //! See `odd/tasks/e2-core.md` §9 for the design:
-//! - Plain `fts5(content, title, topic_key)` table maintained by triggers (no
-//!   external-content). The title and the topic key are what makes the
-//!   identity of a fact findable (identity-visibility S2).
+//! - Plain `fts5(content, title, topic_key, keywords)` table maintained by
+//!   triggers (no external-content). The title and the topic key are what makes
+//!   the identity of a fact findable (identity-visibility S2), and the keywords
+//!   are the vocabulary the agent supplies for it (agent-keywords S3).
 //! - Default filters: `state = 'active'`, `deleted = 0`.
 //! - bm25 ordering; lower (more negative) ranks are more relevant. The weights
 //!   are the FTS5 defaults: `search` and `explain` share the same

@@ -69,6 +69,11 @@ pub struct Memory {
     /// so a fact keeps one record when the value inside the content changes.
     #[serde(default)]
     pub title: String,
+    /// The vocabulary of the fact: the words the same fact is called in
+    /// another language, in another jargon, in another document. The agent
+    /// supplies them when it saves; the record keeps them.
+    #[serde(default)]
+    pub keywords: Vec<String>,
     pub topic_key: String,
     pub namespace: String,
     pub memory_type: String,
@@ -106,6 +111,7 @@ impl Memory {
             id: None,
             uuid: uuid.into(),
             title: String::new(),
+            keywords: Vec::new(),
             topic_key: topic_key.into(),
             namespace: namespace.into(),
             memory_type: memory_type.into(),
@@ -128,6 +134,25 @@ impl Memory {
     /// True if this memory is currently soft-deleted.
     pub fn is_soft_deleted(&self) -> bool {
         self.deleted
+    }
+
+    /// The words of the fact as the `memories.keywords` column stores them:
+    /// comma-separated, one `, ` between words, no spaces inside a word.
+    ///
+    /// The column is the one ASCII-ish shape every read agrees on; the words
+    /// themselves stay in the language they were written in.
+    pub fn keywords_column(words: &[String]) -> String {
+        words.join(", ")
+    }
+
+    /// Read a `memories.keywords` column back into words. An empty column —
+    /// every memory saved before the words existed — reads back as no words.
+    pub fn keywords_from_column(text: &str) -> Vec<String> {
+        text.split(',')
+            .map(str::trim)
+            .filter(|word| !word.is_empty())
+            .map(str::to_string)
+            .collect()
     }
 
     /// True if this memory is eligible for retrieval: active, not deleted,
@@ -235,6 +260,35 @@ mod tests {
         assert!(!m.deleted);
         assert_eq!(m.created_at, "2026-01-01T00:00:00Z");
         assert_eq!(m.updated_at, "2026-01-01T00:00:00Z");
+        assert_eq!(m.title, "", "a new memory has no title yet");
+        assert_eq!(m.keywords, Vec::<String>::new(), "no words yet");
+    }
+
+    #[test]
+    fn the_keywords_column_is_comma_separated_and_round_trips() {
+        let words = vec![
+            "puerto".to_string(),
+            "puerto de escucha".to_string(),
+            "port".to_string(),
+        ];
+        assert_eq!(
+            Memory::keywords_column(&words),
+            "puerto, puerto de escucha, port"
+        );
+        assert_eq!(
+            Memory::keywords_from_column("puerto, puerto de escucha, port"),
+            words
+        );
+        assert_eq!(
+            Memory::keywords_from_column(""),
+            Vec::<String>::new(),
+            "a memory saved before the words existed has none"
+        );
+        assert_eq!(
+            Memory::keywords_from_column("puerto,, port ,"),
+            vec!["puerto".to_string(), "port".to_string()],
+            "an empty word is not a word"
+        );
     }
 
     #[test]

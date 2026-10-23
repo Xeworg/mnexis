@@ -150,6 +150,8 @@ fn save(svc: &mut MemoryService<SqliteMemoryRepository>, uuid: &str, content: &s
         valid_until: None,
         tags: Vec::new(),
         idempotency_key: None,
+        keywords: Vec::new(),
+        replace_keywords: false,
         state: MemoryState::Active,
         now: "2026-01-01T00:00:00Z".into(),
     };
