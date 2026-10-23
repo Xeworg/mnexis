@@ -417,6 +417,62 @@ test("the topic suggestion reaches the engine", async () => {
 	assert.ok(call.includes("puerto del servicio"), "the title reaches the engine");
 });
 
+test("the topic suggestion answers in the workspace namespace", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const suggest = tools.get("mnexis_suggest_topic_key");
+	assert.ok(suggest, "mnexis_suggest_topic_key is registered");
+
+	// The workspace is bound to a namespace; the model names none. The
+	// call must not fall back to the profile default (which the workspace
+	// guard refuses) and must not need the write confirmation: it is a read.
+	const result = await suggest.execute(
+		"s8",
+		{ title: "puerto del servicio" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.notEqual(result.isError, true, "a read does not go through the write gate");
+
+	const call = calls(log).find((args) => args[0] === "suggest-topic-key");
+	assert.ok(call, "the engine was asked");
+	assert.deepEqual(call, [
+		"suggest-topic-key",
+		"puerto del servicio",
+		"--namespace",
+		"mnexis",
+		"--json",
+	]);
+});
+
+test("an explicit namespace still wins for the topic suggestion", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const suggest = tools.get("mnexis_suggest_topic_key");
+	assert.ok(suggest, "mnexis_suggest_topic_key is registered");
+
+	await suggest.execute(
+		"s9",
+		{ title: "puerto del servicio", namespace: "otro-proyecto" },
+		undefined,
+		undefined,
+		context(),
+	);
+
+	const call = calls(log).find((args) => args[0] === "suggest-topic-key");
+	assert.ok(call, "the engine was asked");
+	assert.deepEqual(call, [
+		"suggest-topic-key",
+		"puerto del servicio",
+		"--namespace",
+		"otro-proyecto",
+		"--json",
+	]);
+});
+
 test("the save carries the title the agent gave", async () => {
 	const { log } = setup();
 	const { tools, pi } = fakeHost();

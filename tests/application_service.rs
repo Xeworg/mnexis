@@ -830,6 +830,231 @@ fn saving_the_same_request_twice_is_a_retry_not_a_second_fact() {
     assert_eq!(replayed.revision, 1, "a replay does not write a revision");
 }
 
+// --- a save never writes into a record that is not alive
+//     (identity-visibility S3) ---
+
+/// The existing promise of `memory-title`, unchanged: the title of an
+/// active record still lands on that record.
+#[test]
+fn saving_with_the_title_of_an_active_record_still_updates_it() {
+    let (mut svc, _dir) = make_service();
+    let mut first = save_req("uuid-alive", PORT_8081);
+    first.title = "puerto del servicio".into();
+    first.topic_key = String::new();
+    svc.save(first).expect("the first save");
+
+    let mut again = save_req("uuid-alive-2", &PORT_8081.replace("8081", "9090"));
+    again.title = "puerto del servicio".into();
+    again.topic_key = String::new();
+    let updated = svc
+        .save(again)
+        .expect("an active record is still updated by its title");
+
+    assert_eq!(updated.uuid, "uuid-alive", "the record keeps its identity");
+    assert_eq!(updated.revision, 2, "and its revision goes up");
+    assert!(updated.content.contains("9090"), "with the new value");
+    assert_eq!(updated.state, MemoryState::Active);
+    assert!(svc.get("uuid-alive-2").unwrap().is_none());
+}
+
+#[test]
+fn saving_with_the_title_of_a_superseded_record_is_refused_and_names_the_successor() {
+    let (mut svc, _dir) = make_service();
+    let mut older = save_req("uuid-gone", PORT_8081);
+    older.title = "puerto del servicio".into();
+    older.topic_key = String::new();
+    svc.save(older).expect("the record that will be replaced");
+
+    let mut newer = save_req("uuid-current", &PORT_8081.replace("8081", "9090"));
+    newer.title = "puerto del servicio configurado".into();
+    newer.topic_key = String::new();
+    svc.save(newer).expect("the record that replaces it");
+    svc.supersede(supersede_req("uuid-gone", "uuid-current", 1, 1))
+        .expect("the supersession chain");
+
+    let before = svc
+        .get_including_deleted("uuid-gone")
+        .unwrap()
+        .expect("the superseded record");
+
+    // The same title yields the same key, and the key is held by a record
+    // that is not alive: the save must not write the new value inside it.
+    let mut attempt = save_req("uuid-attempt", &PORT_8081.replace("8081", "7070"));
+    attempt.title = "puerto del servicio".into();
+    attempt.topic_key = String::new();
+    let error = svc
+        .save(attempt)
+        .expect_err("a superseded record is not written into");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("puerto-del-servicio"),
+        "the refusal names the topic key: {message}"
+    );
+    assert!(
+        message.contains("was replaced by uuid-current"),
+        "the refusal names the current record of that fact: {message}"
+    );
+    assert!(
+        message.contains("save with another title"),
+        "the refusal names the way out: {message}"
+    );
+
+    // Atomic: the superseded record keeps its revision and its content.
+    let after = svc.get_including_deleted("uuid-gone").unwrap().unwrap();
+    assert_eq!(after.revision, before.revision, "nothing was written");
+    assert_eq!(after.content, before.content, "the old value is untouched");
+    assert_eq!(after.updated_at, before.updated_at);
+    assert_eq!(after.state, MemoryState::Superseded);
+    // And no second record was created for a fact the engine knows about.
+    assert!(svc.get("uuid-attempt").unwrap().is_none());
+    let all = svc.list(ListFilter::default()).unwrap();
+    assert_eq!(all.len(), 2, "two records, none of them new: {all:?}");
+    assert!(
+        all.iter().all(|m| !m.content.contains("7070")),
+        "the refused value is stored nowhere: {all:?}"
+    );
+    // The key was not released either: it still belongs to the dead record.
+    assert_eq!(
+        svc.topic_occupier("proyecto-a", "puerto-del-servicio")
+            .unwrap()
+            .as_deref(),
+        Some("uuid-gone")
+    );
+}
+
+#[test]
+fn saving_with_the_title_of_a_deleted_record_is_refused_and_names_the_way_out() {
+    let (mut svc, _dir) = make_service();
+    let mut first = save_req("uuid-deleted", PORT_8081);
+    first.title = "puerto del servicio".into();
+    first.topic_key = String::new();
+    svc.save(first).expect("the record");
+    svc.soft_delete("uuid-deleted", 1).expect("the delete");
+
+    let before = svc
+        .get_including_deleted("uuid-deleted")
+        .unwrap()
+        .expect("the deleted record");
+
+    // A delete is explicit: a save must not silently undo it.
+    let mut attempt = save_req("uuid-after-delete", &PORT_8081.replace("8081", "7070"));
+    attempt.title = "puerto del servicio".into();
+    attempt.topic_key = String::new();
+    let error = svc
+        .save(attempt)
+        .expect_err("a deleted record is not written into");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("puerto-del-servicio"),
+        "the refusal names the topic key: {message}"
+    );
+    assert!(
+        message.contains("was deleted"),
+        "the refusal says what happened: {message}"
+    );
+    assert!(
+        message.contains("restore uuid-deleted"),
+        "the refusal names a way out: {message}"
+    );
+    assert!(
+        message.contains("save with another title"),
+        "and the other one: {message}"
+    );
+
+    // Atomic: the deleted record keeps its revision and its content.
+    let after = svc.get_including_deleted("uuid-deleted").unwrap().unwrap();
+    assert!(after.deleted, "the record stays deleted");
+    assert_eq!(after.revision, before.revision);
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.updated_at, before.updated_at);
+    assert!(svc.get("uuid-after-delete").unwrap().is_none());
+}
+
+#[test]
+fn saving_with_the_title_of_a_record_that_is_not_active_is_refused() {
+    // The rule is "active and not deleted": a proposed (or disputed, or
+    // archived) record is not writable by a save either.
+    let (mut svc, _dir) = make_service();
+    let mut proposed = save_req("uuid-proposed", PORT_8081);
+    proposed.title = "puerto del servicio".into();
+    proposed.topic_key = String::new();
+    proposed.state = MemoryState::Proposed;
+    svc.save(proposed).expect("a proposed record");
+
+    let before = svc
+        .get_including_deleted("uuid-proposed")
+        .unwrap()
+        .expect("the proposed record");
+
+    let mut attempt = save_req("uuid-proposed-2", &PORT_8081.replace("8081", "7070"));
+    attempt.title = "puerto del servicio".into();
+    attempt.topic_key = String::new();
+    let error = svc
+        .save(attempt)
+        .expect_err("only an active record is written into");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("which is proposed"),
+        "the refusal names the state the record has: {message}"
+    );
+    assert!(
+        message.contains("save with another title"),
+        "the refusal names the way out: {message}"
+    );
+
+    let after = svc.get_including_deleted("uuid-proposed").unwrap().unwrap();
+    assert_eq!(after.revision, before.revision, "nothing was written");
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.state, MemoryState::Proposed);
+}
+
+#[test]
+fn the_refusal_uses_an_existing_error_kind_and_exit_code() {
+    // The refusal adds no error kind and no exit code: it is the existing
+    // INVALID_ARGUMENT / exit 2, the same kind the supersede state gate
+    // uses for "that record is not alive".
+    let (mut svc, _dir) = make_service();
+    let mut first = save_req("uuid-kind", PORT_8081);
+    first.title = "puerto del servicio".into();
+    first.topic_key = String::new();
+    svc.save(first).unwrap();
+    svc.soft_delete("uuid-kind", 1).unwrap();
+
+    let mut attempt = save_req("uuid-kind-2", "otro valor");
+    attempt.title = "puerto del servicio".into();
+    attempt.topic_key = String::new();
+    let error = svc.save(attempt).unwrap_err();
+
+    let existing_labels = [
+        "INVALID_ARGUMENT",
+        "NOT_FOUND",
+        "FORBIDDEN",
+        "REVISION_CONFLICT",
+        "TOPIC_CONFLICT",
+        "BUSY",
+        "INDEX_UNAVAILABLE",
+        "BUDGET_TOO_SMALL",
+        "CURSOR_EXPIRED",
+        "UNSUPPORTED_VERSION",
+    ];
+    assert!(
+        existing_labels.contains(&error.error_code_label()),
+        "the refusal is a kind that already exists: {error:?}"
+    );
+    assert!(
+        matches!(&error, MnexisError::InvalidArgument { field, .. } if field.as_str() == "title"),
+        "the caller is told which argument to change: {error:?}"
+    );
+    assert_eq!(
+        mnexis_core::cli::output::exit_code(&error),
+        2,
+        "the existing exit code of INVALID_ARGUMENT"
+    );
+}
+
 // --- the key a title yields (memory-title) ---
 
 #[test]

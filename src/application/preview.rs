@@ -7,6 +7,10 @@
 //! with the full content of five memories cost 9.3 KB of context for
 //! nothing.
 //!
+//! The identity a list carries is the title — what the fact *is* — beside
+//! the `topic_key` and the preview. The title is a handful of tokens per
+//! item; a second copy of the content would not be.
+//!
 //! The complete record stays one call away (`mnexis show <uuid>`), and
 //! `--full` asks for the whole shape explicitly. Nothing is truncated
 //! silently: the preview ends with an ellipsis when it was cut.
@@ -23,6 +27,9 @@ pub const PREVIEW_CHARS: usize = 160;
 pub struct MemoryPreview {
     /// The memory's stable identifier, as `mnexis show` expects it.
     pub uuid: String,
+    /// The memory's title: what the fact *is*. Empty when it has none,
+    /// exactly like its `topic_key`.
+    pub title: String,
     /// The namespace the memory lives in.
     pub namespace: String,
     /// The memory's type (`fact`, `decision`, …).
@@ -46,6 +53,7 @@ impl MemoryPreview {
     pub fn of(memory: &Memory) -> Self {
         Self {
             uuid: memory.uuid.clone(),
+            title: memory.title.clone(),
             namespace: memory.namespace.clone(),
             memory_type: memory.memory_type.clone(),
             state: memory.state.as_str().to_string(),
@@ -75,13 +83,14 @@ fn preview(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::budget::token_count_v1;
     use crate::domain::memory::{Memory, MemoryState};
 
     fn memory_with(content: &str) -> Memory {
         Memory {
             id: Some(1),
             uuid: "uuid-1".to_string(),
-            title: String::new(),
+            title: "el puerto del servicio".to_string(),
             topic_key: "topic-1".to_string(),
             namespace: "ns".to_string(),
             memory_type: "fact".to_string(),
@@ -105,10 +114,28 @@ mod tests {
     fn a_preview_carries_the_identity_and_a_glimpse() {
         let preview = MemoryPreview::of(&memory_with("El servicio escucha en el puerto 8081"));
         assert_eq!(preview.uuid, "uuid-1");
+        assert_eq!(preview.title, "el puerto del servicio");
         assert_eq!(preview.namespace, "ns");
         assert_eq!(preview.revision, 3);
         assert_eq!(preview.topic_key, "topic-1");
         assert_eq!(preview.preview, "El servicio escucha en el puerto 8081");
+    }
+
+    #[test]
+    fn a_memory_without_a_title_reports_the_empty_string() {
+        let mut memory = memory_with("sin titulo");
+        memory.title = String::new();
+        let preview = MemoryPreview::of(&memory);
+        assert_eq!(
+            preview.title, "",
+            "no title is the empty string, never null"
+        );
+        let json = serde_json::to_value(&preview).expect("serialise preview");
+        assert_eq!(
+            json["title"],
+            serde_json::json!(""),
+            "the key is there and it is empty: {json}"
+        );
     }
 
     #[test]
@@ -131,6 +158,23 @@ mod tests {
             "the compact shape must be much smaller: {} vs {}",
             compact.len(),
             full.len()
+        );
+    }
+
+    /// The identity is what the list was missing, and it is worth its price:
+    /// a few tokens for the title, never a second copy of the content.
+    #[test]
+    fn the_title_of_a_compact_item_costs_a_handful_of_tokens() {
+        let memory = memory_with("El servicio escucha en el puerto 8081");
+        let mut untitled = memory.clone();
+        untitled.title = String::new();
+
+        let titled = serde_json::to_string(&MemoryPreview::of(&memory)).unwrap();
+        let bare = serde_json::to_string(&MemoryPreview::of(&untitled)).unwrap();
+        let delta = token_count_v1(&titled) - token_count_v1(&bare);
+        assert!(
+            (0..=12).contains(&delta),
+            "a title costs a handful of tokens, got {delta}: {titled}"
         );
     }
 

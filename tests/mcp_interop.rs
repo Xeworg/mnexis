@@ -1423,3 +1423,150 @@ async fn the_list_carries_the_relations_between_the_memories()
     client.cancel().await?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// S1: the title travels with what the agent reads (identity-visibility T3)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn memory_search_carries_the_title_of_each_hit() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": "El servicio escucha en el puerto 8081",
+            "title": "puerto del servicio"
+        }),
+    )
+    .await?;
+
+    let text = call_tool_text(
+        &client,
+        "memory_search",
+        serde_json::json!({ "query": "puerto" }),
+    )
+    .await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(parsed["count"], 1, "search: {parsed}");
+    assert_eq!(
+        parsed["items"][0]["title"], "puerto del servicio",
+        "a hit says what it is: {parsed}"
+    );
+    assert!(
+        parsed["items"][0]["uuid"].is_string(),
+        "and keeps the identity it carried: {parsed}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_list_carries_the_title_and_keeps_the_preview()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "listable content", "title": "contenido listable" }),
+    )
+    .await?;
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "sin titulo" }),
+    )
+    .await?;
+
+    let text = call_tool_text(&client, "memory_list", serde_json::json!({})).await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    let items = parsed["items"].as_array().expect("items array");
+
+    let titled = items
+        .iter()
+        .find(|item| item["preview"] == "listable content")
+        .unwrap_or_else(|| panic!("the titled memory is listed: {parsed}"));
+    assert_eq!(
+        titled["title"], "contenido listable",
+        "the identity travels with the preview: {parsed}"
+    );
+    assert!(
+        titled.get("content").is_none(),
+        "the compact item stays compact: {parsed}"
+    );
+
+    let untitled = items
+        .iter()
+        .find(|item| item["preview"] == "sin titulo")
+        .unwrap_or_else(|| panic!("the untitled memory is listed: {parsed}"));
+    assert_eq!(
+        untitled["title"], "",
+        "no title is the empty string, never null: {parsed}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_workspace_carries_the_title_of_the_recent_memories()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": "El servicio escucha en el puerto 8081",
+            "title": "puerto del servicio"
+        }),
+    )
+    .await?;
+
+    let text = call_tool_text(&client, "memory_workspace", serde_json::json!({})).await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    let recent = parsed["recent"]
+        .as_array()
+        .expect("the payload must carry the recent list");
+    assert_eq!(
+        recent[0]["title"], "puerto del servicio",
+        "the recent list names what each memory is: {parsed}"
+    );
+    assert_eq!(
+        recent[0]["content"], "El servicio escucha en el puerto 8081",
+        "additive: the content stays: {parsed}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}

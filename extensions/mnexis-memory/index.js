@@ -581,15 +581,25 @@ export default function mnexisMemoryExtension(pi) {
 			type: "object",
 			properties: {
 				title: { type: "string", description: "The title of the fact you are about to record." },
+				namespace: {
+					type: "string",
+					description: "Optional namespace to ask in; the workspace's one by default.",
+				},
 			},
 			required: ["title"],
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const result = await client.suggestTopicKey({ title: params.title }, ctx.cwd);
+			// A read: it resolves the workspace namespace like the read-only
+			// tools do — no write confirmation — so the answer is about the
+			// project the agent is working in, not the profile's default
+			// namespace (which the workspace guard refuses).
+			const workspace = await resolveWorkspace(ctx.cwd);
+			const namespace = readNamespace(params.namespace) ?? workspace.namespace;
+			const result = await client.suggestTopicKey({ title: params.title, namespace }, ctx.cwd);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
-					authorized: false,
+				return fail(describeFailure({ code: result.code, stderr: result.stderr, namespace }), {
+					namespace: namespace ?? null,
 				});
 			}
 			const data = result.data || {};
@@ -600,7 +610,12 @@ export default function mnexisMemoryExtension(pi) {
 				: held
 					? `The key \`${key}\` is already recorded by ${held}: saving with this title updates that record.`
 					: `The key \`${key}\` is free.`;
-			return ok(text, { title: params.title, topic_key: key, recorded_by: held || null });
+			return ok(text, {
+				title: params.title,
+				namespace: namespace ?? null,
+				topic_key: key,
+				recorded_by: held || null,
+			});
 		},
 	});
 

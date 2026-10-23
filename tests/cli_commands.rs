@@ -81,6 +81,18 @@ impl Profile {
             .expect("spawn mnexis binary")
     }
 
+    /// Run without `--json`: the human rendering is what a person reads, and
+    /// it has to carry the identity too.
+    fn run_text(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_mnexis"))
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn mnexis binary")
+    }
+
     /// Run with an explicit working directory. The workspace guard reads the
     /// `.mnexis-namespace` marker (and git) from there, so a test that
     /// exercises it has to choose the directory instead of inheriting the
@@ -1776,4 +1788,216 @@ fn a_hyphenated_prompt_search_finds_the_prompt() {
         .run_silent(&["prompts", "--search", "staging-eu"])
         .unwrap_status("prompts --search");
     assert_eq!(stdout_json(&found)["count"], 1);
+}
+
+// --- identity visibility (identity-visibility S1) ---
+//
+// The title is the identity of a fact. Every read surface carries it, so a
+// search result says what it *is* and not only what it is not. A memory
+// saved without a title reports the empty string, exactly like its topic
+// key — never `null` and never a placeholder.
+
+#[test]
+fn a_search_hit_carries_the_title_of_the_memory_it_refers_to() {
+    let p = Profile::new();
+    save(
+        &p,
+        "El servicio escucha en el puerto 8081",
+        &["--title", "puerto del servicio"],
+    );
+    let out = p
+        .run_silent(&["search", "puerto", "--limit", "10"])
+        .unwrap_status("search");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 1, "search: {json}");
+    let item = &json["items"][0];
+    assert_eq!(
+        item["title"], "puerto del servicio",
+        "a hit says what it is: {json}"
+    );
+    // Additive: every key the hit already carried keeps its meaning.
+    for key in [
+        "uuid",
+        "rank",
+        "namespace",
+        "memory_type",
+        "state",
+        "revision",
+        "created_at",
+        "valid_from",
+        "valid_until",
+    ] {
+        assert!(
+            item.get(key).is_some(),
+            "the hit still carries `{key}`: {json}"
+        );
+    }
+}
+
+#[test]
+fn the_compact_list_carries_the_title_and_still_carries_the_preview() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    save(
+        &p,
+        "listable content",
+        &["--namespace", "proyecto-a", "--title", "contenido listable"],
+    );
+    let out = p
+        .run_silent(&["list", "--namespace", "proyecto-a"])
+        .unwrap_status("list");
+    let json = stdout_json(&out);
+    let item = &json["items"][0];
+    assert_eq!(
+        item["title"], "contenido listable",
+        "the identity travels with the preview: {json}"
+    );
+    assert_eq!(
+        item["preview"], "listable content",
+        "the compact list still shows the preview: {json}"
+    );
+    assert!(
+        item.get("content").is_none(),
+        "and it stays compact: {json}"
+    );
+}
+
+#[test]
+fn a_context_item_carries_the_title() {
+    let p = namespaced_profile(&["default"]);
+    save(
+        &p,
+        "el puerto del servicio es 8081",
+        &["--title", "puerto del servicio"],
+    );
+    let out = p
+        .run_silent(&[
+            "context",
+            "--namespace",
+            "default",
+            "--token-budget",
+            "1024",
+            "--budget-mode",
+            "exact",
+            "puerto",
+        ])
+        .unwrap_status("context");
+    let json = stdout_json(&out);
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "context: {json}");
+    assert_eq!(
+        items[0]["title"], "puerto del servicio",
+        "the context says what its items are: {json}"
+    );
+    assert_eq!(
+        items[0]["content"], "el puerto del servicio es 8081",
+        "additive: the content stays: {json}"
+    );
+}
+
+#[test]
+fn a_memory_saved_without_a_title_reports_the_empty_string() {
+    let p = Profile::new();
+    save(&p, "sin titulo pero con contenido", &[]);
+
+    let listed = p.run_silent(&["list"]).unwrap_status("list");
+    let json = stdout_json(&listed);
+    let item = &json["items"][0];
+    assert_eq!(
+        item["title"], "",
+        "no title is the empty string, like the topic key: {json}"
+    );
+    assert_eq!(
+        item["preview"], "sin titulo pero con contenido",
+        "the preview stays: {json}"
+    );
+
+    let found = p
+        .run_silent(&["search", "contenido", "--limit", "10"])
+        .unwrap_status("search");
+    let json = stdout_json(&found);
+    assert_eq!(json["count"], 1, "search: {json}");
+    assert_eq!(
+        json["items"][0]["title"], "",
+        "no title is the empty string, like the topic key: {json}"
+    );
+}
+
+#[test]
+fn the_explain_hits_carry_the_title_and_keep_the_matched_terms() {
+    // `--explain` is the same command with more detail: an item shape that
+    // changes with a flag is a trap, so the title travels here too.
+    let p = Profile::new();
+    save(
+        &p,
+        "bellman ford shortest paths",
+        &["--title", "algoritmo de rutas"],
+    );
+    let out = p
+        .run_silent(&["search", "--explain", "bellman"])
+        .unwrap_status("search --explain");
+    let json = stdout_json(&out);
+    let item = &json["items"][0];
+    assert_eq!(item["title"], "algoritmo de rutas", "explain: {json}");
+    assert!(
+        item["matched_terms"]
+            .as_array()
+            .map(|terms| !terms.is_empty())
+            .unwrap_or(false),
+        "the explanation still explains: {json}"
+    );
+}
+
+#[test]
+fn the_full_list_carries_the_title_and_the_whole_content() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    save(
+        &p,
+        "listable content",
+        &["--namespace", "proyecto-a", "--title", "contenido listable"],
+    );
+    let out = p
+        .run_silent(&["list", "--namespace", "proyecto-a", "--full"])
+        .unwrap_status("list --full");
+    let json = stdout_json(&out);
+    let item = &json["items"][0];
+    assert_eq!(
+        item["content"], "listable content",
+        "--full still means the whole content: {json}"
+    );
+    assert_eq!(item["title"], "contenido listable", "--full: {json}");
+}
+
+#[test]
+fn the_human_line_of_a_search_and_a_list_names_the_title() {
+    let p = Profile::new();
+    save(
+        &p,
+        "el puerto del servicio es 8081",
+        &["--title", "puerto del servicio"],
+    );
+
+    let search = p.run_text(&["search", "puerto"]);
+    assert!(
+        search.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&search.stderr)
+    );
+    let text = String::from_utf8_lossy(&search.stdout);
+    assert!(
+        text.contains("\"puerto del servicio\""),
+        "the hit line names the title: {text}"
+    );
+    assert!(text.contains("rank="), "and keeps the shape it had: {text}");
+
+    let list = p.run_text(&["list"]);
+    assert!(
+        list.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let text = String::from_utf8_lossy(&list.stdout);
+    assert!(
+        text.contains("\"puerto del servicio\""),
+        "the list line names the title: {text}"
+    );
 }

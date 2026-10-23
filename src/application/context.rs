@@ -58,6 +58,10 @@ pub struct ContextRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextItem {
     pub uuid: String,
+    /// What the item *is*: the title of the fact. Empty when the memory
+    /// has none, exactly like its `topic_key`. The context is what the
+    /// agent reads first, so the identity travels with it.
+    pub title: String,
     pub revision: i32,
     pub namespace: String,
     pub content: String,
@@ -117,6 +121,7 @@ fn project(out: &mut Vec<ContextItem>, mems: Vec<Memory>) {
     for mem in mems {
         out.push(ContextItem {
             uuid: mem.uuid,
+            title: mem.title,
             revision: mem.revision,
             namespace: mem.namespace,
             content: mem.content,
@@ -308,7 +313,7 @@ mod tests {
         Memory {
             id: Some(1),
             uuid: uuid.into(),
-            title: String::new(),
+            title: format!("titulo de {uuid}"),
             topic_key: String::new(),
             namespace: "default".into(),
             memory_type: kind.into(),
@@ -372,6 +377,17 @@ mod tests {
         // serialised envelope produces.
         let serialised = serialise_envelope(&out.items, &budget);
         assert_eq!(out.tokens_used, token_count_v1(&serialised));
+    }
+
+    #[test]
+    fn a_context_item_carries_the_title_of_its_memory() {
+        let budget = Budget::new(10_000, BudgetMode::Exact);
+        let m = memory("u1", "alpha", "fact", MemoryState::Active);
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m]).unwrap();
+        assert_eq!(out.items.len(), 1);
+        assert_eq!(out.items[0].title, "titulo de u1");
+        // Additive: the content the item already carried stays.
+        assert_eq!(out.items[0].content, "alpha");
     }
 
     #[test]
