@@ -182,8 +182,65 @@ const MIGRATION_003: &str = r#"
 ALTER TABLE memory_links ADD COLUMN reason TEXT NOT NULL DEFAULT '';
 "#;
 
+/// Migration 004: the sessions and the user prompts.
+///
+/// The two things a repository cannot hold. A **session** is the unit of
+/// work the agent runs in: the caller names it (the agent never invents
+/// one), it belongs to a namespace, and it ends with a summary. A **user
+/// prompt** is what the user said: stored, searchable, and attached to the
+/// session it happened in when there is one.
+///
+/// The migration is additive: new tables, a new index and new triggers. No
+/// existing table is touched, so a profile that already holds memories
+/// keeps every one of them.
+///
+/// The prompt table carries no foreign key on the session: a prompt can be
+/// captured before its session is registered, and a prompt that names a
+/// session the engine never saw is a fact about the past, not an error.
+const MIGRATION_004: &str = r#"
+CREATE TABLE IF NOT EXISTS sessions (
+    id          TEXT PRIMARY KEY,
+    namespace   TEXT NOT NULL,
+    directory   TEXT NOT NULL DEFAULT '',
+    started_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    ended_at    TEXT,
+    summary     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS user_prompts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT,
+    namespace   TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_prompts_session
+    ON user_prompts(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_prompts_namespace
+    ON user_prompts(namespace);
+
+CREATE INDEX IF NOT EXISTS idx_user_prompts_created
+    ON user_prompts(created_at DESC);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS user_prompts_fts USING fts5(content);
+
+CREATE TRIGGER IF NOT EXISTS user_prompts_after_insert
+AFTER INSERT ON user_prompts
+BEGIN
+    INSERT INTO user_prompts_fts(rowid, content) VALUES (new.id, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS user_prompts_after_delete
+AFTER DELETE ON user_prompts
+BEGIN
+    DELETE FROM user_prompts_fts WHERE rowid = old.id;
+END;
+"#;
+
 /// Applies pending migrations. Creates the `schema_migrations` ledger if
-/// absent. Applies migrations 001 through 003 if not already recorded. A
+/// absent. Applies migrations 001 through 004 if not already recorded. A
 /// recorded version higher than the binary's known migrations returns
 /// `MnexisError::UnsupportedVersion` (no-downgrade rule).
 pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
@@ -203,7 +260,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
         )
         .map_err(|e| MnexisError::busy(format!("read schema_migrations: {e}")))?;
 
-    if applied > 3 {
+    if applied > 4 {
         return Err(MnexisError::unsupported_version(applied));
     }
 
@@ -228,6 +285,13 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
             .map_err(|e| MnexisError::busy(format!("record migration 003: {e}")))?;
     }
 
+    if applied < 4 {
+        conn.execute_batch(MIGRATION_004)
+            .map_err(|e| MnexisError::busy(format!("migration 004: {e}")))?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (4)", [])
+            .map_err(|e| MnexisError::busy(format!("record migration 004: {e}")))?;
+    }
+
     Ok(())
 }
 
@@ -247,7 +311,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 3, "migrations 001 through 003 should be recorded");
+        assert_eq!(version, 4, "migrations 001 through 004 should be recorded");
 
         // Migration 003 added the persisted supersede reason column.
         let (col_type, dflt, notnull): (String, String, i64) = conn
@@ -269,7 +333,84 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version_again, 3, "003 must not double-record on a re-run");
+        assert_eq!(version_again, 4, "004 must not double-record on a re-run");
+    }
+
+    #[test]
+    fn migration_004_adds_the_sessions_and_the_user_prompts() {
+        let dir = tempdir_in("target").unwrap();
+        let path = dir.path().join("mig004.db");
+        let conn = open_sqlite(&path).unwrap();
+        run_migrations(&conn).unwrap();
+
+        for table in ["sessions", "user_prompts", "user_prompts_fts"] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "{table} exists after migration 004");
+        }
+
+        // A prompt is indexed as it is stored, and the index follows it.
+        conn.execute(
+            "INSERT INTO sessions (id, namespace) VALUES ('s1', 'payments')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO user_prompts (session_id, namespace, content) \
+             VALUES ('s1', 'payments', 'el puerto es 8081')",
+            [],
+        )
+        .unwrap();
+        let indexed: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM user_prompts_fts WHERE user_prompts_fts MATCH 'puerto'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexed, 1, "the prompt is in the index");
+
+        conn.execute("DELETE FROM user_prompts", []).unwrap();
+        let left: i64 = conn
+            .query_row("SELECT count(*) FROM user_prompts_fts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "the index follows the deletion");
+    }
+
+    #[test]
+    fn migration_004_keeps_the_memories_of_an_existing_profile() {
+        let dir = tempdir_in("target").unwrap();
+        let path = dir.path().join("mig004_old.db");
+        let conn = open_sqlite(&path).unwrap();
+        // A profile at version 3, with a memory in it.
+        run_migrations(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO memories (uuid, topic_key, namespace, memory_type, state, content, \
+             actor, channel, assertion_basis) \
+             VALUES ('uuid-1', '', 'payments', 'fact', 'active', 'un hecho', \
+             'user', 'cli', 'user_stated')",
+            [],
+        )
+        .unwrap();
+        // The ledger says 3: the next run applies only what is missing.
+        conn.execute("DELETE FROM schema_migrations WHERE version = 4", [])
+            .unwrap();
+        run_migrations(&conn).unwrap();
+        let memories: i64 = conn
+            .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(memories, 1, "the memory survived the migration");
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 4, "the migration was applied");
     }
 
     #[test]
