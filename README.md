@@ -83,6 +83,11 @@ mnexis end --id 01JX --summary "qué hicimos"  # end it with a summary
 A search query is plain language: every word counts, a hyphen is part of a
 word, and `--match all` narrows it to the memories that hold every word.
 
+The engine also knows which topic it already holds: a save that overlaps a
+record the namespace already has says so and names the key, and
+`mnexis suggest-topic-key "<content>"` asks the same question on demand. One
+fact stays one record, so the next session does not have to read two.
+
 The repository also ships a pi extension that exposes the memory engine as
 native tools, so an agent can store and recall project memory without being
 asked to, and without choosing a namespace itself:
@@ -167,6 +172,7 @@ save              save a new memory
 update            update a memory (optimistic revision)
 supersede         mark an older memory superseded by a newer one
 search            ranked search (every word of the query counts)
+suggest-topic-key the topic key this content is already recorded under
 list              list memories
 session           register the session this process runs in
 end               end a session, with an optional summary

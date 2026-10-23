@@ -150,13 +150,24 @@ Two things a repository cannot hold, and the engine keeps both:
    `snake/design` and `snake-design` are both accepted, and both group the
    same facts. `--idempotency-key`
    makes retries safe.
-3. **Replace facts by superseding, never by deleting.** Outdated but
+3. **One fact, one record.** When the engine tells you that a topic is
+   already recorded under a topic key (the save says so, or
+   `mnexis suggest-topic-key "<content>"` answers it), save the new value
+   **with that key**: the record is updated instead of a second one being
+   added next to it. Two records about the same thing mean the next
+   session has to read both to find out which one is current. A key that
+   carries the value inside it (`payments-api/port-9090`) guarantees the
+   duplicate; a key that names the topic (`payments-api/port`) does not.
+4. **A replaced fact says so.** When a search or a list answer carries
+   `was replaced by`, that memory is the old one and the other is current.
+   Answer with the current value, and do not read the replaced one.
+5. **Replace facts by superseding, never by deleting.** Outdated but
    historically true facts keep their record: `mnexis save` the newer fact,
    then `mnexis supersede --older <old-uuid> --newer <new-uuid> --reason "why"`.
    The supersede is atomic, revision-checked on both sides, cycle-free, and
    persists the reason. `mnexis history <uuid>` shows the chain. Both
    memories must live in this project's namespace.
-4. **Correct a record in place** only for typos/formatting:
+6. **Correct a record in place** only for typos/formatting:
    `mnexis update <uuid> --expected-revision <rev> --reason "why" [--content "..."]`.
 
 Soft-delete only on request: `mnexis delete <uuid> [--force]`, reversible

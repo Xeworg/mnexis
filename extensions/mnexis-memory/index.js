@@ -39,6 +39,39 @@ export function readItems(payload) {
 }
 
 /**
+ * The relations between the memories a payload holds: which one replaced
+ * which.
+ *
+ * The answer says it in the same breath as the memories, so the agent does
+ * not have to open every record to know which one is current.
+ */
+export function readRelations(payload) {
+	if (payload && typeof payload === "object" && Array.isArray(payload.relations)) {
+		return payload.relations;
+	}
+	return [];
+}
+
+/**
+ * One line per relation, in the words the agent needs: "this one was
+ * replaced by that one".
+ */
+export function relationLines(relations) {
+	if (!Array.isArray(relations) || relations.length === 0) {
+		return "";
+	}
+	return (
+		"\nRelations: " +
+		relations
+			.map((r) => {
+				const reason = r && r.reason ? ` (${r.reason})` : "";
+				return `${r.older} was replaced by ${r.newer}${reason}`;
+			})
+			.join("; ")
+	);
+}
+
+/**
  * The namespace a read tool targets.
  *
  * Reads are open across projects: without an explicit namespace the tool
@@ -442,11 +475,19 @@ export default function mnexisMemoryExtension(pi) {
 					{ namespace: workspace.namespace },
 				);
 			}
+			// The engine may know that this topic is already recorded
+			// under another key: the model has to read that, it is in the
+			// details only.
+			const suggestion = result.data && result.data.topic_suggestion;
+			const notice = suggestion
+				? ` This topic is already recorded under the topic key \`${suggestion.topic_key}\` (${suggestion.uuid}): save it again with that key to update that record instead of adding a second one.`
+				: "";
 			return ok(
-				`Saved a memory in namespace '${workspace.namespace}'.`,
+				`Saved a memory in namespace '${workspace.namespace}'.${notice}`,
 				{
 					namespace: workspace.namespace,
 					uuid: result.data && result.data.uuid ? result.data.uuid : null,
+					topic_suggestion: suggestion || null,
 					output: result.stdout.trim(),
 					data: result.data,
 				},
@@ -497,12 +538,56 @@ export default function mnexisMemoryExtension(pi) {
 				});
 			}
 			const hits = readItems(result.data);
+			const relations = readRelations(result.data);
 			const text = hits.length
 				? hits
 						.map((hit, index) => `${index + 1}. ${JSON.stringify(hit)}`)
 						.join("\n")
 				: `No memories matched '${params.query ?? ""}'.`;
-			return ok(text, { namespace: namespace ?? null, count: hits.length, hits });
+			return ok(text + relationLines(relations), {
+				namespace: namespace ?? null,
+				count: hits.length,
+				hits,
+				relations,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "mnexis_suggest_topic_key",
+		label: "Suggest the topic key",
+		promptSnippet: "Ask which topic key a fact is already recorded under.",
+		description:
+			"Ask which topic key this content is already recorded under in this project. " +
+			"Use it before saving a fact you are not sure about: if the answer names a " +
+			"key, save with that key so the record is updated instead of adding a " +
+			"second one about the same thing.",
+		parameters: {
+			type: "object",
+			properties: {
+				content: { type: "string", description: "The content you are about to record." },
+				limit: { type: "number", description: "Maximum number of suggestions (default: 5)." },
+			},
+			required: ["content"],
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const result = await client.suggestTopicKey(
+				{ content: params.content, limit: params.limit },
+				ctx.cwd,
+			);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+					authorized: false,
+				});
+			}
+			const items = readItems(result.data);
+			const text = items.length
+				? items
+						.map((item, index) => `${index + 1}. ${JSON.stringify(item)}`)
+						.join("\n")
+				: "This content is not recorded yet.";
+			return ok(text, { count: items.length, suggestions: items });
 		},
 	});
 
@@ -544,10 +629,14 @@ export default function mnexisMemoryExtension(pi) {
 				});
 			}
 			const items = readItems(result.data);
+			const relations = readRelations(result.data);
 			const text = items.length
 				? items.map((item, index) => `${index + 1}. ${JSON.stringify(item)}`).join("\n")
 				: "No memories stored yet.";
-			return ok(text, { namespace: namespace ?? null, count: items.length, memories: items });
+			return ok(
+				text + relationLines(relations),
+				{ namespace: namespace ?? null, count: items.length, memories: items, relations },
+			);
 		},
 	});
 
