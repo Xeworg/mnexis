@@ -13,12 +13,7 @@
 
 import { createClient, defaultExec } from "./lib/cli.js";
 import { decideAuthorization, describeFailure, allowNamespaceCommand } from "./lib/gate.js";
-import {
-	deriveNamespaceName,
-	findMarkerNamespace,
-	selectNamespace,
-	workspaceKey,
-} from "./lib/workspace.js";
+import { findMarkerNamespace, selectNamespace, workspaceKey } from "./lib/workspace.js";
 
 /** Read the write allowlist out of `mnexis config show --json`. */
 export function readWriteNamespaces(configData) {
@@ -165,15 +160,27 @@ export default function mnexisMemoryExtension(pi) {
 
 		const list = await client.projectList(cwd);
 		const bindings = list.code === 0 && list.data && Array.isArray(list.data.bindings) ? list.data.bindings : [];
+		// The engine owns the identity rule: the registry publishes the
+		// canonical key of the workspace this process runs in, so the
+		// binding the human recorded and the one the agent looks up are
+		// the same key. The computed key stays as the fallback for an
+		// older engine that does not publish it yet.
+		const publishedKey =
+			list.code === 0 && list.data && typeof list.data.current_key === "string" && list.data.current_key !== ""
+				? list.data.current_key
+				: null;
+		const canonicalKey = publishedKey ?? key;
 		// A `.mnexis-namespace` marker names the namespace of the
 		// workspace; the mnexis CLI resolves it the same way, so both
 		// sides agree on which project a directory belongs to.
 		const marked = findMarkerNamespace(rootPath);
-		const fallbackName = marked ?? deriveNamespaceName(rootPath);
-		const selection = selectNamespace({ bindings, key, fallbackName });
+		const selection = selectNamespace({ bindings, key: canonicalKey, fallbackName: marked });
 
-		if (!selection.bound) {
-			const bind = await client.bind(selection.namespace, key, rootPath, cwd);
+		if (!selection.bound && selection.namespace) {
+			// The human wrote the namespace down (in the marker), so the
+			// binding can be recorded. Nothing else is bound here: a
+			// namespace the agent invented is a namespace nobody allowed.
+			const bind = await client.bind(selection.namespace, canonicalKey, rootPath, cwd);
 			if (bind.code !== 0) {
 				throw new Error(
 					describeFailure({ code: bind.code, stderr: bind.stderr, namespace: selection.namespace }),
@@ -181,7 +188,7 @@ export default function mnexisMemoryExtension(pi) {
 			}
 		}
 
-		resolution = { key, namespace: selection.namespace, root: rootPath, remote: remoteUrl };
+		resolution = { key: canonicalKey, namespace: selection.namespace, root: rootPath, remote: remoteUrl };
 		return resolution;
 	}
 
@@ -266,6 +273,23 @@ export default function mnexisMemoryExtension(pi) {
 	/** Shared prologue for the write tools. */
 	async function prepareWrite(ctx) {
 		const workspace = await resolveWorkspace(ctx.cwd);
+		if (!workspace.namespace) {
+			// No binding and no marker: the namespace is the human's
+			// decision, and the message has to say exactly what to run.
+			return {
+				workspace,
+				gate: {
+					authorized: false,
+					asked: false,
+					message:
+						`This workspace (${workspace.key}) has no namespace yet, and the agent ` +
+						`does not choose one. Ask the human to run:\n` +
+						`  mnexis project bind <namespace> --key ${workspace.key}\n` +
+						`  mnexis config allow-namespace <namespace>\n` +
+						`and retry. Reading is still available.`,
+				},
+			};
+		}
 		const gate = await ensureWritable(workspace.namespace, ctx);
 		if (!gate.authorized) {
 			return { workspace, gate };
@@ -358,11 +382,13 @@ export default function mnexisMemoryExtension(pi) {
 			"Search stored memories (full-text, ranked). Use it before answering " +
 			"from scratch when prior context may exist, and to check what was already recorded. " +
 			"The search reaches every project by default, because projects share components; " +
-			"pass `namespace` to narrow it to one project.",
+			"pass `namespace` to narrow it to one project. " +
+			"Write the query the way you would say it: every word counts and a hyphen is " +
+			"part of a word, so `staging-eu` and `puerto base de datos` both work.",
 		parameters: {
 			type: "object",
 			properties: {
-				query: { type: "string", description: "Search terms." },
+				query: { type: "string", description: "Search terms, in plain language." },
 				limit: { type: "number", description: "Maximum number of hits (default: 10)." },
 				namespace: {
 					type: "string",

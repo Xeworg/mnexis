@@ -43,6 +43,10 @@ impl Profile {
     fn registry_text(&self) -> String {
         std::fs::read_to_string(self.data_dir.join("projects.toml")).unwrap_or_default()
     }
+
+    fn registry_path(&self) -> std::path::PathBuf {
+        self.data_dir.join("projects.toml")
+    }
 }
 
 fn stderr_of(out: &Output) -> String {
@@ -53,7 +57,10 @@ fn stdout_of(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
-const KEY: &str = "git:github.com/Xeworg/mnexis";
+/// The key a human may write: the remote, not yet normalized.
+const KEY_RAW: &str = "git:github.com/Xeworg/mnexis";
+/// The key the engine records and every side compares against.
+const KEY_CANONICAL: &str = "git:github.com-xeworg-mnexis";
 
 #[test]
 fn bind_records_the_binding_in_the_profile_registry() {
@@ -63,7 +70,7 @@ fn bind_records_the_binding_in_the_profile_registry() {
         "bind",
         "mnexis",
         "--key",
-        KEY,
+        KEY_RAW,
         "--path",
         "/home/xeworg/Proyectos/mnexis",
     ]);
@@ -75,8 +82,8 @@ fn bind_records_the_binding_in_the_profile_registry() {
     );
     let registry = p.registry_text();
     assert!(
-        registry.contains(KEY),
-        "the registry must record the workspace key: {registry}"
+        registry.contains(KEY_CANONICAL),
+        "the registry must record the canonical workspace key: {registry}"
     );
     assert!(
         registry.contains("namespace = \"mnexis\""),
@@ -91,11 +98,14 @@ fn bind_records_the_binding_in_the_profile_registry() {
 #[test]
 fn list_shows_the_recorded_bindings() {
     let p = Profile::new();
-    p.run_silent(&["project", "bind", "mnexis", "--key", KEY]);
+    p.run_silent(&["project", "bind", "mnexis", "--key", KEY_RAW]);
     let out = p.run_silent(&["project", "list"]);
     assert!(out.status.success(), "list failed: {}", stderr_of(&out));
     let text = stdout_of(&out);
-    assert!(text.contains(KEY), "list must show the key: {text}");
+    assert!(
+        text.contains(KEY_CANONICAL),
+        "list must show the canonical key: {text}"
+    );
     assert!(
         text.contains("mnexis"),
         "list must show the namespace: {text}"
@@ -122,7 +132,7 @@ fn list_on_a_profile_without_a_registry_is_empty_and_successful() {
 fn bind_is_idempotent_for_the_same_key_and_namespace() {
     let p = Profile::new();
     for _ in 0..3 {
-        let out = p.run_silent(&["project", "bind", "mnexis", "--key", KEY]);
+        let out = p.run_silent(&["project", "bind", "mnexis", "--key", KEY_RAW]);
         assert!(
             out.status.success(),
             "repeat bind failed: {}",
@@ -140,8 +150,8 @@ fn bind_is_idempotent_for_the_same_key_and_namespace() {
 #[test]
 fn bind_refuses_to_rebind_a_key_to_another_namespace() {
     let p = Profile::new();
-    p.run_silent(&["project", "bind", "mnexis", "--key", KEY]);
-    let out = p.run_silent(&["project", "bind", "other", "--key", KEY]);
+    p.run_silent(&["project", "bind", "mnexis", "--key", KEY_RAW]);
+    let out = p.run_silent(&["project", "bind", "other", "--key", KEY_RAW]);
     assert_eq!(
         out.status.code(),
         Some(2),
@@ -167,8 +177,8 @@ fn bind_refuses_to_rebind_a_key_to_another_namespace() {
 #[test]
 fn bind_force_rebinds_a_key_to_another_namespace() {
     let p = Profile::new();
-    p.run_silent(&["project", "bind", "mnexis", "--key", KEY]);
-    let out = p.run_silent(&["project", "bind", "other", "--key", KEY, "--force"]);
+    p.run_silent(&["project", "bind", "mnexis", "--key", KEY_RAW]);
+    let out = p.run_silent(&["project", "bind", "other", "--key", KEY_RAW, "--force"]);
     assert!(
         out.status.success(),
         "forced rebind failed: {}",
@@ -189,7 +199,7 @@ fn bind_force_rebinds_a_key_to_another_namespace() {
 #[test]
 fn unbind_removes_the_binding() {
     let p = Profile::new();
-    p.run_silent(&["project", "bind", "mnexis", "--key", KEY]);
+    p.run_silent(&["project", "bind", "mnexis", "--key", KEY_RAW]);
     let out = p.run_silent(&["project", "unbind", "mnexis"]);
     assert!(out.status.success(), "unbind failed: {}", stderr_of(&out));
     let list = p.run_silent(&["project", "list"]);
@@ -215,7 +225,7 @@ fn unbind_on_an_empty_registry_is_a_successful_no_op() {
 fn bind_rejects_an_empty_namespace_and_an_empty_key() {
     let p = Profile::new();
 
-    let empty_ns = p.run_silent(&["project", "bind", "", "--key", KEY]);
+    let empty_ns = p.run_silent(&["project", "bind", "", "--key", KEY_RAW]);
     assert_eq!(
         empty_ns.status.code(),
         Some(2),
@@ -239,5 +249,51 @@ fn bind_rejects_an_empty_namespace_and_an_empty_key() {
         stderr_of(&empty_key).contains("key must not be empty"),
         "stderr must name the problem: {}",
         stderr_of(&empty_key)
+    );
+}
+
+// ── one canonical workspace key ─────────────────────────────────────────────
+//
+// A human may write the remote; the agent always computes the normalized
+// key. Both have to name the same workspace, or the binding the human
+// recorded is invisible to the agent.
+
+#[test]
+fn the_raw_and_the_normalized_key_are_the_same_binding() {
+    let p = Profile::new();
+    p.run_silent(&["project", "bind", "mnexis", "--key", KEY_RAW]);
+    let again = p.run_silent(&["project", "bind", "mnexis", "--key", KEY_CANONICAL]);
+    assert!(
+        again.status.success(),
+        "the second bind failed: {}",
+        stderr_of(&again)
+    );
+    let registry = p.registry_text();
+    assert_eq!(
+        registry.matches(KEY_CANONICAL).count(),
+        1,
+        "both keys name one workspace, so one binding is recorded: {registry}"
+    );
+}
+
+#[test]
+fn a_binding_recorded_before_the_rule_still_resolves() {
+    let p = Profile::new();
+    // A registry written by an older engine: the raw key, by hand.
+    std::fs::write(
+        p.registry_path(),
+        "[[project]]\nkey = \"git:github.com/Xeworg/mnexis\"\nnamespace = \"mnexis\"\n",
+    )
+    .expect("write the legacy registry");
+    let out = p.run_silent(&["status"]);
+    assert!(out.status.success(), "status failed: {}", stderr_of(&out));
+    let text = stdout_of(&out);
+    assert!(
+        text.contains(KEY_CANONICAL),
+        "the status must report the canonical key: {text}"
+    );
+    assert!(
+        text.contains("mnexis"),
+        "the legacy binding must still resolve to its namespace: {text}"
     );
 }

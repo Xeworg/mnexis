@@ -320,7 +320,8 @@ pub enum ProjectAction {
     Bind {
         /// Namespace the workspace writes into
         namespace: String,
-        /// Workspace identity (e.g. `git:github.com/owner/repo` or `path:/abs/dir`)
+        /// Workspace identity (e.g. `git:github.com-owner-repo` or `path:/abs/dir`).
+        /// A remote URL is accepted and normalized to that form.
         #[arg(long, value_name = "KEY")]
         key: String,
         /// Workspace path (informational)

@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 
+use crate::application::workspace::{canonical_workspace_key, current_workspace};
 use crate::cli::output::CommandOutcome;
 use crate::config::projects::{BindOutcome, ProjectRegistry, registry_path};
 use crate::domain::error::MnexisError;
@@ -24,6 +25,10 @@ pub fn bind(
 ) -> Result<CommandOutcome, MnexisError> {
     let file = registry_path(&data_dir);
     let mut registry = ProjectRegistry::load(&file)?;
+    // The key is stored in its canonical form: the human may write the raw
+    // remote, the agent always computes the normalized one, and both have
+    // to name the same workspace.
+    let key = canonical_workspace_key(&key);
     let outcome = registry.bind(&key, &namespace, path.as_deref(), force)?;
     registry.save(&file)?;
 
@@ -63,11 +68,27 @@ pub fn bind(
 pub fn list(data_dir: PathBuf) -> Result<CommandOutcome, MnexisError> {
     let file = registry_path(&data_dir);
     let registry = ProjectRegistry::load(&file)?;
-    let text = if registry.bindings.is_empty() {
+    // The bindings are shown in their canonical form, and the canonical key
+    // of the current workspace travels with them: an agent that asks the
+    // registry for the key gets the engine's answer, not its own guess.
+    let canonical: Vec<_> = registry
+        .bindings
+        .iter()
+        .map(|b| crate::config::projects::ProjectBinding {
+            key: canonical_workspace_key(&b.key),
+            namespace: b.namespace.clone(),
+            path: b.path.clone(),
+        })
+        .collect();
+    let current_key = current_workspace(&data_dir)
+        .ok()
+        .flatten()
+        .map(|w| w.key)
+        .unwrap_or_default();
+    let text = if canonical.is_empty() {
         "No project bindings recorded.".to_string()
     } else {
-        registry
-            .bindings
+        canonical
             .iter()
             .map(|b| match &b.path {
                 Some(p) => format!("{} -> {} ({})", b.key, b.namespace, p),
@@ -76,7 +97,18 @@ pub fn list(data_dir: PathBuf) -> Result<CommandOutcome, MnexisError> {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    Ok(CommandOutcome::new(registry.to_json(), text))
+    let json = serde_json::json!({
+        "bindings": canonical
+            .iter()
+            .map(|b| serde_json::json!({
+                "key": b.key,
+                "namespace": b.namespace,
+                "path": b.path,
+            }))
+            .collect::<Vec<_>>(),
+        "current_key": current_key,
+    });
+    Ok(CommandOutcome::new(json, text))
 }
 
 /// `mnexis project unbind <ns>` — remove the bindings for a namespace.
