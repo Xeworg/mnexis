@@ -239,8 +239,20 @@ BEGIN
 END;
 "#;
 
+/// Migration 005: a title for every memory.
+///
+/// The title is the short, stable label of a fact — the thing that stays put
+/// when the value inside the content changes. It is what the topic key
+/// derives from, so a fact keeps one record across its revisions.
+///
+/// The migration is additive: one column with an empty default, so every
+/// existing memory reads back with no title and every existing query works.
+const MIGRATION_005: &str = r#"
+ALTER TABLE memories ADD COLUMN title TEXT NOT NULL DEFAULT '';
+"#;
+
 /// Applies pending migrations. Creates the `schema_migrations` ledger if
-/// absent. Applies migrations 001 through 004 if not already recorded. A
+/// absent. Applies migrations 001 through 005 if not already recorded. A
 /// recorded version higher than the binary's known migrations returns
 /// `MnexisError::UnsupportedVersion` (no-downgrade rule).
 pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
@@ -260,7 +272,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
         )
         .map_err(|e| MnexisError::busy(format!("read schema_migrations: {e}")))?;
 
-    if applied > 4 {
+    if applied > 5 {
         return Err(MnexisError::unsupported_version(applied));
     }
 
@@ -292,6 +304,22 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
             .map_err(|e| MnexisError::busy(format!("record migration 004: {e}")))?;
     }
 
+    if applied < 5 {
+        // `ALTER TABLE ... ADD COLUMN` cannot be made conditional in SQL, and
+        // a migration that failed halfway would leave the column without its
+        // ledger row. The column is what decides, so a re-run is safe.
+        let has_title: i64 = conn
+            .prepare("SELECT count(*) FROM pragma_table_info('memories') WHERE name = 'title'")
+            .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
+            .map_err(|e| MnexisError::busy(format!("migration 005 (probe): {e}")))?;
+        if has_title == 0 {
+            conn.execute_batch(MIGRATION_005)
+                .map_err(|e| MnexisError::busy(format!("migration 005: {e}")))?;
+        }
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (5)", [])
+            .map_err(|e| MnexisError::busy(format!("record migration 005: {e}")))?;
+    }
+
     Ok(())
 }
 
@@ -311,7 +339,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 4, "migrations 001 through 004 should be recorded");
+        assert_eq!(version, 5, "migrations 001 through 005 should be recorded");
 
         // Migration 003 added the persisted supersede reason column.
         let (col_type, dflt, notnull): (String, String, i64) = conn
@@ -333,7 +361,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version_again, 4, "004 must not double-record on a re-run");
+        assert_eq!(version_again, 5, "005 must not double-record on a re-run");
     }
 
     #[test]
@@ -397,8 +425,8 @@ mod tests {
             [],
         )
         .unwrap();
-        // The ledger says 3: the next run applies only what is missing.
-        conn.execute("DELETE FROM schema_migrations WHERE version = 4", [])
+        // The ledger says 4: the next run applies only what is missing.
+        conn.execute("DELETE FROM schema_migrations WHERE version >= 4", [])
             .unwrap();
         run_migrations(&conn).unwrap();
         let memories: i64 = conn
@@ -410,7 +438,61 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 4, "the migration was applied");
+        assert_eq!(version, 5, "the migration was applied");
+    }
+
+    #[test]
+    fn migration_005_adds_a_title_that_defaults_to_empty() {
+        let dir = tempdir_in("target").unwrap();
+        let path = dir.path().join("mig005.db");
+        let conn = open_sqlite(&path).unwrap();
+        run_migrations(&conn).unwrap();
+
+        let (col_type, dflt, notnull): (String, String, i64) = conn
+            .query_row(
+                "SELECT type, dflt_value, [notnull] FROM pragma_table_info('memories') \
+                 WHERE name = 'title'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("memories.title exists after migration 005");
+        assert_eq!(col_type.to_uppercase(), "TEXT");
+        assert_eq!(dflt, "''", "existing rows read back no title");
+        assert_eq!(notnull, 1, "the column is NOT NULL with an empty default");
+
+        // A memory that already exists keeps working and reads an empty title.
+        conn.execute(
+            "INSERT INTO memories (uuid, topic_key, namespace, memory_type, state, content, \
+             actor, channel, assertion_basis) \
+             VALUES ('u1', '', 'ns', 'fact', 'active', 'un hecho', 'user', 'cli', 'user_stated')",
+            [],
+        )
+        .unwrap();
+        let title: String = conn
+            .query_row("SELECT title FROM memories WHERE uuid = 'u1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "", "an old memory has no title, not a broken one");
+    }
+
+    #[test]
+    fn migration_005_is_safe_to_replay() {
+        // A migration that failed halfway leaves the column without its
+        // ledger row. Re-running must not fail on a duplicate column.
+        let dir = tempdir_in("target").unwrap();
+        let path = dir.path().join("mig005_again.db");
+        let conn = open_sqlite(&path).unwrap();
+        run_migrations(&conn).unwrap();
+        conn.execute("DELETE FROM schema_migrations WHERE version = 5", [])
+            .unwrap();
+        run_migrations(&conn).expect("the re-run must not fail on the column it already added");
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 5, "the ledger records it");
     }
 
     #[test]

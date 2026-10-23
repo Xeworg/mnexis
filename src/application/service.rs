@@ -998,7 +998,13 @@ fn validate_topic_key(topic_key: &str, max_bytes: usize) -> Result<(), MnexisErr
         // The slash is what an agent writes when it groups facts
         // (`payments-api/server-config`), and the dot is the same idea
         // written the other way. Both are accepted, and nothing else is.
-        if !c.is_ascii_lowercase() && !c.is_ascii_digit() && !matches!(c, '.' | '-' | '/') {
+        //
+        // "Letter" is not "ASCII letter": the key derives from a title, and
+        // a title is written in the language the team speaks. A Japanese,
+        // Greek or Cyrillic title has to yield a usable key, so the rule is
+        // the character's own case, not its codepoint range.
+        let is_letter = c.is_lowercase() || c.is_numeric();
+        if !is_letter && !matches!(c, '.' | '-' | '/') {
             return Err(MnexisError::invalid_argument(
                 "topic_key",
                 format!(
