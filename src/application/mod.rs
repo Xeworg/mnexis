@@ -8,6 +8,7 @@ pub mod context;
 pub mod io;
 pub mod opencode_config;
 pub mod preview;
+pub mod proposal;
 pub mod service;
 pub mod update;
 pub mod workspace;
@@ -25,6 +26,7 @@ pub use context::{ContextItem, ContextRequest, ContextResponse, SearchFilter};
 pub use io::ConflictPolicy;
 pub use opencode_config::{ConfigAction, ConfigOutcome, OpencodeConfig};
 pub use preview::{MemoryPreview, previews};
+pub use proposal::{SAME_FACT_REASON, duplicates_payload, link_command};
 pub use service::{
     ImportSummary, ListFilter, MemoryService, SaveRequest, ServiceConfig, SupersedeRequest,
     UpdateRequest,

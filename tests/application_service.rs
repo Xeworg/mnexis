@@ -926,12 +926,15 @@ fn a_title_with_nothing_in_common_proposes_nothing() {
 
 #[test]
 fn a_namespace_the_scope_cannot_read_is_refused() {
-    let (mut svc, _dir) = make_service();
+    let (svc, _dir) = make_service();
     let error = svc
         .duplicates("otro-proyecto", "puerto de pagos", 5, None)
         .unwrap_err();
     assert!(
-        matches!(error, MnexisError::Forbidden { .. } | MnexisError::NotFound { .. }),
+        matches!(
+            error,
+            MnexisError::Forbidden { .. } | MnexisError::NotFound { .. }
+        ),
         "a namespace outside the scope is not read: {error:?}"
     );
 }

@@ -6,7 +6,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::application::io::{ConflictPolicy, ImportDecision, LocalIndex};
-use crate::domain::duplicates::{DuplicateCandidate, TitleRecord, rank_duplicates};
+use crate::domain::duplicates::{
+    DEFAULT_DUPLICATE_LIMIT, DuplicateCandidate, TitleRecord, rank_duplicates,
+};
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::{IdempotencyKey, IdempotencyRecord};
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
@@ -1011,6 +1013,32 @@ impl<R: MemoryRepository> MemoryService<R> {
             .filter(|record| Some(record.uuid.as_str()) != exclude_uuid)
             .collect();
         Ok(rank_duplicates(title, &corpus, limit))
+    }
+
+    /// The shortlist a save carries: what the namespace already holds.
+    ///
+    /// Only a save that **created** a record proposes anything. A save that
+    /// updated the record already holding the key leaves `revision >= 2`,
+    /// and then the fact is one record already — there is nothing left to
+    /// link.
+    ///
+    /// A namespace the caller may write but not read stays closed: the
+    /// proposal is a courtesy of the save, and it must never turn a save the
+    /// caller was allowed to make into a read of a namespace its scope
+    /// hides, nor leak the titles it holds.
+    pub fn duplicates_of(&self, saved: &Memory) -> Result<Vec<DuplicateCandidate>, MnexisError> {
+        if saved.revision != 1 || saved.title.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        if !self.scope.can_read(&saved.namespace) {
+            return Ok(Vec::new());
+        }
+        self.duplicates(
+            &saved.namespace,
+            &saved.title,
+            DEFAULT_DUPLICATE_LIMIT,
+            Some(&saved.uuid),
+        )
     }
 
     // --- search ---

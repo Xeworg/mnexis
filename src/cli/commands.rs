@@ -9,7 +9,9 @@ use std::path::PathBuf;
 
 use serde_json::json;
 
-use crate::application::{ListFilter, SaveRequest, SupersedeRequest, UpdateRequest};
+use crate::application::{
+    ListFilter, SaveRequest, SupersedeRequest, UpdateRequest, duplicates_payload,
+};
 use crate::cli::output::CommandOutcome;
 use crate::cli::profile::Profile;
 use crate::diagnostics::doctor::purge_eligible_count;
@@ -181,19 +183,37 @@ pub fn save(
         title,
     )?;
     let mem = profile.service_mut().save(req)?;
+    // What the namespace already holds travels with the save that CREATED
+    // the record: that is the moment the agent would duplicate it. The
+    // payload borrows the memory, so it is built before the fields move
+    // into the envelope.
+    let candidates = profile.service_ref().duplicates_of(&mem)?;
+    let (duplicates, proposal) = duplicates_payload(&mem, &candidates);
     let uuid_out = mem.uuid.clone();
     let row_id = mem.id.unwrap_or(0);
-    let text = if mem.revision > 1 {
+    let revision = mem.revision;
+    let mut text = if revision > 1 {
         // The key was already recorded: the fact was updated, not duplicated.
         format!(
-            "updated {uuid_out} (revision {}, topic key `{}`)",
-            mem.revision, mem.topic_key
+            "updated {uuid_out} (revision {revision}, topic key `{}`)",
+            mem.topic_key
         )
     } else {
         format!("saved {uuid_out} (row {row_id})")
     };
+    if !proposal.is_empty() {
+        text.push('\n');
+        text.push_str(&proposal);
+    }
     Ok(CommandOutcome::new(
-        json!({ "uuid": uuid_out, "row_id": row_id, "title": mem.title, "topic_key": mem.topic_key }),
+        json!({
+            "uuid": uuid_out,
+            "row_id": row_id,
+            "title": mem.title,
+            "topic_key": mem.topic_key,
+            "revision": revision,
+            "duplicates": duplicates,
+        }),
         text,
     ))
 }

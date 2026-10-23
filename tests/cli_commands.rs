@@ -222,6 +222,192 @@ fn save_generates_uuid_v4() {
     assert!(parts[2].starts_with('4'), "uuid: {uuid}");
 }
 
+// --- save carries what the namespace already holds (near-duplicate S3, S4) ---
+
+/// Save a titled memory and return its JSON envelope.
+fn save_titled(profile: &Profile, title: &str, content: &str) -> serde_json::Value {
+    let out = profile.run_silent(&[
+        "save",
+        "--type",
+        "fact",
+        "--title",
+        title,
+        "--namespace",
+        "proyecto-a",
+        content,
+    ]);
+    stdout_json(&out.unwrap_status("save"))
+}
+
+/// Run a command in text mode: the human rendering, not the envelope.
+fn run_text(profile: &Profile, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_mnexis"))
+        .arg("--data-dir")
+        .arg(&profile.data_dir)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn mnexis binary")
+}
+
+/// A namespace with enough titles for a word to be evidence (a word used by
+/// more than half of them is not), one of which a new title looks like.
+fn namespace_with_history(profile: &Profile) -> serde_json::Value {
+    let existing = save_titled(profile, "puerto del servicio", "el servicio usa 8081");
+    save_titled(profile, "timeout de conexion", "treinta segundos");
+    save_titled(profile, "reintentos de envio", "tres reintentos");
+    existing
+}
+
+#[test]
+fn a_save_carries_the_records_its_title_looks_like() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    let existing = namespace_with_history(&p);
+
+    let json = save_titled(&p, "puerto de pagos", "el puerto de pagos es 9090");
+
+    // The save that creates the record is the moment to say what the
+    // namespace already holds.
+    assert_eq!(
+        json["revision"], 1,
+        "the envelope carries the revision the extension reads: {json}"
+    );
+    let candidates = json["duplicates"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the envelope carries the shortlist: {json}"));
+    assert_eq!(candidates.len(), 1, "one record looks like it: {json}");
+    let candidate = &candidates[0];
+    assert_eq!(candidate["uuid"], existing["uuid"]);
+    assert_eq!(candidate["title"], "puerto del servicio");
+    assert_eq!(candidate["topic_key"], "puerto-del-servicio");
+    assert!(
+        candidate["score"].as_f64().unwrap_or(0.0) > 0.0,
+        "the proposal carries its score: {json}"
+    );
+    let shared = candidate["shared"]
+        .as_array()
+        .expect("the proposal carries the words it shares");
+    assert!(
+        shared.contains(&serde_json::json!("puerto")),
+        "the evidence names the shared word: {json}"
+    );
+
+    // The agent adjudicates with the relation that already exists, and the
+    // candidate is the older record.
+    let link = candidate["link"].as_str().expect("the link command");
+    assert_eq!(
+        link,
+        format!(
+            "mnexis supersede --older {} --newer {} --reason \"same fact, different title\"",
+            existing["uuid"].as_str().expect("uuid"),
+            json["uuid"].as_str().expect("uuid")
+        ),
+    );
+}
+
+#[test]
+fn a_title_with_nothing_in_common_carries_no_proposal() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    namespace_with_history(&p);
+
+    let json = save_titled(&p, "facturacion mensual", "la factura sale el dia uno");
+
+    let candidates = json["duplicates"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the envelope carries the shortlist: {json}"));
+    assert!(candidates.is_empty(), "no proposal: {json}");
+}
+
+#[test]
+fn a_save_that_updates_the_key_carries_no_proposal() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    namespace_with_history(&p);
+
+    let first = save_titled(&p, "puerto de pagos", "el puerto de pagos es 9090");
+    assert_eq!(first["revision"], 1, "the first save creates: {first}");
+
+    // The key was already recorded: the fact is one record, so there is
+    // nothing to propose.
+    let second = save_titled(&p, "puerto de pagos", "el puerto de pagos es 9091");
+    assert_eq!(second["uuid"], first["uuid"], "one fact, one record");
+    assert_eq!(second["revision"], 2, "the update bumps the revision");
+    let candidates = second["duplicates"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the envelope carries the shortlist: {second}"));
+    assert!(candidates.is_empty(), "no proposal on an update: {second}");
+}
+
+#[test]
+fn a_save_never_proposes_itself() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    namespace_with_history(&p);
+
+    let json = save_titled(&p, "puerto de pagos", "el puerto de pagos es 9090");
+    let saved_uuid = json["uuid"].as_str().expect("uuid");
+    let candidates = json["duplicates"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the envelope carries the shortlist: {json}"));
+    assert!(
+        !candidates.is_empty(),
+        "the shortlist is there, so the absence below means something: {json}"
+    );
+    assert!(
+        !candidates
+            .iter()
+            .any(|c| c["uuid"].as_str() == Some(saved_uuid)),
+        "the record just saved is not proposed to itself: {json}"
+    );
+}
+
+#[test]
+fn the_text_rendering_puts_the_proposal_after_the_save_line() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    let existing = namespace_with_history(&p);
+
+    let out = run_text(
+        &p,
+        &[
+            "save",
+            "--type",
+            "fact",
+            "--title",
+            "puerto de pagos",
+            "--namespace",
+            "proyecto-a",
+            "el puerto de pagos es 9090",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "save failed: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let save_line = text.find("saved ").expect("the save line: {text}");
+    let proposal = text
+        .find("these records of the namespace look like this title:")
+        .unwrap_or_else(|| panic!("the proposal follows the save line: {text:?}"));
+    assert!(
+        save_line < proposal,
+        "the proposal comes after the save line: {text:?}"
+    );
+    assert!(
+        text.contains("  - puerto del servicio [puerto-del-servicio] score "),
+        "the proposal carries the title, the key and the score: {text:?}"
+    );
+    assert!(
+        text.contains("shared: puerto"),
+        "the proposal carries the evidence: {text:?}"
+    );
+    assert!(
+        text.contains(&format!(
+            "    if it is the same fact: mnexis supersede --older {}",
+            existing["uuid"].as_str().expect("uuid")
+        )),
+        "the proposal names the command: {text:?}"
+    );
+}
+
 #[test]
 fn list_shows_saved_memory_and_count() {
     let p = namespaced_profile(&["proyecto-a"]);
@@ -676,6 +862,30 @@ fn cross_project_reads_are_closed_without_allow_read_all() {
     let uuid = save(&p, "compartido entre proyectos", &["--namespace", "ns-b"]);
     let out = p.run_silent(&["show", &uuid]);
     assert_eq!(out.status.code(), Some(3));
+}
+
+#[test]
+fn a_titled_save_into_a_write_only_namespace_still_saves() {
+    let p = Profile::new().with_config(
+        "default_namespace = \"ns-a\"\nread_namespaces = [\"ns-a\"]\nwrite_namespaces = [\"ns-a\", \"ns-b\"]\nallow_global = false\nexistence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n",
+    );
+    // ns-b is writable and not readable: the proposal must never turn a save
+    // the scope allows into a read of a namespace it hides.
+    let out = p.run_silent(&[
+        "save",
+        "--namespace",
+        "ns-b",
+        "--title",
+        "puerto del servicio",
+        "el servicio usa 8081",
+    ]);
+    let json = stdout_json(&out.unwrap_status("save into a write-only namespace"));
+    assert_eq!(json["revision"], 1, "the save happens: {json}");
+    assert_eq!(
+        json["duplicates"],
+        serde_json::json!([]),
+        "a namespace the scope cannot read proposes nothing: {json}"
+    );
 }
 
 #[test]

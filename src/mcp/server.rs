@@ -13,7 +13,7 @@ use rmcp::{
 
 use crate::ApplicationService;
 use crate::MnexisError;
-use crate::application::ListFilter;
+use crate::application::{ListFilter, duplicates_payload};
 use crate::domain::idempotency::IdempotencyKey;
 use crate::domain::memory::MemoryLink;
 use crate::mcp::tools::{
@@ -188,11 +188,16 @@ impl McpServer {
         // the returned values so the JSON envelope matches what a
         // real client expects to see.
         let stored = svc.save(req)?;
+        // The save says what the namespace already holds: the record it may
+        // duplicate, at the moment it would create it.
+        let candidates = svc.duplicates_of(&stored)?;
+        let (duplicates, _) = duplicates_payload(&stored, &candidates);
         let returned_uuid = stored.uuid.clone();
         let returned_row_id = stored.id.unwrap_or(0);
         let json = serde_json::json!({
             "uuid": returned_uuid,
             "row_id": returned_row_id,
+            "duplicates": duplicates,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }

@@ -1423,3 +1423,96 @@ async fn the_list_carries_the_relations_between_the_memories()
     client.cancel().await?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// memory_save carries the records the title looks like
+// (near-duplicate-titles S3)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn memory_save_carries_the_records_the_title_looks_like()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // A namespace with enough titles for a word to be evidence (a word used
+    // by more than half of them is not), one of which a new title looks
+    // like.
+    let existing = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "el servicio usa 8081", "title": "puerto del servicio" }),
+    )
+    .await?;
+    let existing: serde_json::Value = serde_json::from_str(&existing)?;
+    let existing_uuid = existing["uuid"].as_str().expect("uuid").to_string();
+    for (content, title) in [
+        ("treinta segundos", "timeout de conexion"),
+        ("tres reintentos", "reintentos de envio"),
+    ] {
+        call_tool_text(
+            &client,
+            "memory_save",
+            serde_json::json!({ "content": content, "title": title }),
+        )
+        .await?;
+    }
+
+    let saved = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "el puerto de pagos es 9090", "title": "puerto de pagos" }),
+    )
+    .await?;
+    let saved: serde_json::Value = serde_json::from_str(&saved)?;
+    let saved_uuid = saved["uuid"].as_str().expect("uuid").to_string();
+
+    // The envelope keeps what it always carried, and adds the shortlist.
+    assert!(saved.get("row_id").is_some(), "row_id stays: {saved}");
+    let candidates = saved["duplicates"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the envelope carries the shortlist: {saved}"));
+    assert_eq!(candidates.len(), 1, "one record looks like it: {saved}");
+    assert_eq!(candidates[0]["uuid"], existing_uuid.as_str());
+    assert!(
+        candidates[0]["score"].as_f64().unwrap_or(0.0) > 0.0,
+        "the proposal carries its score: {saved}"
+    );
+    let link = candidates[0]["link"]
+        .as_str()
+        .expect("the proposal names the command");
+    assert!(
+        link.contains(&existing_uuid) && link.contains(&saved_uuid),
+        "the command links the candidate to the saved record: {link}"
+    );
+    assert_ne!(
+        candidates[0]["uuid"].as_str(),
+        Some(saved_uuid.as_str()),
+        "the record just saved is not proposed to itself: {saved}"
+    );
+
+    // A title with nothing in common proposes nothing.
+    let unrelated = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "la factura sale el dia uno", "title": "facturacion mensual" }),
+    )
+    .await?;
+    let unrelated: serde_json::Value = serde_json::from_str(&unrelated)?;
+    assert_eq!(
+        unrelated["duplicates"],
+        serde_json::json!([]),
+        "no proposal: {unrelated}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}

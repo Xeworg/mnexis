@@ -284,7 +284,9 @@ mod tests {
         let corpus = namespace();
         let candidates = rank_duplicates("dsn de postgres", &corpus, 5);
         assert!(
-            !candidates.iter().any(|c| c.title == "url de la base de datos"),
+            !candidates
+                .iter()
+                .any(|c| c.title == "url de la base de datos"),
             "a ubiquitous word is not evidence: {:?}",
             candidates.iter().map(|c| &c.title).collect::<Vec<_>>()
         );

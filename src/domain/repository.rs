@@ -3,8 +3,8 @@
 //! The `storage/` adapter (T16) implements this trait over SQLite. The
 //! domain layer never touches `rusqlite` or the database directly.
 
-use crate::domain::error::MnexisError;
 use crate::domain::duplicates::TitleRecord;
+use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyRecord;
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryTag};
 use crate::domain::query::MatchMode;
@@ -181,10 +181,7 @@ pub trait MemoryRepository {
     ///
     /// The titles are what the ranking compares, so this read must not carry
     /// the contents: the whole point of the shortlist is to be cheap.
-    fn list_titles_in(
-        &self,
-        namespaces: &NamespaceScope,
-    ) -> Result<Vec<TitleRecord>, MnexisError>;
+    fn list_titles_in(&self, namespaces: &NamespaceScope) -> Result<Vec<TitleRecord>, MnexisError>;
 
     /// Snapshot all memories in the given namespaces, optionally including
     /// soft-deleted ones. Used by `MemoryService::export`; the result is

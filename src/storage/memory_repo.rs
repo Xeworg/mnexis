@@ -1161,10 +1161,7 @@ impl MemoryRepository for SqliteMemoryRepository {
         }
     }
 
-    fn list_titles_in(
-        &self,
-        namespaces: &NamespaceScope,
-    ) -> Result<Vec<TitleRecord>, MnexisError> {
+    fn list_titles_in(&self, namespaces: &NamespaceScope) -> Result<Vec<TitleRecord>, MnexisError> {
         let Some((filter, param_refs)) = filter_sql(namespaces, None, false) else {
             return Ok(Vec::new());
         };
