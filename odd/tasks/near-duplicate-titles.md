@@ -129,3 +129,41 @@ already carries both).
   to link is the one that already exists — `supersedes` — with the reason
   that says why. A second kind of relation would need a rebuild of
   `memory_links` (its CHECK allows only `supersedes`) for a word.
+- **L7** (2026-10-23) — What the implementation settled:
+  - the ranking lives in the domain (`src/domain/duplicates.rs`), pure and
+    tested; the corpus is the namespace's own titles, and a word more than
+    half of them use is not evidence (the rule that keeps the noise out);
+  - the read the ranking needs carries only what it compares (uuid, title,
+    key, state): the contents are not read, because the shortlist has to
+    be cheap enough to travel with every save;
+  - a shortlist travels only with a save that **created** a record: a save
+    that updated the record already holding the key leaves one fact in one
+    record, and there is nothing left to link;
+  - the direction of the link: the candidate is the **older** record (it
+    existed before) and the record just saved is the newer one, so the
+    fact ends up in one record with both revisions kept;
+  - the CLI envelope gained the `revision` it was missing: the pi
+    extension already read it to tell "updated" from "saved", it never
+    arrived, so the branch never fired.
+- **L8** (2026-10-23) — A gate the implementation needed and the
+  specification did not have: a namespace the caller may **write but not
+  read** stays closed. The proposal is a courtesy of the save, and it must
+  never turn a save the caller was allowed to make into a read of a
+  namespace its scope hides, nor leak the titles it holds. The
+  differential check found it: a titled save into a write-only namespace
+  used to fail with `NOT_FOUND`.
+- **L9** (2026-10-23) — The house gates, for the record: `cargo fmt
+  --all -- --check` clean, `cargo clippy --all-targets` reports (the
+  repository carries a warning baseline and does not gate on `-D
+  warnings`), `cargo test --locked` green (21 suites), and the extension's
+  own node suite green (52 tests). The two new behaviours were checked
+  RED first: without the implementation, the test that pins the save
+  message and the test that pins the new tool both fail; the test that
+  pins the *unchanged* common path stays green in both states, which is
+  the point of it.
+- **L10** (2026-10-23) — The delivery slices of the branch, for the
+  review: 0438ed6 (the ranker), c02ac4b (the read and the service), 
+  88772b0 (the save carries the shortlist), 4648fd6 (the command and the
+  tool), da18b4f (the skill, the extension and the docs). Each one is a
+  work unit of about 400 authored lines, with the tests and the docs
+  alongside the behaviour.

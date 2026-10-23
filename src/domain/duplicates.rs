@@ -72,6 +72,12 @@ fn terms(title: &str) -> Vec<String> {
 /// two titles that both say `de` have nothing in common.
 const EVIDENCE_MAX_SHARE: f64 = 0.5;
 
+/// How many titles the corpus needs before it can say that a word is
+/// ubiquitous. A corpus of one title cannot: with a single record there
+/// is nothing to compare against, and a namespace with a single record is
+/// exactly the case where the duplicate is most likely.
+const EVIDENCE_MIN_CORPUS: usize = 2;
+
 /// BM25's saturation: how fast a repeated word stops counting.
 const K1: f64 = 1.2;
 /// BM25's length normalization: how much a long title is penalized.
@@ -120,8 +126,12 @@ pub fn rank_duplicates(
         }
     }
 
-    // A word used by more than half of the titles is not evidence.
+    // A word used by more than half of the titles is not evidence — when
+    // the corpus is big enough to know what "more than half" means.
     let evidence = |term: &str| -> bool {
+        if n < EVIDENCE_MIN_CORPUS {
+            return true;
+        }
         match frequency.get(term) {
             Some(count) => (*count as f64) / (n as f64) <= EVIDENCE_MAX_SHARE,
             None => false,
@@ -302,6 +312,39 @@ mod tests {
             candidates.is_empty(),
             "a ubiquitous word is not evidence: {:?}",
             candidates.iter().map(|c| &c.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_namespace_with_one_record_still_proposes() {
+        // The corpus of one title cannot say that a word is ubiquitous, and
+        // a namespace with a single record is exactly where the duplicate
+        // is most likely.
+        let corpus = vec![record("uuid-01", "puerto del servicio")];
+        let candidates = rank_duplicates("puerto de pagos", &corpus, 5);
+        assert_eq!(
+            candidates.len(),
+            1,
+            "the record is proposed: {candidates:?}"
+        );
+        assert_eq!(candidates[0].uuid, "uuid-01");
+        assert!(candidates[0].shared.contains(&"puerto".to_string()));
+    }
+
+    #[test]
+    fn a_namespace_with_two_records_proposes_the_specific_one() {
+        // With two titles the corpus cannot tell that `de` is a word
+        // everybody uses: it appears in one of the two, which is exactly
+        // half. So the other record comes along too. The shortlist is the
+        // agent's to judge, and the true one is in it.
+        let corpus = vec![
+            record("uuid-01", "puerto del servicio"),
+            record("uuid-02", "timeout de conexion"),
+        ];
+        let candidates = rank_duplicates("puerto de pagos", &corpus, 5);
+        assert!(
+            candidates.iter().any(|c| c.uuid == "uuid-01"),
+            "the record the title looks like is proposed: {candidates:?}"
         );
     }
 
