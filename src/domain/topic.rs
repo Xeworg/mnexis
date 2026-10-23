@@ -12,6 +12,22 @@
 //!
 //! The answer is a **notice**, never a refusal: the save already happened,
 //! and a false positive costs a confusing sentence, not a lost fact.
+//!
+//! ## Why a hand-written stopword list
+//!
+//! The alternative is to weight the words by how rare they are in the
+//! namespace (the inverse document frequency), which needs no list and
+//! tunes itself to whatever the project writes about. It was not chosen
+//! because every term would cost a document-frequency query over the
+//! index, and because a fixed list keeps the measure **predictable**: the
+//! same two contents always give the same answer, in any language the
+//! list covers.
+//!
+//! The list is therefore small on purpose: the function words of the two
+//! languages a team writes memories in (Spanish and English). It is not a
+//! general stopword list, and it must not grow to fit a test: a word that
+//! carries a topic (`puerto`, `port`, `deploy`) belongs in the terms, not
+//! here.
 
 use std::collections::BTreeSet;
 
@@ -25,8 +41,6 @@ const STOPWORDS: &[&str] = &[
     "donde", "hay", "ser", "está", "están", "the", "and", "for", "with", "that", "this", "these",
     "those", "from", "into", "onto", "but", "not", "was", "were", "are", "its", "it", "in", "on",
     "at", "to", "of", "as", "by", "is", "be", "or", "if", "so", "than", "then",
-    // The words the fixture and the docs use to point at a file.
-    "archivo", "archivos", "file", "files", "sección", "seccion", "valor", "valores",
 ];
 
 /// The significant words of a content: the alphanumeric runs, lowercased,

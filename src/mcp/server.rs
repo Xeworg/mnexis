@@ -17,8 +17,8 @@ use crate::application::ListFilter;
 use crate::domain::idempotency::IdempotencyKey;
 use crate::mcp::tools::{
     DeleteArgs, GetArgs, HistoryArgs, ListArgs, McpError, RestoreArgs, SaveArgs, SavePromptArgs,
-    SearchArgs, SearchPromptsArgs, SessionEndArgs, SessionStartArgs, SupersedeArgs, UpdateArgs,
-    clamp_limit, parse_state, parse_tags,
+    SearchArgs, SearchPromptsArgs, SessionEndArgs, SessionStartArgs, SuggestTopicKeyArgs,
+    SupersedeArgs, UpdateArgs, clamp_limit, parse_state, parse_tags,
 };
 use crate::mcp::transport::stdio;
 use crate::storage::memory_repo::SqliteMemoryRepository;
@@ -265,6 +265,23 @@ impl McpServer {
             &now,
         )?;
         Ok(serde_json::to_string_pretty(&prompt).unwrap_or_default())
+    }
+
+    /// The topic key this content is already recorded under.
+    fn do_suggest_topic_key(&self, args: SuggestTopicKeyArgs) -> Result<String, McpError> {
+        let limit = args.limit.clamp(1, 20);
+        let svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let suggestions =
+            svc.suggest_topic(&args.content, args.namespace.as_deref(), limit, None)?;
+        drop(svc);
+        let json = serde_json::json!({
+            "count": suggestions.len(),
+            "items": suggestions,
+        });
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
 
     /// Search what the user said.
@@ -546,6 +563,17 @@ impl McpServer {
         Parameters(args): Parameters<SearchPromptsArgs>,
     ) -> Result<String, McpError> {
         self.do_search_prompts(args)
+    }
+
+    #[tool(
+        name = "memory_suggest_topic_key",
+        description = "Call this BEFORE you save a fact you are not sure about: it answers which topic key this content is already recorded under in this project, so you can update that record instead of writing a second one about the same thing."
+    )]
+    fn memory_suggest_topic_key(
+        &self,
+        Parameters(args): Parameters<SuggestTopicKeyArgs>,
+    ) -> Result<String, McpError> {
+        self.do_suggest_topic_key(args)
     }
 
     #[tool(
