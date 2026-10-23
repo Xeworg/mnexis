@@ -13,6 +13,7 @@ use crate::domain::query::MatchMode;
 use crate::domain::repository::MemoryRepository;
 use crate::domain::scope::{AccessScope, NamespaceScope, Operation};
 use crate::domain::session::{Session, UserPrompt};
+use crate::domain::topic::TopicSuggestion;
 use crate::retrieval::SearchHit;
 
 pub struct ServiceConfig {
@@ -839,6 +840,75 @@ impl<R: MemoryRepository> MemoryService<R> {
             .unwrap_or_else(|| self.scope.default_namespace.clone());
         validate_namespace(&ns)?;
         Ok(ns)
+    }
+
+    // --- the relations between the memories a caller is reading ---
+
+    /// Which of these memories replaced which.
+    ///
+    /// A memory that was superseded says so where the agent reads it, so
+    /// the agent does not have to open every record to find out which one
+    /// is current.
+    pub fn relations_between(&self, uuids: &[String]) -> Result<Vec<MemoryLink>, MnexisError> {
+        self.repo.links_between(uuids)
+    }
+
+    // --- the topic the namespace already holds ---
+
+    /// The records that already hold this content's topic.
+    ///
+    /// The engine cannot ask the agent whether two memories are the same
+    /// fact; it can notice that two contents are about the same thing and
+    /// say so, with the topic key the namespace already uses. The answer
+    /// is a notice: the save already happened, and a wrong guess costs a
+    /// confusing sentence, never a lost fact.
+    pub fn suggest_topic(
+        &self,
+        content: &str,
+        namespace: Option<&str>,
+        limit: usize,
+        exclude: Option<&str>,
+    ) -> Result<Vec<TopicSuggestion>, MnexisError> {
+        let ns = match namespace {
+            Some(ns) => {
+                self.scope.authorize_read(ns)?;
+                ns.to_string()
+            }
+            None => self.scope.default_namespace.clone(),
+        };
+        // The candidates come from the index: the words of the content,
+        // counted the way a search counts them.
+        let terms = crate::domain::topic::significant_terms(content);
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let query = terms.iter().cloned().collect::<Vec<_>>().join(" ");
+        let hits = self
+            .repo
+            .search(&query, Some(&ns), limit.max(1) * 4, MatchMode::Any)?;
+        let mut suggestions = Vec::new();
+        for hit in hits {
+            if Some(hit.uuid.as_str()) == exclude {
+                continue;
+            }
+            let Some(memory) = self.repo.get_by_uuid(&hit.uuid)? else {
+                continue;
+            };
+            if !crate::domain::topic::is_same_topic(content, &memory.content) {
+                continue;
+            }
+            suggestions.push(TopicSuggestion {
+                uuid: memory.uuid.clone(),
+                topic_key: memory.topic_key.clone(),
+                state: memory.state.as_str().to_string(),
+                preview: crate::domain::topic::preview(&memory.content, 160),
+                overlap: crate::domain::topic::overlap(content, &memory.content),
+            });
+            if suggestions.len() >= limit.max(1) {
+                break;
+            }
+        }
+        Ok(suggestions)
     }
 
     // --- search ---

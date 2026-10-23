@@ -141,6 +141,13 @@ pub trait MemoryRepository {
         now: &str,
     ) -> Result<(), MnexisError>;
 
+    /// The links between the given memories, in one query.
+    ///
+    /// A list of memories answers "which of these replaced which", so the
+    /// agent does not have to read every record to find out which one is
+    /// current.
+    fn links_between(&self, uuids: &[String]) -> Result<Vec<MemoryLink>, MnexisError>;
+
     /// Get the tags attached to a memory.
     fn tags_for(&self, uuid: &str) -> Result<Vec<MemoryTag>, MnexisError>;
 

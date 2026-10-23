@@ -532,6 +532,39 @@ impl MemoryRepository for SqliteMemoryRepository {
             .map_err(sql_to_domain)
     }
 
+    fn links_between(&self, uuids: &[String]) -> Result<Vec<MemoryLink>, MnexisError> {
+        if uuids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = vec!["?"; uuids.len()].join(", ");
+        let sql = format!(
+            "SELECT id, older_uuid, newer_uuid, link_type, reason, created_at \
+             FROM memory_links WHERE older_uuid IN ({placeholders}) \
+                OR newer_uuid IN ({placeholders}) ORDER BY id"
+        );
+        let mut stmt = self.conn.prepare(&sql).map_err(sql_to_domain)?;
+        let mut params: Vec<&dyn ToSql> = Vec::new();
+        for uuid in uuids {
+            params.push(uuid);
+        }
+        for uuid in uuids {
+            params.push(uuid);
+        }
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok(MemoryLink {
+                    id: row.get(0)?,
+                    older_uuid: row.get(1)?,
+                    newer_uuid: row.get(2)?,
+                    link_type: row.get(3)?,
+                    reason: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+            .map_err(sql_to_domain)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(sql_to_domain)
+    }
+
     fn links_for(&self, uuid: &str) -> Result<Vec<MemoryLink>, MnexisError> {
         let mut stmt = self
             .conn

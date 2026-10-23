@@ -235,6 +235,18 @@ pub enum Command {
         limit: usize,
     },
 
+    /// The topic key this content is already recorded under
+    SuggestTopicKey {
+        /// The content you are about to record (positional)
+        content: String,
+        /// Namespace (default: the profile's default_namespace)
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Max suggestions (default 5, capped at 20)
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+    },
+
     /// Where this workspace may write, and what is already there
     Status,
 
@@ -661,6 +673,14 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 *limit,
                 namespace.clone(),
             )
+        }
+        Command::SuggestTopicKey {
+            content,
+            namespace,
+            limit,
+        } => {
+            let mut profile = Profile::open(data_dir)?;
+            commands::suggest_topic_key(&mut profile, content.clone(), namespace.clone(), *limit)
         }
         Command::Status => status_cmd::status(data_dir),
         Command::Show { uuid, revision } => {
