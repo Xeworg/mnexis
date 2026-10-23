@@ -68,3 +68,34 @@ question, and it gets measured.
   5 saves in the write session). T4 measures it before anyone adopts it.
 - **L3** (2026-10-23) — Branch `feat/agent-recall-ergonomics`, base `main`
   at the merge of PR #22 (`agent-query-contract`).
+- **L4** (2026-10-23) — The measurement of the protocol block (T4) is
+  **against the same container, the same model and the same prompts**, with
+  the only difference being a 311-byte block appended to the system prompt
+  (`--append-system-prompt`), a fresh memory store per arm:
+
+  | | without the block | with the block |
+  | --- | --- | --- |
+  | write session: wall / tool calls | 19 638 ms / 13 | 19 028 ms / 13 |
+  | write session: memories saved | 5 (one per fact) | 5 (one per fact) |
+  | write session: tokens in / out | 3 270 / 2 009 | 3 412 / 2 059 |
+  | recall session: wall / tool calls | 8 445 ms / 7 | 7 375 ms / 7 |
+  | recall session: tokens in / out | 3 031 / 848 | 2 512 / 726 |
+  | facts recovered | 5 / 5 | 5 / 5 |
+
+  **The block buys nothing.** The agent already recalls first, already saves
+  one fact per memory and already saves the five facts the task asked for —
+  without being told, because the tool descriptions and the skill already
+  say it. An always-on block would cost 311 bytes in every session, of
+  every project, for no measured gain. So mnexis does **not** adopt the
+  injected protocol: the skill stays a skill, and it is read when it is
+  needed.
+- **L5** (2026-10-23) — The acceptance of the list projection (S1), with
+  five memories of ~3 KB each, in the same container:
+
+  | | bytes |
+  | --- | --- |
+  | `mnexis list --json` (the default) | **2 369** |
+  | `mnexis list --json --full` | 16 224 |
+
+  Six times less context for the same question ("what is there?"), and the
+  whole text is one `mnexis show` away.
