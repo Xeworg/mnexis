@@ -48,11 +48,11 @@ pub struct SaveArgs {
     /// Assertion basis (default: "user_stated")
     #[serde(default)]
     pub assertion_basis: Option<String>,
-    /// Record this as a new topic, even if the engine holds one like it
-    /// (default: false). Without it, a content the namespace already holds
-    /// a topic for is refused, naming the key to use.
+    /// The short, stable label of the fact (default: empty). The topic key
+    /// derives from it when you do not give one, and a save with a key the
+    /// namespace already uses updates that record.
     #[serde(default)]
-    pub new_topic: Option<bool>,
+    pub title: Option<String>,
     /// Topic key — unique per namespace when non-empty (default: "").
     /// Allowed characters: lowercase letters, digits, '.', '-' and '/'
     #[serde(default)]
@@ -138,14 +138,11 @@ pub struct SavePromptArgs {
 /// Arguments for `memory_suggest_topic_key`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SuggestTopicKeyArgs {
-    /// The content you are about to record.
-    pub content: String,
+    /// The title of the fact you are about to record.
+    pub title: String,
     /// Namespace (default: the profile's default namespace).
     #[serde(default)]
     pub namespace: Option<String>,
-    /// Max suggestions (default 5, clamped to 20).
-    #[serde(default = "default_suggestion_limit")]
-    pub limit: usize,
 }
 
 /// Arguments for `memory_search_prompts`.
@@ -166,10 +163,6 @@ pub struct SearchPromptsArgs {
 
 pub(crate) fn default_limit() -> usize {
     20
-}
-
-pub(crate) fn default_suggestion_limit() -> usize {
-    5
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

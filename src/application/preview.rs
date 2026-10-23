@@ -81,6 +81,7 @@ mod tests {
         Memory {
             id: Some(1),
             uuid: "uuid-1".to_string(),
+            title: String::new(),
             topic_key: "topic-1".to_string(),
             namespace: "ns".to_string(),
             memory_type: "fact".to_string(),

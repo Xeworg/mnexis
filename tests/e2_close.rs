@@ -42,7 +42,7 @@ fn fresh_service(label: &str) -> (MemoryService<SqliteMemoryRepository>, tempfil
 fn save_req<'a>(uuid: &'a str, content: &'a str) -> mnexis_core::application::SaveRequest {
     mnexis_core::application::SaveRequest {
         uuid: uuid.into(),
-        new_topic: false,
+        title: String::new(),
         topic_key: format!("topic.{uuid}"),
         namespace: "default".into(),
         memory_type: "fact".into(),

@@ -65,6 +65,10 @@ pub struct Memory {
     /// `None` on insert (assigned by the DB); `Some` after load.
     pub id: Option<i64>,
     pub uuid: String,
+    /// The short, stable label of the fact. The topic key derives from it,
+    /// so a fact keeps one record when the value inside the content changes.
+    #[serde(default)]
+    pub title: String,
     pub topic_key: String,
     pub namespace: String,
     pub memory_type: String,
@@ -101,6 +105,7 @@ impl Memory {
         Self {
             id: None,
             uuid: uuid.into(),
+            title: String::new(),
             topic_key: topic_key.into(),
             namespace: namespace.into(),
             memory_type: memory_type.into(),

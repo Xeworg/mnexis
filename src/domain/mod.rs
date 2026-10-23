@@ -11,7 +11,7 @@ pub mod query;
 pub mod repository;
 pub mod scope;
 pub mod session;
-pub mod topic;
+pub mod title;
 pub mod workspace;
 
 pub use error::MnexisError;
@@ -21,4 +21,5 @@ pub use query::MatchMode;
 pub use repository::MemoryRepository;
 pub use scope::{AccessScope, ExistenceDisclosure, Operation};
 pub use session::{Session, UserPrompt};
+pub use title::{MAX_TITLE_BYTES, key_from_title};
 pub use workspace::{canonical_workspace_key, normalize_remote_url};

@@ -308,6 +308,7 @@ mod tests {
         Memory {
             id: Some(1),
             uuid: uuid.into(),
+            title: String::new(),
             topic_key: String::new(),
             namespace: "default".into(),
             memory_type: kind.into(),

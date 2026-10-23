@@ -442,11 +442,21 @@ export default function mnexisMemoryExtension(pi) {
 			"Store a durable memory about this project so future sessions can recall it. " +
 			"Use it after a decision, a discovery, a milestone or a stated preference — " +
 			"content must make sense months later without the surrounding conversation. " +
-			"The namespace is resolved from the current workspace automatically.",
+			"The namespace is resolved from the current workspace automatically. " +
+			"Give it a title: the title is what the fact IS, the content is what it says " +
+			"now, and the title decides which record the memory lands on. The same title " +
+			"always means the same record, so a fact that changed updates its record " +
+			"instead of adding a second one.",
 		parameters: {
 			type: "object",
 			properties: {
 				content: { type: "string", description: "One self-contained sentence." },
+				title: {
+					type: "string",
+					description:
+						"Short, stable label of the fact (what it IS, not what it says now). " +
+						"The same title always lands on the same record.",
+				},
 				tags: { type: "string", description: "Comma-separated tags." },
 				topic_key: { type: "string", description: "Stable key grouping facts about one topic." },
 				idempotency_key: { type: "string", description: "Makes retries safe." },
@@ -463,6 +473,7 @@ export default function mnexisMemoryExtension(pi) {
 				{
 					namespace: workspace.namespace,
 					content: params.content,
+					title: params.title,
 					tags: params.tags,
 					topicKey: params.topic_key,
 					idempotencyKey: params.idempotency_key,
@@ -475,19 +486,23 @@ export default function mnexisMemoryExtension(pi) {
 					{ namespace: workspace.namespace },
 				);
 			}
-			// The engine may know that this topic is already recorded
-			// under another key: the model has to read that, it is in the
-			// details only.
-			const suggestion = result.data && result.data.topic_suggestion;
-			const notice = suggestion
-				? ` This topic is already recorded under the topic key \`${suggestion.topic_key}\` (${suggestion.uuid}): save it again with that key to update that record instead of adding a second one.`
-				: "";
+			// The same title lands on the same record, so a save can update
+			// a fact instead of adding a second one. The model has to read
+			// that it happened.
+			const revision = result.data && result.data.revision;
+			const topicKey = result.data && result.data.topic_key;
+			const what =
+				typeof revision === "number" && revision > 1
+					? `Updated the memory in namespace '${workspace.namespace}' (revision ${revision}, topic key \`${topicKey}\`).`
+					: `Saved a memory in namespace '${workspace.namespace}'.`;
 			return ok(
-				`Saved a memory in namespace '${workspace.namespace}'.${notice}`,
+				what,
 				{
 					namespace: workspace.namespace,
 					uuid: result.data && result.data.uuid ? result.data.uuid : null,
-					topic_suggestion: suggestion || null,
+					title: (result.data && result.data.title) || params.title || null,
+					topic_key: topicKey || null,
+					revision: revision || null,
 					output: result.stdout.trim(),
 					data: result.data,
 				},
@@ -558,36 +573,34 @@ export default function mnexisMemoryExtension(pi) {
 		label: "Suggest the topic key",
 		promptSnippet: "Ask which topic key a fact is already recorded under.",
 		description:
-			"Ask which topic key this content is already recorded under in this project. " +
-			"Use it before saving a fact you are not sure about: if the answer names a " +
-			"key, save with that key so the record is updated instead of adding a " +
-			"second one about the same thing.",
+			"Ask which topic key a title yields, and whether this project already records " +
+			"it. Use it before saving a fact you are not sure about: the same title always " +
+			"lands on the same record, so a fact that changed updates its record instead of " +
+			"adding a second one.",
 		parameters: {
 			type: "object",
 			properties: {
-				content: { type: "string", description: "The content you are about to record." },
-				limit: { type: "number", description: "Maximum number of suggestions (default: 5)." },
+				title: { type: "string", description: "The title of the fact you are about to record." },
 			},
-			required: ["content"],
+			required: ["title"],
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const result = await client.suggestTopicKey(
-				{ content: params.content, limit: params.limit },
-				ctx.cwd,
-			);
+			const result = await client.suggestTopicKey({ title: params.title }, ctx.cwd);
 			if (result.code !== 0) {
 				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
 					authorized: false,
 				});
 			}
-			const items = readItems(result.data);
-			const text = items.length
-				? items
-						.map((item, index) => `${index + 1}. ${JSON.stringify(item)}`)
-						.join("\n")
-				: "This content is not recorded yet.";
-			return ok(text, { count: items.length, suggestions: items });
+			const data = result.data || {};
+			const key = data.topic_key || "";
+			const held = data.recorded_by;
+			const text = !key
+				? "This title yields no topic key."
+				: held
+					? `The key \`${key}\` is already recorded by ${held}: saving with this title updates that record.`
+					: `The key \`${key}\` is free.`;
+			return ok(text, { title: params.title, topic_key: key, recorded_by: held || null });
 		},
 	});
 
