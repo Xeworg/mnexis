@@ -70,8 +70,10 @@ if (args[0] === "project" && args[1] === "list") {
 			namespace: process.env.MNEXIS_FAKE_MEMORY_NAMESPACE || workspace,
 		}),
 	);
-} else if (args[0] === "search" || args[0] === "list") {
+} else if (args[0] === "search" || args[0] === "list" || args[0] === "prompts") {
 	process.stdout.write(JSON.stringify({ count: 0, items: [] }));
+} else if (args[0] === "session" || args[0] === "end" || args[0] === "prompt") {
+	process.stdout.write(JSON.stringify({ id: args[3] || "s1", session_id: args[3] || "s1" }));
 } else {
 	process.stdout.write("{}");
 }
@@ -305,6 +307,85 @@ test("the engine's published key is the one the extension binds and looks up", a
 	);
 	delete process.env.MNEXIS_FAKE_PUBLISHED_KEY;
 	delete process.env.MNEXIS_FAKE_NO_BINDING;
+});
+
+test("the session tools reach the engine", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+
+	const start = tools.get("mnexis_session_start");
+	assert.ok(start, "mnexis_session_start is registered");
+	const started = await start.execute(
+		"s1",
+		{ session_id: "01JX", directory: "/work/project" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.notEqual(started.isError, true);
+	const startCall = calls(log).find((args) => args[0] === "session");
+	assert.ok(startCall, "the session was registered");
+	assert.ok(startCall.includes("01JX"), `the id reaches the engine: ${JSON.stringify(startCall)}`);
+
+	const end = tools.get("mnexis_session_end");
+	assert.ok(end, "mnexis_session_end is registered");
+	await end.execute(
+		"s2",
+		{ session_id: "01JX", summary: "what the session did" },
+		undefined,
+		undefined,
+		context(),
+	);
+	const endCall = calls(log).find((args) => args[0] === "end");
+	assert.ok(endCall, "the session was ended");
+	assert.ok(endCall.includes("what the session did"), "the summary reaches the engine");
+});
+
+test("the prompt tools reach the engine", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+
+	const save = tools.get("mnexis_save_prompt");
+	assert.ok(save, "mnexis_save_prompt is registered");
+	await save.execute(
+		"s3",
+		{ content: "el puerto es 8081", session_id: "01JX" },
+		undefined,
+		undefined,
+		context(),
+	);
+	const promptCall = calls(log).find((args) => args[0] === "prompt");
+	assert.ok(promptCall, "the prompt was stored");
+	assert.ok(promptCall.includes("el puerto es 8081"), "the content reaches the engine");
+
+	const search = tools.get("mnexis_search_prompts");
+	assert.ok(search, "mnexis_search_prompts is registered");
+	await search.execute("s4", { query: "puerto 8081" }, undefined, undefined, context());
+	const searchCall = calls(log).find((args) => args[0] === "prompts");
+	assert.ok(searchCall, "the prompts were searched");
+	assert.ok(searchCall.includes("--search"), "it is a search");
+});
+
+test("a session id is never invented", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const start = tools.get("mnexis_session_start");
+	const result = await start.execute(
+		"s5",
+		{},
+		undefined,
+		undefined,
+		{ ...context(), sessionManager: undefined },
+	);
+	assert.equal(result.isError, true, "without an id there is nothing to register");
+	assert.equal(
+		calls(log).find((args) => args[0] === "session"),
+		undefined,
+		"the engine is not called with a made-up id",
+	);
 });
 
 test("a supersede of another project's memory is refused", async () => {

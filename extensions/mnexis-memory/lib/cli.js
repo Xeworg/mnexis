@@ -140,6 +140,47 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
+		async sessionStart({ sessionId, namespace, directory }, cwd) {
+			const args = ["session", "--id", sessionId];
+			if (namespace) {
+				args.push("--namespace", namespace);
+			}
+			if (directory) {
+				args.push("--directory", directory);
+			}
+			return run(args, { json: true, cwd });
+		},
+
+		async sessionEnd({ sessionId, summary }, cwd) {
+			const args = ["end", "--id", sessionId];
+			if (summary) {
+				args.push("--summary", summary);
+			}
+			return run(args, { json: true, cwd });
+		},
+
+		async savePrompt({ content, sessionId, namespace }, cwd) {
+			const args = ["prompt", content];
+			if (sessionId) {
+				args.push("--session", sessionId);
+			}
+			if (namespace) {
+				args.push("--namespace", namespace);
+			}
+			return run(args, { json: true, cwd });
+		},
+
+		async searchPrompts({ query, matchMode, limit }, cwd) {
+			const args = ["prompts", "--search", query];
+			if (matchMode) {
+				args.push("--match", matchMode);
+			}
+			if (typeof limit === "number") {
+				args.push("--limit", String(limit));
+			}
+			return run(args, { json: true, cwd });
+		},
+
 		async show(uuid, cwd) {
 			return run(["show", uuid], { json: true, cwd });
 		},

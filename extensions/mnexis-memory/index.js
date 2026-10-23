@@ -136,6 +136,24 @@ export function needsProfileInit(configData) {
 	return configData.config_file_present === false;
 }
 
+/**
+ * The id of the session the extension runs in, when the host has one.
+ *
+ * The id belongs to the host: the agent never invents one, and the
+ * extension only passes it along.
+ */
+export function sessionIdOf(ctx) {
+	if (!ctx || !ctx.sessionManager) {
+		return null;
+	}
+	try {
+		const id = ctx.sessionManager.getSessionId();
+		return typeof id === "string" && id !== "" ? id : null;
+	} catch {
+		return null;
+	}
+}
+
 export default function mnexisMemoryExtension(pi) {
 	// One client and one resolution cache per extension instance (per session).
 	const client = createClient({
@@ -296,6 +314,68 @@ export default function mnexisMemoryExtension(pi) {
 		}
 		return { workspace, gate };
 	}
+
+	// The session the extension runs in: the engine knows its boundaries
+	// without the model having to remember them. Both hooks are best
+	// effort — a session that was never registered is not an error, it is
+	// a session the engine did not hear about.
+	pi.on("session_start", async (_event, ctx) => {
+		const id = sessionIdOf(ctx);
+		if (!id) {
+			return;
+		}
+		try {
+			await client.sessionStart({ sessionId: id, directory: ctx.cwd }, ctx.cwd);
+		} catch {
+			// The profile may not be initialised yet, or the namespace may
+			// not be allowed for writes. The session still works.
+		}
+	});
+
+	pi.on("session_shutdown", async (_event, ctx) => {
+		const id = sessionIdOf(ctx);
+		if (!id) {
+			return;
+		}
+		try {
+			await client.sessionEnd({ sessionId: id }, ctx.cwd);
+		} catch {
+			// Same as above: the end of a session is not worth an error.
+		}
+	});
+
+	// Where a compaction lands. The summary of the compacted context is
+	// what the session was doing; storing it means the next session can
+	// recover it from the memory instead of from a context that no longer
+	// exists. Only where the human already allowed writes.
+	pi.on("session_compact", async (event, ctx) => {
+		const summary = event?.compactionEntry?.summary;
+		if (typeof summary !== "string" || summary.trim() === "") {
+			return;
+		}
+		try {
+			const workspace = await resolveWorkspace(ctx.cwd);
+			if (!workspace.namespace) {
+				return;
+			}
+			const allowed = await getWriteNamespaces(ctx.cwd);
+			if (!allowed.includes(workspace.namespace)) {
+				return;
+			}
+			const id = sessionIdOf(ctx);
+			await client.save(
+				{
+					namespace: workspace.namespace,
+					content:
+						`Session ${id ?? "unknown"} was compacted. What was happening:\n\n${summary}`,
+					tags: ["compaction"],
+				},
+				ctx.cwd,
+			);
+		} catch {
+			// A compaction must not fail because the memory could not take it.
+		}
+	});
 
 	// The gate lives in this extension, so a model-issued call must not
 	// grant the permissions behind its back. The human's own commands are
@@ -490,6 +570,156 @@ export default function mnexisMemoryExtension(pi) {
 				return fail(describeFailure({ code: result.code, stderr: result.stderr }), { uuid: params.uuid });
 			}
 			return ok(result.stdout.trim() || JSON.stringify(result.data), { uuid: params.uuid, memory: result.data });
+		},
+	});
+
+	pi.registerTool({
+		name: "mnexis_session_start",
+		label: "Start the session",
+		promptSnippet: "Register the session you are running in.",
+		description:
+			"Register the session you are running in, so the engine knows its boundaries. Call it " +
+			"once, at the start of the session: the session id is yours (the one you were given), " +
+			"never invented. The engine never ends a session for you.",
+		parameters: {
+			type: "object",
+			properties: {
+				session_id: { type: "string", description: "The session id you were given." },
+				directory: { type: "string", description: "Where the session runs (informational)." },
+			},
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const sessionId = params.session_id ?? sessionIdOf(ctx);
+			if (!sessionId) {
+				return fail("This session has no id to register: pass `session_id`.", {
+					authorized: false,
+				});
+			}
+			const result = await client.sessionStart(
+				{ sessionId, directory: params.directory ?? ctx.cwd },
+				ctx.cwd,
+			);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+					session_id: sessionId,
+				});
+			}
+			return ok(`Registered the session ${sessionId}.`, {
+				session_id: sessionId,
+				session: result.data,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "mnexis_session_end",
+		label: "End the session",
+		promptSnippet: "End the session with a summary of what it did.",
+		description:
+			"End the session you are running in, with a short summary of what it did. The summary " +
+			"is what the next session reads first, so it must make sense with no surrounding chat.",
+		parameters: {
+			type: "object",
+			properties: {
+				session_id: { type: "string", description: "The session id you were given." },
+				summary: { type: "string", description: "What the session did, in a few sentences." },
+			},
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const sessionId = params.session_id ?? sessionIdOf(ctx);
+			if (!sessionId) {
+				return fail("This session has no id to end: pass `session_id`.", {
+					authorized: false,
+				});
+			}
+			const result = await client.sessionEnd(
+				{ sessionId, summary: params.summary },
+				ctx.cwd,
+			);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+					session_id: sessionId,
+				});
+			}
+			return ok(`Ended the session ${sessionId}.`, {
+				session_id: sessionId,
+				session: result.data,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "mnexis_save_prompt",
+		label: "Save what the user said",
+		promptSnippet: "Store what the user said, so it survives the session.",
+		description:
+			"Store what the user said, verbatim. Use it when the user states a constraint, a " +
+			"preference or a goal that has to survive the session: the conversation is not in the " +
+			"repository, and this is where it goes.",
+		parameters: {
+			type: "object",
+			properties: {
+				content: { type: "string", description: "What the user said, verbatim." },
+				session_id: { type: "string", description: "The session it belongs to." },
+			},
+			required: ["content"],
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const result = await client.savePrompt(
+				{ content: params.content, sessionId: params.session_id ?? sessionIdOf(ctx) },
+				ctx.cwd,
+			);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+					authorized: false,
+				});
+			}
+			return ok("Stored what the user said.", { prompt: result.data });
+		},
+	});
+
+	pi.registerTool({
+		name: "mnexis_search_prompts",
+		label: "Search what the user said",
+		promptSnippet: "Find what the user asked before, across sessions.",
+		description:
+			"Search what the user said before, across sessions. Use it when you need the request " +
+			"behind the work: the prompt is not in the files. Write the query the way you would " +
+			"say it: every word counts and a hyphen is part of a word.",
+		parameters: {
+			type: "object",
+			properties: {
+				query: { type: "string", description: "Search terms, in plain language." },
+				match_mode: {
+					type: "string",
+					enum: ["any", "all", "phrase"],
+					description:
+						"How the words are matched: any (default) counts every word, all requires " +
+						"every word, phrase keeps the query as one exact phrase.",
+				},
+				limit: { type: "number", description: "Maximum number of hits (default: 20)." },
+			},
+			required: ["query"],
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const result = await client.searchPrompts(
+				{ query: params.query, matchMode: params.match_mode, limit: params.limit },
+				ctx.cwd,
+			);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+					authorized: false,
+				});
+			}
+			const items = readItems(result.data);
+			const text = items.length
+				? items.map((item, index) => `${index + 1}. ${JSON.stringify(item)}`).join("\n")
+				: "No prompts stored yet.";
+			return ok(text, { count: items.length, prompts: items });
 		},
 	});
 
