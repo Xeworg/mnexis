@@ -40,7 +40,7 @@ The harness: `tmp/bench/run/run-conflict.sh` (the conflict experiment),
 
 ## What comes next, with the evidence behind each
 
-### 1. The scan of near-duplicate titles — measured, and it works
+### 1. The scan of near-duplicate titles — built, measured, **on a branch, undecided**
 
 Two *different* titles for one fact (`puerto del servicio` and `puerto de
 pagos`) are two keys and two records. The other engine proposes relations
@@ -48,10 +48,10 @@ pagos`) are two keys and two records. The other engine proposes relations
 the relations (`was replaced by`) and the supersede chain, but no scan.
 
 **This one was built and measured** (branch `feat/near-duplicate-titles`,
-7 commits). The engine ranks the namespace's records by how likely they are
-to be the same fact and proposes them with the save; the agent decides and
-links them with the supersede that already exists. The report is in
-`tmp/bench/duplicates-measurement.md`.
+7 commits, local and un-pushed). The engine ranks the namespace's records
+by how likely they are to be the same fact and proposes them with the save;
+the agent decides and links them with the supersede that already exists.
+The report is in `tmp/bench/duplicates-measurement.md`.
 
 What the measurement said, and it is worth reading twice:
 
@@ -70,9 +70,23 @@ What the measurement said, and it is worth reading twice:
 The honest limit: n = 3 per arm per scenario. The difference is one run in
 twelve — a tendency, not a proof.
 
-The next thing in this area is not another mechanism: it is **the title in
-the search index** (FTS5 covers `content` only), so that the agent's own
-recall finds the duplicate by the title's words too.
+**Status: the operator left it on the branch, undecided** (2026-10-23). It
+is neither merged nor discarded: the branch is local and un-pushed, and
+the artifacts are backed up in `/home/xeworg/lab/mnexis-bench/`. Do not
+reopen the question without new evidence.
+
+### 1b. The title in the search index — the candidate that comes out of it
+
+The measurement's real finding is not that the proposal is needed: it is
+that **FTS5 indexes the content, not the title**. A record whose content is
+`port = 8081` cannot be found by searching `puerto`. Indexing the title
+would make the agent's **own recall** find the duplicate by the title's
+words, with no new mechanism — and the proposal would go back to being
+redundant.
+
+It is a migration (recreating the FTS table with the title in it, and
+rebuilding the index), so it gets measured with the same harness before it
+gets built, like everything else in this cycle.
 
 ### 2. C3 — `doctor` with a stable JSON envelope
 

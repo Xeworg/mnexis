@@ -222,3 +222,27 @@ already carries both).
   say anything, and with one title in the namespace it said nothing — the
   one record of the namespace was never proposed, which is the case the
   feature exists for.
+- **L14** (2026-10-23) — **The operator's decision: the branch stays, the
+  decision does not.** The measurement was put to the operator as it is —
+  the agent acts on the proposal (12/12) and the outcome changes in one run
+  of twelve — and the answer was: *leave it on the branch, undecided*.
+  So: the branch `feat/near-duplicate-titles` (7 commits, base `main` at
+  `f3a590a`) is **not merged and not discarded**. It is local and
+  un-pushed; the artifacts (the harness, the prompts, the fixture, the
+  reports) are backed up in `/home/xeworg/lab/mnexis-bench/`.
+- **L15** (2026-10-23) — What the operator's question made visible, and
+  what the next candidate is: the measurement's real finding is not that
+  the proposal is needed, it is that **FTS5 indexes the content, not the
+  title**. A record whose content is `port = 8081` cannot be found by
+  searching `puerto`; the engine's comparison of titles finds it, and that
+  is why the proposal earns its place in the one scenario where it did.
+  The cheaper and more general fix is the title in the index: it would
+  make the agent's **own recall** find the duplicate by the title's words,
+  with no new mechanism — and the proposal would go back to being
+  redundant. That candidate is **not** built: it has to be measured with
+  the same harness first, like everything else in this cycle.
+- **L16** (2026-10-23) — The state of the feature: the tasks T1–T6 are
+  done, the code is committed and the suites are green, but the feature is
+  **not part of `main`**. Whoever picks it up should read this Log first:
+  the measurement is in `tmp/bench/duplicates-measurement.md`, and the
+  question it leaves open is the one in L15.
