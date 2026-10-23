@@ -143,7 +143,7 @@ pub enum Command {
         reason: String,
     },
 
-    /// FTS5 ranked search
+    /// Ranked search over the memories (every word of the query counts)
     Search {
         #[arg(long)]
         namespace: Option<String>,

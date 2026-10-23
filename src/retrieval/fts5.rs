@@ -194,17 +194,27 @@ pub fn search(
 /// cannot fix).
 fn fts_query_error(stage: &str, e: &rusqlite::Error) -> MnexisError {
     let msg = e.to_string();
-    let lower = msg.to_ascii_lowercase();
-    if lower.contains("no such column")
-        || lower.contains("fts5: syntax error")
-        || lower.contains("unterminated string")
-        || lower.contains("unknown special query")
-        || lower.contains("malformed match")
-    {
+    if is_query_error(&msg) {
         MnexisError::invalid_argument("query", format!("{stage}: {e}"))
     } else {
         fts_unavailable_or_busy(stage, e)
     }
+}
+
+/// True when an FTS5 error means the **query** is wrong, not the index.
+///
+/// The compiler quotes every term, so a query the caller sent cannot reach
+/// FTS5 as syntax — this is the defence in depth for the paths that do
+/// (a future mode, a raw query, a SQLite that parses differently). The
+/// decision is a pure function of the message so it can be pinned by a
+/// test instead of by an input that no longer exists.
+fn is_query_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("no such column")
+        || lower.contains("fts5: syntax error")
+        || lower.contains("unterminated string")
+        || lower.contains("unknown special query")
+        || lower.contains("malformed match")
 }
 
 /// Map a rusqlite error from an FTS5 path. When the message indicates the
@@ -222,5 +232,46 @@ fn fts_unavailable_or_busy(stage: &str, e: &rusqlite::Error) -> MnexisError {
         MnexisError::index_unavailable(format!("{stage}: {e}"))
     } else {
         MnexisError::busy(format!("{stage}: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_query_error;
+
+    #[test]
+    fn a_query_the_engine_cannot_parse_is_a_query_error() {
+        // The messages SQLite produces for the ways a query can be wrong.
+        for message in [
+            "no such column: eu",
+            "no such column: api",
+            "fts5: syntax error near \"@\"",
+            "fts5: syntax error near \"\"",
+            "unterminated string",
+            "unknown special query: *",
+            "malformed MATCH expression: []",
+        ] {
+            assert!(
+                is_query_error(message),
+                "a query error must be recognised: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_broken_index_is_not_a_query_error() {
+        // The messages SQLite produces for the ways the *index* is wrong:
+        // those must keep pointing at the repair, not at the caller.
+        for message in [
+            "no such table: memories_fts",
+            "no such table: main.memories",
+            "database disk image is malformed",
+            "database is locked",
+        ] {
+            assert!(
+                !is_query_error(message),
+                "an index error must not be blamed on the query: {message}"
+            );
+        }
     }
 }

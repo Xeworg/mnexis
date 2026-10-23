@@ -40,19 +40,24 @@ workspace, so the rule holds even when the agent uses the shell.
 
 ## How the namespace is resolved
 
-The extension resolves the workspace → namespace binding itself, so the model
-never picks a namespace:
+The model never picks a namespace, and the engine owns the identity of the
+workspace:
 
-1. From the session's working directory it takes the git repository root and
-   the `origin` remote.
-2. The workspace key is `git:<normalized remote>`: protocol and `.git` suffix
-   removed, the whole URL lowercased, `/` and `:` replaced by `-`, the host's
-   dots kept — `https://github.com/Xeworg/AegisPI.git` becomes
-   `git:github.com-xeworg-aegispi`. Without a remote it is
-   `path:<repo root>`, and outside a repository `path:<cwd>`.
-3. `mnexis project list` is consulted: an existing binding is never renamed.
-   For a new workspace the name is derived from the directory and bound with
-   `mnexis project bind`.
+1. The engine publishes the canonical key of the workspace the session runs
+   in (`mnexis project list --json` → `current_key`): `git:<normalized
+   remote>`, with the protocol and the `.git` suffix removed, the whole URL
+   lowercased, `/` and `:` replaced by `-` and the host's dots kept —
+   `https://github.com/Xeworg/AegisPI.git` becomes
+   `git:github.com-xeworg-aegispi`. Without a remote it is `path:<repo
+   root>`, and outside a repository `path:<cwd>`.
+2. `mnexis project list` is consulted with that key: an existing binding is
+   never renamed.
+3. A workspace with no binding and no `.mnexis-namespace` marker has **no**
+   namespace. The extension does not invent one — the name of a directory is
+   not a namespace — so the write is refused and the message names the two
+   commands the human has to run: the bind command with the canonical key,
+   and the allow-namespace command for the namespace. A marker names one
+   (the human wrote it down), and only then is the binding recorded.
 
 ## The permission gate
 
