@@ -8,6 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Row, ToSql, params};
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyRecord;
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
+use crate::domain::query::MatchMode;
 use crate::domain::repository::MemoryRepository;
 use crate::domain::scope::NamespaceScope;
 // SearchHit is defined in the spike's retrieval module for T17; T18 will
@@ -833,12 +834,13 @@ impl MemoryRepository for SqliteMemoryRepository {
         query: &str,
         namespace: Option<&str>,
         limit: usize,
+        mode: MatchMode,
     ) -> Result<Vec<SearchHit>, MnexisError> {
         let scope = match namespace {
             Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
             None => NamespaceScope::All,
         };
-        self.search_in(&scope, query, limit)
+        self.search_in(&scope, query, limit, mode)
     }
 
     fn search_in(
@@ -846,6 +848,7 @@ impl MemoryRepository for SqliteMemoryRepository {
         namespaces: &NamespaceScope,
         query: &str,
         limit: usize,
+        mode: MatchMode,
     ) -> Result<Vec<SearchHit>, MnexisError> {
         let ns_filter = match namespaces {
             NamespaceScope::All => crate::retrieval::NamespaceFilter::Any,
@@ -857,6 +860,7 @@ impl MemoryRepository for SqliteMemoryRepository {
         crate::retrieval::search(
             &self.conn,
             query,
+            mode,
             ns_filter,
             crate::retrieval::StateFilter::default(),
             crate::retrieval::DeletedFilter::default(),
@@ -1157,7 +1161,9 @@ mod tests {
         );
 
         // After reindex, search must surface the active content via FTS5.
-        let hits = repo.search("content", Some("proyecto-a"), 10).unwrap();
+        let hits = repo
+            .search("content", Some("proyecto-a"), 10, MatchMode::Any)
+            .unwrap();
         assert_eq!(
             hits.len(),
             2,

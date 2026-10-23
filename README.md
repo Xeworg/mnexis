@@ -70,6 +70,9 @@ mnexis search "wrap mode borde"                            # ranked search
 mnexis status                                             # namespace, allowlists, recent
 ```
 
+A search query is plain language: every word counts, a hyphen is part of a
+word, and `--match all` narrows it to the memories that hold every word.
+
 The repository also ships a pi extension that exposes the memory engine as
 native tools, so an agent can store and recall project memory without being
 asked to, and without choosing a namespace itself:

@@ -122,6 +122,9 @@ command themselves, or bind that workspace first.
    `--namespace <name>` to stay inside this one. The recall of the session
    start is not optional: a project with no memory reads like a project
    that never decided anything.
+   Write the query the way you would say it: every word counts, a hyphen
+   is part of a word (`staging-eu` is one search, not FTS5 syntax), and
+   `--match all` narrows it to memories that hold every word.
 2. **Save what matters.** After a milestone — a decision, a discovery, a
    user preference — store it immediately, in this project's namespace:
    `mnexis save --namespace <name> "<one self-contained sentence>" --tags a,b --topic-key <stable-key>`.

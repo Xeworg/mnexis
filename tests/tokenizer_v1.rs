@@ -6,6 +6,7 @@ use mnexis_core::application::budget::{
 };
 use mnexis_core::application::{ContextRequest, MemoryService, SearchFilter};
 use mnexis_core::domain::memory::MemoryState;
+use mnexis_core::domain::query::MatchMode;
 use mnexis_core::storage::memory_repo::SqliteMemoryRepository;
 use mnexis_core::storage::sqlite::open_sqlite;
 use tempfile::tempdir_in;
@@ -163,6 +164,7 @@ fn context_returns_items_in_budget_with_exact_enforcement() {
 
     let req = ContextRequest {
         task: "alpha".into(),
+        match_mode: MatchMode::Any,
         namespace: Some("default".into()),
         token_budget: 1024,
         tokenizer_id: Some(SUPPORTED_TOKENIZER_V1.into()),
@@ -195,6 +197,7 @@ fn context_estimated_mode_keeps_estimated_label() {
     save(&mut svc, "u1", "alpha", "fact");
     let req = ContextRequest {
         task: "alpha".into(),
+        match_mode: MatchMode::Any,
         namespace: Some("default".into()),
         token_budget: 1024,
         tokenizer_id: None,
@@ -222,6 +225,7 @@ fn context_refuses_to_exceed_budget_in_exact_mode() {
     }
     let req = ContextRequest {
         task: "fox".into(),
+        match_mode: MatchMode::Any,
         namespace: Some("default".into()),
         token_budget: 5,
         tokenizer_id: Some(SUPPORTED_TOKENIZER_V1.into()),
@@ -250,6 +254,7 @@ fn context_dedupes_same_topic_key() {
     save(&mut svc, "u2", "alpha same content", "fact");
     let req = ContextRequest {
         task: "alpha".into(),
+        match_mode: MatchMode::Any,
         namespace: Some("default".into()),
         token_budget: 4096,
         tokenizer_id: Some(SUPPORTED_TOKENIZER_V1.into()),

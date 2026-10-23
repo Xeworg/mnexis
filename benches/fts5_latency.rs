@@ -17,6 +17,7 @@ use mnexis_core::application::{MemoryService, SaveRequest, ServiceConfig};
 use mnexis_core::domain::idempotency::IdempotencyKey;
 use mnexis_core::domain::memory::MemoryState;
 use mnexis_core::domain::scope::{AccessScope, Operation};
+use mnexis_core::domain::query::MatchMode;
 use mnexis_core::retrieval::{DeletedFilter, NamespaceFilter, SearchHit, StateFilter, search};
 use mnexis_core::storage::memory_repo::SqliteMemoryRepository;
 use mnexis_core::storage::sqlite::open_sqlite;
@@ -112,6 +113,7 @@ fn search_warm_10k(b: &mut Bencher) {
         let hits: Vec<SearchHit> = search(
             &conn,
             &text,
+            MatchMode::Any,
             NamespaceFilter::Any,
             StateFilter::default(),
             DeletedFilter::default(),

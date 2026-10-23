@@ -365,7 +365,11 @@ impl McpServer {
             .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
         // Out-of-scope namespace denial follows the profile's configured
         // existence_disclosure (service-enforced); no layer-2 remapping.
-        let hits = svc.search(&args.query, args.namespace.as_deref(), limit)?;
+        let mode = match args.match_mode.as_deref() {
+            Some(name) => crate::domain::query::MatchMode::parse(name)?,
+            None => crate::domain::query::MatchMode::default(),
+        };
+        let hits = svc.search(&args.query, args.namespace.as_deref(), limit, mode)?;
         drop(svc);
         let items: Vec<_> = hits
             .iter()

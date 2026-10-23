@@ -7,11 +7,13 @@
 pub mod error;
 pub mod idempotency;
 pub mod memory;
+pub mod query;
 pub mod repository;
 pub mod scope;
 
 pub use error::MnexisError;
 pub use idempotency::{IdempotencyKey, IdempotencyRecord};
 pub use memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
+pub use query::MatchMode;
 pub use repository::MemoryRepository;
 pub use scope::{AccessScope, ExistenceDisclosure, Operation};

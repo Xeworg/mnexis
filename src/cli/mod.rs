@@ -71,6 +71,9 @@ pub enum Command {
         /// Budget enforcement: estimated (default) | exact
         #[arg(long, default_value = "estimated", value_name = "MODE")]
         budget_mode: String,
+        /// How the task's words are matched: any (default) | all | phrase
+        #[arg(long = "match", default_value = "any", value_name = "MODE")]
+        match_mode: String,
         /// Task / query (positional)
         task: String,
     },
@@ -150,6 +153,9 @@ pub enum Command {
         /// Per-hit rank and matched terms
         #[arg(long)]
         explain: bool,
+        /// How the query's words are matched: any (default) | all | phrase
+        #[arg(long = "match", default_value = "any", value_name = "MODE")]
+        match_mode: String,
         query: String,
     },
 
@@ -426,6 +432,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             tokenizer_id,
             max_items,
             budget_mode,
+            match_mode,
             task,
         } => {
             let profile = Profile::open(data_dir)?;
@@ -436,6 +443,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 tokenizer_id.clone(),
                 *max_items,
                 budget_mode,
+                match_mode,
                 task.clone(),
             )
         }
@@ -508,6 +516,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             namespace,
             limit,
             explain,
+            match_mode,
             query,
         } => {
             let mut profile = Profile::open(data_dir)?;
@@ -517,6 +526,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 namespace.clone(),
                 *limit,
                 *explain,
+                match_mode,
             )
         }
         Command::List {

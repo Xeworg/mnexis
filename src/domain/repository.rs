@@ -6,6 +6,7 @@
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyRecord;
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryTag};
+use crate::domain::query::MatchMode;
 use crate::domain::scope::NamespaceScope;
 // SearchHit is defined in the spike's retrieval module for T17; T18 will
 // define the production retrieval type in src/retrieval/fts5.rs.
@@ -188,17 +189,22 @@ pub trait MemoryRepository {
 
     /// Full-text search over active, non-deleted memories. Delegates to
     /// the retrieval module (T18 will formalize the production search).
+    ///
+    /// The `mode` says what the query means: `any` (the default) counts
+    /// every term, `all` requires all of them and `phrase` keeps the query
+    /// as one exact phrase.
     fn search(
         &self,
         query: &str,
         namespace: Option<&str>,
         limit: usize,
+        mode: MatchMode,
     ) -> Result<Vec<SearchHit>, MnexisError> {
         let scope = match namespace {
             Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
             None => NamespaceScope::All,
         };
-        self.search_in(&scope, query, limit)
+        self.search_in(&scope, query, limit, mode)
     }
 
     /// Full-text search filtered by a namespace scope.
@@ -207,5 +213,6 @@ pub trait MemoryRepository {
         namespaces: &NamespaceScope,
         query: &str,
         limit: usize,
+        mode: MatchMode,
     ) -> Result<Vec<SearchHit>, MnexisError>;
 }

@@ -7,6 +7,7 @@
 use rusqlite::{Connection, ToSql};
 
 use crate::domain::error::MnexisError;
+use crate::domain::query::MatchMode;
 
 /// Namespace filter applied to every search.
 #[derive(Debug, Clone, PartialEq)]
@@ -82,12 +83,16 @@ pub struct SearchHit {
 pub fn search(
     conn: &Connection,
     query: &str,
+    mode: MatchMode,
     namespace: NamespaceFilter,
     state: StateFilter,
     deleted: DeletedFilter,
     valid_window: Option<ValidWindow>,
     limit: usize,
 ) -> Result<Vec<SearchHit>, MnexisError> {
+    // The caller's words become a safe expression before they reach the
+    // index: a multi-word query is not a phrase, and a hyphen is not syntax.
+    let expression = crate::domain::query::compile(query, mode)?;
     let mut sql = String::from(
         "SELECT m.uuid, bm25(memories_fts) AS rank, m.namespace, m.memory_type, m.state, \
          m.revision, m.created_at, m.valid_from, m.valid_until \
@@ -95,7 +100,7 @@ pub fn search(
          JOIN memories AS m ON memories_fts.rowid = m.id \
          WHERE memories_fts MATCH ?1",
     );
-    let mut params: Vec<&dyn ToSql> = vec![&query];
+    let mut params: Vec<&dyn ToSql> = vec![&expression];
 
     // State filter
     match state {
@@ -172,11 +177,33 @@ pub fn search(
                 valid_until: row.get(8)?,
             })
         })
-        .map_err(|e| MnexisError::busy(format!("fts5::search query_map: {e}")))?;
+        .map_err(|e| fts_query_error("fts5::search query_map", &e))?;
     let hits = rows
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| MnexisError::busy(format!("fts5::search collect: {e}")))?;
+        .map_err(|e| fts_query_error("fts5::search collect", &e))?;
     Ok(hits)
+}
+
+/// Map a rusqlite error from the search path.
+///
+/// A query the engine cannot parse is the caller's problem, not the index's:
+/// it has to surface as an invalid argument naming the query, never as
+/// `BUSY` (which means "try later") and never as `INDEX_UNAVAILABLE` (which
+/// sends the operator to `mnexis doctor --repair` for a problem the repair
+/// cannot fix).
+fn fts_query_error(stage: &str, e: &rusqlite::Error) -> MnexisError {
+    let msg = e.to_string();
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("no such column")
+        || lower.contains("fts5: syntax error")
+        || lower.contains("unterminated string")
+        || lower.contains("unknown special query")
+        || lower.contains("malformed match")
+    {
+        MnexisError::invalid_argument("query", format!("{stage}: {e}"))
+    } else {
+        fts_unavailable_or_busy(stage, e)
+    }
 }
 
 /// Map a rusqlite error from an FTS5 path. When the message indicates the
