@@ -91,3 +91,37 @@ workflow), the cloud, embeddings, and the pin/review lifecycle.
   in a new feature.
 - **L3** (2026-10-23) — Branch `feat/memory-title`, based on `main` at the
   merge of PR #27.
+- **L4** (2026-10-23) — Writing the slug found where the multilingual
+  ceiling really was: not in the slug but in the charset. `'サ'.is_lowercase()`
+  is false, because kana have no case, so a Japanese title produced a key the
+  validator refused. The rule is now "alphabetic and not uppercase" instead of
+  "lowercase": scripts without case have no lowercase form and their letters
+  are good in a key, while an uppercase letter stays out because a key is
+  lowercase by contract.
+- **L5** (2026-10-23) — With the comparison gone, so goes everything it
+  needed: the stopword list, the overlap measure, the document-frequency idea
+  and the `--new-topic` escape hatch. `src/domain/topic.rs` becomes
+  `src/domain/title.rs` and keeps only the slug. The refusal that #27 shipped
+  is gone with them — there is nothing to guess about, so nothing to refuse.
+- **L6** (2026-10-23) — The measurement, three runs per state of the engine
+  (same experiment, same container, same model; the full record in
+  `tmp/bench/memory-title-measurement.md`):
+
+  | engine | records after the change | recall tokens in |
+  | --- | --- | --- |
+  | before the feature | 2 · 2 · 4 | 5 455 / 4 541 / 3 514 |
+  | + the notice | 1 · 2 · 4 | 1 024 / 4 541 / 3 514 |
+  | + the refusal | 1 · 2 · 2 | 1 534 / 5 523 / 2 620 |
+  | **+ the title** | **1 · 1 · 1** | 2 584 / 1 318 / 1 657 |
+
+  **Three of three** is the first time the store ends with one record every
+  run, and the record's revision is 2: the fact was **updated**, not
+  duplicated. The recall is also the cheapest it has been — ~1 853 input
+  tokens on average against ~4 503 before, with one record to read instead of
+  two or four.
+- **L7** (2026-10-23) — What the engine still cannot do: tell the agent
+  that two *different* titles mean the same fact (`puerto del servicio` and
+  `puerto de pagos` are two keys). That is where the other engine's
+  *afterwards* scan earns its place — relations proposed after the fact and
+  adjudicated by the agent. mnexis has the relations and the supersede chain;
+  it does not have the scan.
