@@ -141,6 +141,21 @@ test("search reads across projects unless a namespace is given", async () => {
 	);
 });
 
+test("the search tool can ask for a match mode", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const search = tools.get("mnexis_search");
+	assert.ok(search, "mnexis_search is registered");
+
+	await search.execute("t1b", { query: "puerto", match: "all" }, undefined, undefined, context());
+
+	const searchCall = calls(log).find((args) => args[0] === "search");
+	assert.ok(searchCall, "search was called");
+	assert.ok(searchCall.includes("--match"), `the mode reaches the CLI: ${JSON.stringify(searchCall)}`);
+	assert.ok(searchCall.includes("all"), `the mode is the one asked for: ${JSON.stringify(searchCall)}`);
+});
+
 test("an explicit namespace still narrows the search", async () => {
 	const { log } = setup();
 	const { tools, pi } = fakeHost();

@@ -394,6 +394,13 @@ export default function mnexisMemoryExtension(pi) {
 					type: "string",
 					description: "Optional namespace to narrow the search to one project.",
 				},
+				match: {
+					type: "string",
+					enum: ["any", "all", "phrase"],
+					description:
+						"How the words are matched: any (default) counts every word, all requires " +
+						"every word, phrase keeps the query as one exact phrase.",
+				},
 			},
 			required: ["query"],
 			additionalProperties: false,
@@ -401,7 +408,7 @@ export default function mnexisMemoryExtension(pi) {
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const namespace = readNamespace(params.namespace);
 			const result = await client.search(
-				{ query: params.query, namespace, limit: params.limit },
+				{ query: params.query, namespace, limit: params.limit, match: params.match },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
