@@ -360,6 +360,80 @@ fn migration_006_recreates_the_triggers_with_the_new_columns() {
     assert_eq!(indexed(&conn, "datos"), 0, "the delete trigger still fires");
 }
 
+// ── the --check filter runs exactly one check (S2) ─────────────────────────
+
+#[test]
+fn check_ids_round_trip_through_their_codes() {
+    for id in mnexis_core::diagnostics::doctor::ALL_CHECK_IDS {
+        assert_eq!(
+            mnexis_core::diagnostics::doctor::CheckId::from_code(id.as_str()),
+            Some(id),
+            "every check id parses from its wire form"
+        );
+    }
+    assert_eq!(
+        mnexis_core::diagnostics::doctor::CheckId::from_code("nonsense"),
+        None,
+        "an unknown code does not parse"
+    );
+}
+
+#[test]
+fn a_filtered_run_reports_only_the_requested_check() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_filter.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_titled(
+        &conn,
+        "uuid-filtro",
+        "título para el filtro",
+        "",
+        "contenido para el filtro",
+    );
+
+    let report = mnexis_core::diagnostics::doctor::run_checks_for(
+        &conn,
+        &[mnexis_core::diagnostics::doctor::CheckId::FtsShape],
+    );
+    assert_eq!(report.checks.len(), 1, "only the requested check ran");
+    assert_eq!(report.checks[0].check_id.as_str(), "fts_shape");
+    assert_eq!(
+        report.status,
+        mnexis_core::diagnostics::doctor::Status::Healthy
+    );
+    assert!(
+        report.summary.contains("1"),
+        "the summary counts what ran: {}",
+        report.summary
+    );
+    assert_eq!(
+        failure_exit_code(&report),
+        None,
+        "healthy filtered run exits 0"
+    );
+}
+
+#[test]
+fn a_filtered_run_does_not_see_the_checks_it_did_not_run() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_filter_broken.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_titled(&conn, "uuid-roto", "título roto", "", "contenido");
+    conn.execute("DROP TABLE memories_fts", []).unwrap();
+
+    // The FTS family is broken, but it did not run: the filtered report
+    // only reflects wal_mode (S4 — the exit code follows what ran).
+    let report = mnexis_core::diagnostics::doctor::run_checks_for(
+        &conn,
+        &[mnexis_core::diagnostics::doctor::CheckId::WalMode],
+    );
+    assert_eq!(
+        report.status,
+        mnexis_core::diagnostics::doctor::Status::Healthy
+    );
+    assert_eq!(failure_exit_code(&report), None);
+}
+
 // ── the envelope: every check has a stable machine contract (S1) ───────────
 
 /// The exact ids the operator can filter with (`--check`) and pin tests on,

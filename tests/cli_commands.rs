@@ -983,6 +983,36 @@ fn doctor_flags_newer_schema_as_unsupported_version() {
 }
 
 #[test]
+fn doctor_check_filter_runs_one_check_and_unknown_code_is_invalid() {
+    let p = Profile::new();
+    save(&p, "filter target memory", &[]);
+
+    let out = p
+        .run_silent(&["doctor", "--check", "fts_shape"])
+        .unwrap_status("doctor --check on a healthy profile");
+    let json = stdout_json(&out);
+    let checks = json["checks"].as_array().expect("checks array");
+    assert_eq!(checks.len(), 1, "exactly one check ran: {json}");
+    assert_eq!(checks[0]["check_id"], "fts_shape");
+    assert_eq!(json["status"], "healthy");
+
+    // An unknown CODE is an invalid argument (exit 2), not a crash, and
+    // the error names the valid codes.
+    let bad = p.run_silent(&["doctor", "--check", "nonsense"]);
+    assert_eq!(
+        bad.status.code(),
+        Some(2),
+        "unknown check code must exit 2 (INVALID_ARGUMENT): {:?}",
+        String::from_utf8_lossy(&bad.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&bad.stderr);
+    assert!(
+        stderr.contains("fts_shape"),
+        "the error names the valid codes: {stderr}"
+    );
+}
+
+#[test]
 fn purge_dry_run_reports_eligible_count() {
     let p = Profile::new();
     // Save one memory and soft-delete it.

@@ -42,7 +42,7 @@ Branch: `feat/doctor-contract`. Evidence: `tmp/bench/report.md` item 8
 
 | ID | Spec | Route | Commit |
 | --- | --- | --- | --- |
-| T1 | S1 | contract types + envelope in `diagnostics/doctor.rs` (severity, reason_code, evidence, safe_next_step per check; `status`/`summary` at top level), tests RED→GREEN for the 7 checks | |
+| T1 | S1 | contract types + envelope in `diagnostics/doctor.rs` (severity, reason_code, evidence, safe_next_step per check; `status`/`summary` at top level), tests RED→GREEN for the 7 checks | `339a435` |
 | T2 | S2 | `--check CODE` filter in `cli/` (arg, unknown code = invalid argument), tests | |
 | T3 | S3 | `doctor repair` subcommand (`--plan/--dry-run/--apply`), repairable vs canonical classification, replaces `--repair`; tests incl. rollback proof | |
 | T4 | S4 + docs | full suite + fmt + clippy, PRD/help/docs updated, board refresh | |
@@ -54,3 +54,9 @@ Branch: `feat/doctor-contract`. Evidence: `tmp/bench/report.md` item 8
 - **L2** (2026-10-24) — context for the clean break in S3: operator,
   2026-10-23, "no hay usuarios aun nadie ha bajado el repo por lo visto
   nadie lo ha encontrado aun".
+- **L3** (2026-10-24) — slice boundary: T1 landed as one commit (`339a435`, 811
+  authored lines — past the ~400 slice) because the contract rewrite touches
+  every check construction atomically and splitting it would leave a
+  half-old envelope at the boundary. Delivery strategy for the rest: T2
+  (filter) and T3 (repair) are separate slices under the slice size; T4
+  (docs + board) closes the feature.

@@ -73,7 +73,23 @@ impl CheckId {
             CheckId::FtsInvariant => "fts_invariant",
         }
     }
+
+    /// Parse a `--check CODE` argument; `None` when the code is unknown.
+    pub fn from_code(code: &str) -> Option<CheckId> {
+        ALL_CHECK_IDS.iter().copied().find(|id| id.as_str() == code)
+    }
 }
+
+/// Every check id, in the order a full run emits them.
+pub const ALL_CHECK_IDS: [CheckId; 7] = [
+    CheckId::SchemaVersion,
+    CheckId::CanonicalTables,
+    CheckId::FtsReadable,
+    CheckId::WalMode,
+    CheckId::Integrity,
+    CheckId::FtsShape,
+    CheckId::FtsInvariant,
+];
 
 /// Severity of one check result. `warn` is part of the contract for checks
 /// that do not fail the run; every failure today is `error`.
@@ -541,16 +557,27 @@ pub fn purge_eligible_count(
 
 /// Run all doctor checks and return the structured report.
 pub fn run_checks(conn: &Connection) -> DoctorReport {
-    let checks = vec![
-        check_schema_version(conn),
-        check_canonical_tables(conn),
-        check_fts_readable(conn),
-        check_wal_mode(conn),
-        check_integrity(conn),
-        check_fts_shape(conn),
-        check_fts_invariant(conn),
-    ];
+    run_checks_for(conn, &ALL_CHECK_IDS)
+}
+
+/// Run only the requested checks (the `--check CODE` filter). The report
+/// and its exit code reflect exactly what ran — a filtered run cannot see
+/// the failures of checks it did not run.
+pub fn run_checks_for(conn: &Connection, ids: &[CheckId]) -> DoctorReport {
+    let checks = ids.iter().map(|id| check_for_id(conn, *id)).collect();
     build_report(checks)
+}
+
+fn check_for_id(conn: &Connection, id: CheckId) -> Check {
+    match id {
+        CheckId::SchemaVersion => check_schema_version(conn),
+        CheckId::CanonicalTables => check_canonical_tables(conn),
+        CheckId::FtsReadable => check_fts_readable(conn),
+        CheckId::WalMode => check_wal_mode(conn),
+        CheckId::Integrity => check_integrity(conn),
+        CheckId::FtsShape => check_fts_shape(conn),
+        CheckId::FtsInvariant => check_fts_invariant(conn),
+    }
 }
 
 /// Assemble the report from the checks that ran (all of them, or the ones a
