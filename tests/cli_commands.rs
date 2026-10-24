@@ -843,22 +843,26 @@ fn doctor_on_healthy_profile_exits_0() {
         .unwrap_status("doctor on healthy profile");
     let json = stdout_json(&out);
 
-    // healthy must be true
+    // status must be healthy
     assert_eq!(
-        json["healthy"], true,
-        "healthy should be true on a clean profile: {json}"
+        json["status"], "healthy",
+        "status should be healthy on a clean profile: {json}"
     );
-    // checks array must be present with at least the expected fields
+    // checks array must carry the stable envelope per check
     let checks = json["checks"].as_array().expect("checks array");
     assert!(!checks.is_empty(), "checks array must not be empty: {json}");
     for check in checks {
         assert!(
-            check["name"].is_string(),
-            "each check must have a name: {check}"
+            check["check_id"].is_string(),
+            "each check must have a check_id: {check}"
         );
         assert!(
             check["ok"].is_boolean(),
             "each check must have an ok field: {check}"
+        );
+        assert!(
+            check["severity"].is_string(),
+            "each check must have a severity: {check}"
         );
     }
 }
@@ -890,10 +894,10 @@ fn doctor_detects_missing_fts_and_exits_6() {
     );
     let json = stdout_json(&out);
     assert_eq!(
-        json["healthy"], false,
-        "healthy must be false after FTS drop: {json}"
+        json["status"], "failed",
+        "status must be failed after FTS drop: {json}"
     );
-    // In JSON mode the check detail is in stdout.
+    // In JSON mode the check evidence is in stdout.
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("INDEX_UNAVAILABLE"),
@@ -926,8 +930,8 @@ fn doctor_repair_rebuilds_fts_and_search_works() {
     );
     let repair_json = stdout_json(&repair_out);
     assert_eq!(
-        repair_json["healthy"], true,
-        "healthy_after must be true after repair: {repair_json}"
+        repair_json["status"], "healthy",
+        "status must be healthy after repair: {repair_json}"
     );
     // The repaired block must be present.
     assert!(

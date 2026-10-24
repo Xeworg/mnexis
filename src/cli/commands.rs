@@ -1020,7 +1020,7 @@ pub fn version() -> CommandOutcome {
 
 // --- doctor ---
 
-use crate::diagnostics::doctor::{self, Check, RepairReport};
+use crate::diagnostics::doctor::{self, RepairReport};
 
 /// Run every diagnostic check against the profile's database, optionally
 /// dropping and rebuilding the FTS5 index. Exit codes follow e2-core §8:
@@ -1035,23 +1035,20 @@ pub fn doctor(profile: &Profile, repair: bool) -> Result<CommandOutcome, MnexisE
 
     if repair {
         let (repair_report, after_report) = doctor::repair_and_rerun(&conn)?;
-        let json = serde_json::json!({
-            "checks": after_report.checks,
-            "healthy": after_report.healthy,
-            "repaired": repair_report,
-        });
-        let text = render_doctor_text(&after_report.checks, Some(&repair_report));
+        let mut json = serde_json::to_value(&after_report)
+            .map_err(|e| MnexisError::busy(format!("serialize doctor report: {e}")))?;
+        json["repaired"] = serde_json::to_value(&repair_report)
+            .map_err(|e| MnexisError::busy(format!("serialize repair report: {e}")))?;
+        let text = render_doctor_text(&after_report, Some(&repair_report));
         let exit_code = doctor::failure_exit_code(&after_report)
             .map(|(c, _)| c)
             .unwrap_or(0);
         Ok(CommandOutcome::new(json, text).with_exit_code(exit_code))
     } else {
         let report = doctor::run_checks(&conn);
-        let json = serde_json::json!({
-            "checks": report.checks,
-            "healthy": report.healthy,
-        });
-        let text = render_doctor_text(&report.checks, None);
+        let json = serde_json::to_value(&report)
+            .map_err(|e| MnexisError::busy(format!("serialize doctor report: {e}")))?;
+        let text = render_doctor_text(&report, None);
         let exit_code = doctor::failure_exit_code(&report)
             .map(|(c, _)| c)
             .unwrap_or(0);
@@ -1060,20 +1057,23 @@ pub fn doctor(profile: &Profile, repair: bool) -> Result<CommandOutcome, MnexisE
 }
 
 /// Human-readable rendering of the doctor report (text mode).
-fn render_doctor_text(checks: &[Check], repaired: Option<&RepairReport>) -> String {
-    let mut lines: Vec<String> = checks.iter().map(doctor::check_line).collect();
+fn render_doctor_text(report: &doctor::DoctorReport, repaired: Option<&RepairReport>) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for check in &report.checks {
+        lines.push(doctor::check_line(check));
+        if !check.ok
+            && let Some(step) = &check.safe_next_step
+        {
+            lines.push(format!("        next: {step}"));
+        }
+    }
     if let Some(r) = repaired {
         lines.push(format!(
             "  repaired: fts={}, triggers={}, reindexed={}, healthy_after={}",
             r.fts_recreated, r.triggers_recreated, r.reindexed, r.healthy_after
         ));
     }
-    let all_ok = checks.iter().all(|c| c.ok);
-    lines.push(if all_ok {
-        "all checks passed".into()
-    } else {
-        "one or more checks failed".into()
-    });
+    lines.push(report.summary.clone());
     lines.join("\n")
 }
 

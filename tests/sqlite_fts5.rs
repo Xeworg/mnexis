@@ -360,6 +360,157 @@ fn migration_006_recreates_the_triggers_with_the_new_columns() {
     assert_eq!(indexed(&conn, "datos"), 0, "the delete trigger still fires");
 }
 
+// ── the envelope: every check has a stable machine contract (S1) ───────────
+
+/// The exact ids the operator can filter with (`--check`) and pin tests on,
+/// in the order `run_checks` emits them.
+const ALL_CHECK_IDS: [&str; 7] = [
+    "schema_version",
+    "canonical_tables",
+    "fts_readable",
+    "wal_mode",
+    "integrity",
+    "fts_shape",
+    "fts_invariant",
+];
+
+#[test]
+fn a_healthy_store_reports_the_full_envelope() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_envelope.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_titled(
+        &conn,
+        "uuid-sobre",
+        "el título de la memoria",
+        "",
+        "contenido que el índice lleva",
+    );
+
+    let report = run_checks(&conn);
+    assert_eq!(
+        report.status,
+        mnexis_core::diagnostics::doctor::Status::Healthy
+    );
+    assert!(
+        report.summary.contains("7"),
+        "summary counts the checks: {}",
+        report.summary
+    );
+
+    let ids: Vec<&str> = report.checks.iter().map(|c| c.check_id.as_str()).collect();
+    assert_eq!(ids, ALL_CHECK_IDS, "the check ids are the contract");
+
+    for c in &report.checks {
+        assert!(c.ok, "{} must pass on a healthy store", c.check_id.as_str());
+        assert_eq!(c.severity, mnexis_core::diagnostics::doctor::Severity::Ok);
+        assert!(
+            c.reason_code.is_none(),
+            "a passing check carries no reason code"
+        );
+        assert!(!c.evidence.is_empty(), "evidence is always present: {c:?}");
+        assert!(
+            c.safe_next_step.is_none(),
+            "a passing check proposes nothing"
+        );
+    }
+}
+
+#[test]
+fn the_envelope_serializes_with_the_documented_field_names() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_envelope_json.db");
+    let conn = open_sqlite(&path).unwrap();
+
+    let value = serde_json::to_value(run_checks(&conn)).unwrap();
+    assert_eq!(value["status"], "healthy");
+    assert!(value["summary"].is_string());
+    let checks = value["checks"].as_array().expect("checks array");
+    assert_eq!(checks.len(), 7);
+    for c in checks {
+        assert!(c["check_id"].is_string(), "snake_case check_id: {c}");
+        assert!(c["ok"].is_boolean());
+        assert!(c["severity"].is_string());
+        assert!(c["reason_code"].is_null());
+        assert!(c["evidence"].is_string());
+        assert!(c["safe_next_step"].is_null());
+    }
+}
+
+#[test]
+fn a_stale_index_carries_its_reason_code_and_the_next_step() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_reason.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_titled(
+        &conn,
+        "uuid-puerto",
+        "puerto del servicio",
+        "",
+        "port = 8081",
+    );
+    regress_to_content_only_index(&conn);
+
+    let report = run_checks(&conn);
+    assert_eq!(
+        report.status,
+        mnexis_core::diagnostics::doctor::Status::Failed
+    );
+    let shape = check(&report, "fts_shape");
+    assert!(!shape.ok);
+    assert_eq!(
+        shape.severity,
+        mnexis_core::diagnostics::doctor::Severity::Error
+    );
+    assert_eq!(
+        shape.reason_code,
+        Some(mnexis_core::diagnostics::doctor::ReasonCode::FtsStaleShape)
+    );
+    let step = shape.safe_next_step.as_deref().expect("a next step");
+    assert!(
+        step.contains("doctor repair"),
+        "the next step names the repair command: {step}"
+    );
+    assert_eq!(
+        failure_exit_code(&report),
+        Some((6, "INDEX_UNAVAILABLE")),
+        "the exit-code contract is unchanged (S4)"
+    );
+}
+
+#[test]
+fn wal_off_is_degraded_but_still_exit_1() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_wal.db");
+    let conn = open_sqlite(&path).unwrap();
+    conn.execute_batch("PRAGMA journal_mode=DELETE").unwrap();
+
+    let report = run_checks(&conn);
+    assert_eq!(
+        report.status,
+        mnexis_core::diagnostics::doctor::Status::Degraded,
+        "the store still serves; it is not failed"
+    );
+    let wal = check(&report, "wal_mode");
+    assert_eq!(
+        wal.reason_code,
+        Some(mnexis_core::diagnostics::doctor::ReasonCode::WalNotActive)
+    );
+    assert!(
+        wal.safe_next_step
+            .as_deref()
+            .unwrap()
+            .contains("doctor repair"),
+        "wal is repairable: {}",
+        wal.safe_next_step.as_deref().unwrap()
+    );
+    assert_eq!(
+        failure_exit_code(&report),
+        Some((1, "INFRASTRUCTURE_ERROR")),
+        "a degraded store is still an infrastructure failure (S4)"
+    );
+}
+
 // ── the doctor tells a stale index from a good one (S2) ─────────────────────
 
 fn check<'a>(
@@ -369,7 +520,7 @@ fn check<'a>(
     report
         .checks
         .iter()
-        .find(|c| c.name == name)
+        .find(|c| c.check_id.as_str() == name)
         .unwrap_or_else(|| {
             panic!(
                 "the doctor must report a '{name}' check: {:?}",
@@ -406,9 +557,9 @@ fn the_doctor_reports_an_index_built_without_the_title() {
         "the doctor must fail an index built without the title"
     );
     assert!(
-        shape.detail.contains("title") && shape.detail.contains("topic_key"),
-        "the detail names the columns the index is missing: {}",
-        shape.detail
+        shape.evidence.contains("title") && shape.evidence.contains("topic_key"),
+        "the evidence names the columns the index is missing: {}",
+        shape.evidence
     );
     assert_eq!(
         failure_exit_code(&report),
@@ -442,7 +593,7 @@ fn doctor_repair_heals_a_title_less_index_and_keeps_it_healed() {
     let (repair, after) = repair_and_rerun(&conn).expect("the repair must run");
     assert_eq!(repair.reindexed, 1, "the repair rebuilds the active row");
     assert!(
-        after.healthy,
+        after.is_healthy(),
         "the profile is healthy after the repair: {after:?}"
     );
     assert!(
@@ -703,9 +854,9 @@ fn the_doctor_reports_an_index_built_without_the_words() {
         "the doctor must fail an index built without the words"
     );
     assert!(
-        shape.detail.contains("keywords"),
-        "the detail names the column the index is missing: {}",
-        shape.detail
+        shape.evidence.contains("keywords"),
+        "the evidence names the column the index is missing: {}",
+        shape.evidence
     );
     assert_eq!(
         failure_exit_code(&report),
