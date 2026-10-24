@@ -139,7 +139,9 @@ fn separate_process_reader_observes_committed_fts5_row() {
 
 // ── migration 006: the index knows the title (identity-visibility S2) ───────
 
-use mnexis_core::diagnostics::doctor::{failure_exit_code, repair_and_rerun, run_checks};
+use mnexis_core::diagnostics::doctor::{
+    apply_repair, dry_run_repair, failure_exit_code, plan_repair, run_checks,
+};
 use mnexis_core::domain::query::MatchMode;
 use mnexis_core::retrieval::{DeletedFilter, NamespaceFilter, StateFilter, search};
 use mnexis_core::storage::sqlite::run_migrations;
@@ -585,6 +587,183 @@ fn wal_off_is_degraded_but_still_exit_1() {
     );
 }
 
+// ── doctor repair: plan, dry-run, apply (S3) ────────────────────────────────
+
+#[test]
+fn plan_on_a_healthy_store_has_nothing_to_do() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_plan_ok.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_titled(&conn, "uuid-plan-sano", "título sano", "", "contenido sano");
+
+    let (report, current) = plan_repair(&conn);
+    assert_eq!(
+        report.mode,
+        mnexis_core::diagnostics::doctor::RepairMode::Plan
+    );
+    assert!(report.actions.is_empty(), "nothing to repair: {report:?}");
+    assert!(report.skipped.is_empty());
+    assert_eq!(report.reindexed, 0);
+    assert!(current.is_healthy());
+    assert!(report.healthy_after, "a healthy store stays healthy");
+}
+
+#[test]
+fn plan_names_the_repairable_checks_and_what_it_cannot_fix() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_plan_roto.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_titled(&conn, "uuid-plan-roto", "título roto", "", "contenido roto");
+    conn.execute("DROP TABLE memories_fts", []).unwrap();
+
+    let (report, _current) = plan_repair(&conn);
+    let ids: Vec<&str> = report.actions.iter().map(|a| a.check_id.as_str()).collect();
+    for expected in [
+        "canonical_tables",
+        "fts_readable",
+        "fts_shape",
+        "fts_invariant",
+    ] {
+        assert!(
+            ids.contains(&expected),
+            "the plan must name {expected}: {ids:?}"
+        );
+    }
+    assert!(
+        report
+            .actions
+            .iter()
+            .all(|a| a.action.as_str() == "rebuild_memories_fts"),
+        "every FTS-family failure is healed by the rebuild: {report:?}"
+    );
+    assert!(report.skipped.is_empty(), "nothing else is broken");
+    // And the check's own next step must agree: a missing memories_fts is
+    // repairable, so it must point at the repair, not at a backup.
+    let canonical = check(&_current, "canonical_tables");
+    assert!(
+        canonical
+            .safe_next_step
+            .as_deref()
+            .is_some_and(|s| s.contains("doctor repair")),
+        "an FTS-only canonical failure points at the repair: {canonical:?}"
+    );
+    // The wire form of the action matches its as_str().
+    let wire = serde_json::to_value(&report).unwrap();
+    assert_eq!(
+        wire["actions"][0]["action"], "rebuild_memories_fts",
+        "the wire form and as_str agree: {wire}"
+    );
+
+    // Canonical damage the repair must refuse: a missing memories table is
+    // not an index problem.
+    conn.execute("DROP TABLE memory_tags", []).unwrap();
+    let (refused, _) = plan_repair(&conn);
+    assert!(
+        refused
+            .skipped
+            .iter()
+            .any(|c| c.check_id.as_str() == "canonical_tables"),
+        "canonical damage lands in skipped, not in actions: {refused:?}"
+    );
+}
+
+#[test]
+fn plan_on_a_newer_schema_says_what_it_cannot_fix() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_plan_schema.db");
+    let conn = open_sqlite(&path).unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_migrations (version) VALUES (99)",
+        [],
+    )
+    .unwrap();
+
+    let (report, current) = plan_repair(&conn);
+    assert!(
+        report.actions.is_empty(),
+        "no repair can fix a newer schema"
+    );
+    assert!(
+        report
+            .skipped
+            .iter()
+            .any(|c| c.check_id.as_str() == "schema_version"),
+        "the newer schema lands in skipped: {report:?}"
+    );
+    assert!(!current.is_healthy());
+}
+
+#[test]
+fn dry_run_does_the_work_and_rolls_it_back() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_dry.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_titled(
+        &conn,
+        "uuid-dry",
+        "título del dry-run",
+        "",
+        "contenido del dry-run",
+    );
+    conn.execute("DROP TABLE memories_fts", []).unwrap();
+
+    let (report, after) = dry_run_repair(&conn).expect("dry run must execute");
+    assert_eq!(
+        report.mode,
+        mnexis_core::diagnostics::doctor::RepairMode::DryRun
+    );
+    assert_eq!(
+        report.reindexed, 1,
+        "the work really ran inside the savepoint"
+    );
+    assert!(
+        !after.is_healthy(),
+        "and the rollback left the store as broken as before"
+    );
+    let still = run_checks(&conn);
+    assert!(!still.is_healthy(), "no writes survived the dry-run");
+    assert_eq!(
+        failure_exit_code(&still),
+        Some((6, "INDEX_UNAVAILABLE")),
+        "a dry-run must not heal the store (S3)"
+    );
+}
+
+#[test]
+fn dry_run_does_not_touch_the_wal_pragma() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_dry_wal.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_titled(&conn, "uuid-wal", "título wal", "", "contenido wal");
+    conn.execute_batch("PRAGMA journal_mode=DELETE").unwrap();
+
+    let (report, after) = dry_run_repair(&conn).expect("dry run must execute");
+    // The pragma is not transactional: a dry-run lists it, never runs it.
+    assert!(!report.wal_reactivated, "the dry run must not set WAL");
+    let wal = check(&after, "wal_mode");
+    assert!(!wal.ok, "journal_mode is still not wal after the dry run");
+
+    let (applied, healed) = apply_repair(&conn).expect("apply must execute");
+    assert!(applied.wal_reactivated);
+    assert!(healed.is_healthy(), "apply re-activates WAL: {healed:?}");
+}
+
+#[test]
+fn apply_on_a_healthy_store_is_a_no_op() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_apply_ok.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_titled(&conn, "uuid-ok", "título ok", "", "contenido ok");
+
+    let (report, after) = apply_repair(&conn).expect("apply must execute");
+    assert!(
+        !report.fts_recreated,
+        "nothing was broken, nothing was rebuilt"
+    );
+    assert_eq!(report.reindexed, 0);
+    assert!(after.is_healthy());
+}
+
 // ── the doctor tells a stale index from a good one (S2) ─────────────────────
 
 fn check<'a>(
@@ -664,8 +843,12 @@ fn doctor_repair_heals_a_title_less_index_and_keeps_it_healed() {
     );
     regress_to_content_only_index(&conn);
 
-    let (repair, after) = repair_and_rerun(&conn).expect("the repair must run");
+    let (repair, after) = apply_repair(&conn).expect("the repair must run");
     assert_eq!(repair.reindexed, 1, "the repair rebuilds the active row");
+    assert!(
+        repair.fts_recreated,
+        "the FTS rebuild really ran: {repair:?}"
+    );
     assert!(
         after.is_healthy(),
         "the profile is healthy after the repair: {after:?}"

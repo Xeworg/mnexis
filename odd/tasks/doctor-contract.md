@@ -43,7 +43,7 @@ Branch: `feat/doctor-contract`. Evidence: `tmp/bench/report.md` item 8
 | ID | Spec | Route | Commit |
 | --- | --- | --- | --- |
 | T1 | S1 | contract types + envelope in `diagnostics/doctor.rs` (severity, reason_code, evidence, safe_next_step per check; `status`/`summary` at top level), tests RED→GREEN for the 7 checks | `339a435` |
-| T2 | S2 | `--check CODE` filter in `cli/` (arg, unknown code = invalid argument), tests | |
+| T2 | S2 | `--check CODE` filter in `cli/` (arg, unknown code = invalid argument), tests | `55a32a9` |
 | T3 | S3 | `doctor repair` subcommand (`--plan/--dry-run/--apply`), repairable vs canonical classification, replaces `--repair`; tests incl. rollback proof | |
 | T4 | S4 + docs | full suite + fmt + clippy, PRD/help/docs updated, board refresh | |
 
@@ -58,5 +58,7 @@ Branch: `feat/doctor-contract`. Evidence: `tmp/bench/report.md` item 8
   authored lines — past the ~400 slice) because the contract rewrite touches
   every check construction atomically and splitting it would leave a
   half-old envelope at the boundary. Delivery strategy for the rest: T2
-  (filter) and T3 (repair) are separate slices under the slice size; T4
-  (docs + board) closes the feature.
+  (docs + board) closes the feature. T2 landed at `55a32a9` (slice total 1009
+  lines across two commits — the feature's delivery slice remains T1+T2 as
+  one reviewable PR unit of the same concern, the contract; T3+T4 form the
+  second).

@@ -921,11 +921,11 @@ fn doctor_repair_rebuilds_fts_and_search_works() {
     }
 
     // Repair: re-creates FTS, triggers, and re-indexes.
-    let repair_out = p.run_silent(&["doctor", "--repair"]);
+    let repair_out = p.run_silent(&["doctor", "repair", "--apply"]);
     assert_eq!(
         repair_out.status.code(),
         Some(0),
-        "doctor --repair should exit 0: {:?}",
+        "doctor repair --apply should exit 0: {:?}",
         String::from_utf8_lossy(&repair_out.stderr)
     );
     let repair_json = stdout_json(&repair_out);
@@ -933,11 +933,12 @@ fn doctor_repair_rebuilds_fts_and_search_works() {
         repair_json["status"], "healthy",
         "status must be healthy after repair: {repair_json}"
     );
-    // The repaired block must be present.
+    // The repair block must be present.
     assert!(
-        repair_json["repaired"].is_object(),
-        "repaired block must be present after --repair: {repair_json}"
+        repair_json["repair"].is_object(),
+        "repair block must be present after --apply: {repair_json}"
     );
+    assert_eq!(repair_json["repair"]["mode"], "apply", "{repair_json}");
 
     // Search must find the saved memory after repair (proves reindex).
     let after = p
@@ -1009,6 +1010,97 @@ fn doctor_check_filter_runs_one_check_and_unknown_code_is_invalid() {
     assert!(
         stderr.contains("fts_shape"),
         "the error names the valid codes: {stderr}"
+    );
+}
+
+// --- T21b: doctor repair (plan / dry-run / apply) ---
+
+#[test]
+fn doctor_repair_plan_reports_and_writes_nothing() {
+    let p = Profile::new();
+    save(&p, "plan target memory", &[]);
+    let db_path = p.data_dir.join("mnexis.db");
+    {
+        let conn = mnexis_core::open_sqlite(&db_path).expect("open for break");
+        conn.execute("DROP TABLE memories_fts", [])
+            .expect("drop memories_fts");
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .expect("checkpoint after drop");
+    }
+
+    let out = p.run_silent(&["doctor", "repair", "--plan"]);
+    assert_eq!(
+        out.status.code(),
+        Some(6),
+        "plan reports the current (broken) state: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["repair"]["mode"], "plan",
+        "the mode is explicit: {json}"
+    );
+    let actions = json["repair"]["actions"].as_array().expect("actions array");
+    assert!(
+        actions.iter().any(|a| a["check_id"] == "fts_shape"),
+        "the plan names the broken checks: {json}"
+    );
+
+    // A plan writes nothing: the store is exactly as broken as before.
+    let still = p.run_silent(&["doctor"]);
+    assert_eq!(
+        still.status.code(),
+        Some(6),
+        "--plan must not change the store"
+    );
+}
+
+#[test]
+fn doctor_repair_dry_run_measures_and_leaves_the_store_broken() {
+    let p = Profile::new();
+    save(&p, "dry-run target memory", &[]);
+    let db_path = p.data_dir.join("mnexis.db");
+    {
+        let conn = mnexis_core::open_sqlite(&db_path).expect("open for break");
+        conn.execute("DROP TABLE memories_fts", [])
+            .expect("drop memories_fts");
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .expect("checkpoint after drop");
+    }
+
+    let out = p.run_silent(&["doctor", "repair", "--dry-run"]);
+    assert_eq!(
+        out.status.code(),
+        Some(6),
+        "the dry-run leaves the store broken: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = stdout_json(&out);
+    assert_eq!(json["repair"]["mode"], "dry_run", "{json}");
+    assert_eq!(
+        json["repair"]["reindexed"], 1,
+        "the work ran inside the savepoint and was measured: {json}"
+    );
+
+    let still = p.run_silent(&["doctor"]);
+    assert_eq!(
+        still.status.code(),
+        Some(6),
+        "a dry-run must not heal the store"
+    );
+}
+
+#[test]
+fn the_old_repair_flag_is_gone() {
+    let p = Profile::new();
+    save(&p, "flag gone memory", &[]);
+
+    let out = p.run_silent(&["doctor", "--repair"]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "the old flag must be rejected (clean break, L2): {:?}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 

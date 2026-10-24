@@ -40,6 +40,25 @@ pub struct Cli {
     pub command: Command,
 }
 
+/// Subcommands of `mnexis doctor`.
+#[derive(Debug, Subcommand)]
+pub enum DoctorCommand {
+    /// Repair what the failing checks allow; what it cannot fix is
+    /// reported, never touched. With no mode flag this is --plan.
+    Repair {
+        /// Show what would be repaired — no writes
+        #[arg(long, conflicts_with_all = ["dry_run", "apply"])]
+        plan: bool,
+        /// Run the repair inside a savepoint and roll it back — real
+        /// counts, no writes
+        #[arg(long, conflicts_with_all = ["plan", "apply"])]
+        dry_run: bool,
+        /// Perform the repair
+        #[arg(long, conflicts_with_all = ["plan", "dry_run"])]
+        apply: bool,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Print version and exit
@@ -299,15 +318,13 @@ pub enum Command {
     /// Rebuild the FTS5 index from canonical data
     Reindex,
 
-    /// Check SQLite and FTS5 health; `doctor repair` rebuilds the index
+    /// Check SQLite and FTS5 health; `doctor repair` heals what it can
     Doctor {
         /// Run only this check, by its stable code (e.g. fts_shape)
         #[arg(long = "check", value_name = "CODE")]
         check: Option<String>,
-        /// Drop and rebuild memories_fts, re-create all FTS5 triggers,
-        /// then reindex every active+non-deleted row.
-        #[arg(long)]
-        repair: bool,
+        #[command(subcommand)]
+        command: Option<DoctorCommand>,
     },
 
     /// Browse and search memories in a terminal UI
@@ -723,9 +740,25 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             let mut profile = Profile::open(data_dir)?;
             commands::reindex(&mut profile)
         }
-        Command::Doctor { check, repair } => {
+        Command::Doctor { check, command } => {
             let profile = Profile::open(data_dir)?;
-            commands::doctor(&profile, *repair, check.as_deref())
+            match command {
+                Some(DoctorCommand::Repair {
+                    plan: _,
+                    dry_run,
+                    apply,
+                }) => {
+                    let mode = if *apply {
+                        crate::diagnostics::doctor::RepairMode::Apply
+                    } else if *dry_run {
+                        crate::diagnostics::doctor::RepairMode::DryRun
+                    } else {
+                        crate::diagnostics::doctor::RepairMode::Plan
+                    };
+                    commands::doctor_repair(&profile, mode)
+                }
+                None => commands::doctor(&profile, check.as_deref()),
+            }
         }
         Command::Export {
             include_deleted,

@@ -1022,20 +1022,12 @@ pub fn version() -> CommandOutcome {
 
 use crate::diagnostics::doctor::{self, RepairReport};
 
-/// Run every diagnostic check against the profile's database, optionally
-/// dropping and rebuilding the FTS5 index. Exit codes follow e2-core §8:
-/// 0 = healthy, 6 = INDEX_UNAVAILABLE, 9 = UNSUPPORTED_VERSION, 1 = other.
 /// Run the diagnostic checks against the profile's database, optionally
 /// only the one named by `--check CODE` (unknown codes are invalid
-/// arguments, exit 2). With `--repair`, the FTS index is rebuilt first and
-/// the post-repair report always re-runs every check. Exit codes follow
-/// e2-core §8: 0 = healthy, 6 = INDEX_UNAVAILABLE, 9 = UNSUPPORTED_VERSION,
-/// 1 = other — always relative to the checks that ran.
-pub fn doctor(
-    profile: &Profile,
-    repair: bool,
-    check: Option<&str>,
-) -> Result<CommandOutcome, MnexisError> {
+/// arguments, exit 2). Exit codes follow e2-core §8: 0 = healthy,
+/// 6 = INDEX_UNAVAILABLE, 9 = UNSUPPORTED_VERSION, 1 = other — always
+/// relative to the checks that ran.
+pub fn doctor(profile: &Profile, check: Option<&str>) -> Result<CommandOutcome, MnexisError> {
     // Doctor reads the on-disk schema state through its own connection.
     // We use the regular `open_sqlite` rather than the profile's service
     // connection so a dropped-and-unrepaired FTS table is correctly
@@ -1063,31 +1055,46 @@ pub fn doctor(
         None => doctor::ALL_CHECK_IDS.to_vec(),
     };
 
-    if repair {
-        let (repair_report, after_report) = doctor::repair_and_rerun(&conn)?;
-        let mut json = serde_json::to_value(&after_report)
-            .map_err(|e| MnexisError::busy(format!("serialize doctor report: {e}")))?;
-        json["repaired"] = serde_json::to_value(&repair_report)
-            .map_err(|e| MnexisError::busy(format!("serialize repair report: {e}")))?;
-        let text = render_doctor_text(&after_report, Some(&repair_report));
-        let exit_code = doctor::failure_exit_code(&after_report)
-            .map(|(c, _)| c)
-            .unwrap_or(0);
-        Ok(CommandOutcome::new(json, text).with_exit_code(exit_code))
-    } else {
-        let report = doctor::run_checks_for(&conn, &ids);
-        let json = serde_json::to_value(&report)
-            .map_err(|e| MnexisError::busy(format!("serialize doctor report: {e}")))?;
-        let text = render_doctor_text(&report, None);
-        let exit_code = doctor::failure_exit_code(&report)
-            .map(|(c, _)| c)
-            .unwrap_or(0);
-        Ok(CommandOutcome::new(json, text).with_exit_code(exit_code))
-    }
+    let report = doctor::run_checks_for(&conn, &ids);
+    let json = serde_json::to_value(&report)
+        .map_err(|e| MnexisError::busy(format!("serialize doctor report: {e}")))?;
+    let text = render_doctor_text(&report);
+    let exit_code = doctor::failure_exit_code(&report)
+        .map(|(c, _)| c)
+        .unwrap_or(0);
+    Ok(CommandOutcome::new(json, text).with_exit_code(exit_code))
+}
+
+/// `mnexis doctor repair [--plan|--dry-run|--apply]` — plan defaults.
+/// The exit code follows the store's state after the command: a plan or a
+/// dry-run on a broken store still exits with the broken-state code, so a
+/// script can never mistake "measured" for "fixed".
+pub fn doctor_repair(
+    profile: &Profile,
+    mode: doctor::RepairMode,
+) -> Result<CommandOutcome, MnexisError> {
+    let conn = crate::storage::sqlite::open_sqlite(&profile.db_path())?;
+
+    let (repair_report, report) = match mode {
+        doctor::RepairMode::Plan => doctor::plan_repair(&conn),
+        doctor::RepairMode::DryRun => doctor::dry_run_repair(&conn)?,
+        doctor::RepairMode::Apply => doctor::apply_repair(&conn)?,
+    };
+
+    let mut json = serde_json::to_value(&report)
+        .map_err(|e| MnexisError::busy(format!("serialize doctor report: {e}")))?;
+    json["repair"] = serde_json::to_value(&repair_report)
+        .map_err(|e| MnexisError::busy(format!("serialize repair report: {e}")))?;
+
+    let text = render_repair_text(&repair_report, &report);
+    let exit_code = doctor::failure_exit_code(&report)
+        .map(|(c, _)| c)
+        .unwrap_or(0);
+    Ok(CommandOutcome::new(json, text).with_exit_code(exit_code))
 }
 
 /// Human-readable rendering of the doctor report (text mode).
-fn render_doctor_text(report: &doctor::DoctorReport, repaired: Option<&RepairReport>) -> String {
+fn render_doctor_text(report: &doctor::DoctorReport) -> String {
     let mut lines: Vec<String> = Vec::new();
     for check in &report.checks {
         lines.push(doctor::check_line(check));
@@ -1097,13 +1104,61 @@ fn render_doctor_text(report: &doctor::DoctorReport, repaired: Option<&RepairRep
             lines.push(format!("        next: {step}"));
         }
     }
-    if let Some(r) = repaired {
+    lines.push(report.summary.clone());
+    lines.join("\n")
+}
+
+/// Human-readable rendering of a repair run (text mode): what it did (or
+/// would do), what it refuses to touch, and the state it left behind.
+fn render_repair_text(repair: &RepairReport, report: &doctor::DoctorReport) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let verb = match repair.mode {
+        doctor::RepairMode::Plan => "will",
+        doctor::RepairMode::DryRun => "would",
+        doctor::RepairMode::Apply => "fixed",
+    };
+    match repair.mode {
+        doctor::RepairMode::Plan => lines.push("plan — what doctor repair would do:".into()),
+        doctor::RepairMode::DryRun => {
+            lines.push("dry-run — measured inside a savepoint, nothing written:".into())
+        }
+        doctor::RepairMode::Apply => lines.push("repair applied:".into()),
+    }
+    if repair.actions.is_empty() && repair.skipped.is_empty() {
+        lines.push("  nothing to repair".into());
+    }
+    for action in &repair.actions {
         lines.push(format!(
-            "  repaired: fts={}, triggers={}, reindexed={}, healthy_after={}",
-            r.fts_recreated, r.triggers_recreated, r.reindexed, r.healthy_after
+            "  {verb} {}: {} ({})",
+            action.action.as_str(),
+            action.check_id.as_str(),
+            action.reason_code.as_str()
         ));
     }
-    lines.push(report.summary.clone());
+    for skipped in &repair.skipped {
+        let code = skipped
+            .reason_code
+            .map(doctor::ReasonCode::as_str)
+            .unwrap_or("FAILED");
+        lines.push(format!(
+            "  cannot fix {} ({}): {}",
+            skipped.check_id.as_str(),
+            code,
+            skipped.safe_next_step.as_deref().unwrap_or("")
+        ));
+    }
+    if repair.fts_recreated {
+        lines.push(format!(
+            "  rebuilt memories_fts + triggers, reindexed {} rows",
+            repair.reindexed
+        ));
+    }
+    if repair.wal_reactivated {
+        lines.push("  re-activated WAL journaling".into());
+    }
+    for line in render_doctor_text(report).split('\n') {
+        lines.push(line.to_string());
+    }
     lines.join("\n")
 }
 
