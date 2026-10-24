@@ -843,22 +843,26 @@ fn doctor_on_healthy_profile_exits_0() {
         .unwrap_status("doctor on healthy profile");
     let json = stdout_json(&out);
 
-    // healthy must be true
+    // status must be healthy
     assert_eq!(
-        json["healthy"], true,
-        "healthy should be true on a clean profile: {json}"
+        json["status"], "healthy",
+        "status should be healthy on a clean profile: {json}"
     );
-    // checks array must be present with at least the expected fields
+    // checks array must carry the stable envelope per check
     let checks = json["checks"].as_array().expect("checks array");
     assert!(!checks.is_empty(), "checks array must not be empty: {json}");
     for check in checks {
         assert!(
-            check["name"].is_string(),
-            "each check must have a name: {check}"
+            check["check_id"].is_string(),
+            "each check must have a check_id: {check}"
         );
         assert!(
             check["ok"].is_boolean(),
             "each check must have an ok field: {check}"
+        );
+        assert!(
+            check["severity"].is_string(),
+            "each check must have a severity: {check}"
         );
     }
 }
@@ -890,10 +894,10 @@ fn doctor_detects_missing_fts_and_exits_6() {
     );
     let json = stdout_json(&out);
     assert_eq!(
-        json["healthy"], false,
-        "healthy must be false after FTS drop: {json}"
+        json["status"], "failed",
+        "status must be failed after FTS drop: {json}"
     );
-    // In JSON mode the check detail is in stdout.
+    // In JSON mode the check evidence is in stdout.
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("INDEX_UNAVAILABLE"),
@@ -926,8 +930,8 @@ fn doctor_repair_rebuilds_fts_and_search_works() {
     );
     let repair_json = stdout_json(&repair_out);
     assert_eq!(
-        repair_json["healthy"], true,
-        "healthy_after must be true after repair: {repair_json}"
+        repair_json["status"], "healthy",
+        "status must be healthy after repair: {repair_json}"
     );
     // The repaired block must be present.
     assert!(
@@ -975,6 +979,36 @@ fn doctor_flags_newer_schema_as_unsupported_version() {
     assert!(
         stderr.contains("UNSUPPORTED_VERSION"),
         "stderr must mention UNSUPPORTED_VERSION: {stderr}"
+    );
+}
+
+#[test]
+fn doctor_check_filter_runs_one_check_and_unknown_code_is_invalid() {
+    let p = Profile::new();
+    save(&p, "filter target memory", &[]);
+
+    let out = p
+        .run_silent(&["doctor", "--check", "fts_shape"])
+        .unwrap_status("doctor --check on a healthy profile");
+    let json = stdout_json(&out);
+    let checks = json["checks"].as_array().expect("checks array");
+    assert_eq!(checks.len(), 1, "exactly one check ran: {json}");
+    assert_eq!(checks[0]["check_id"], "fts_shape");
+    assert_eq!(json["status"], "healthy");
+
+    // An unknown CODE is an invalid argument (exit 2), not a crash, and
+    // the error names the valid codes.
+    let bad = p.run_silent(&["doctor", "--check", "nonsense"]);
+    assert_eq!(
+        bad.status.code(),
+        Some(2),
+        "unknown check code must exit 2 (INVALID_ARGUMENT): {:?}",
+        String::from_utf8_lossy(&bad.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&bad.stderr);
+    assert!(
+        stderr.contains("fts_shape"),
+        "the error names the valid codes: {stderr}"
     );
 }
 

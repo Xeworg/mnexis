@@ -299,8 +299,11 @@ pub enum Command {
     /// Rebuild the FTS5 index from canonical data
     Reindex,
 
-    /// Check SQLite and FTS5 health; optionally repair the FTS index
+    /// Check SQLite and FTS5 health; `doctor repair` rebuilds the index
     Doctor {
+        /// Run only this check, by its stable code (e.g. fts_shape)
+        #[arg(long = "check", value_name = "CODE")]
+        check: Option<String>,
         /// Drop and rebuild memories_fts, re-create all FTS5 triggers,
         /// then reindex every active+non-deleted row.
         #[arg(long)]
@@ -720,9 +723,9 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             let mut profile = Profile::open(data_dir)?;
             commands::reindex(&mut profile)
         }
-        Command::Doctor { repair } => {
+        Command::Doctor { check, repair } => {
             let profile = Profile::open(data_dir)?;
-            commands::doctor(&profile, *repair)
+            commands::doctor(&profile, *repair, check.as_deref())
         }
         Command::Export {
             include_deleted,

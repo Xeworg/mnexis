@@ -361,7 +361,10 @@ fn doctor_detects_missing_fts_and_search_degrades() {
 
     let conn = open_sqlite(&db).expect("reopen 2");
     let report = run_checks(&conn);
-    assert!(!report.healthy, "report must report unhealthy: {report:?}");
+    assert!(
+        !report.is_healthy(),
+        "report must report unhealthy: {report:?}"
+    );
     let (code, label) = failure_exit_code(&report).expect("classification");
     assert_eq!(code, 6, "INDEX_UNAVAILABLE exit 6");
     assert_eq!(label, "INDEX_UNAVAILABLE");
