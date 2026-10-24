@@ -311,7 +311,7 @@ Migraciones versionadas bajo exclusión; backup coherente antes de migraciones d
 
 Datos bajo directorio de plataforma; precedencia `--data-dir` > `MNEXIS_HOME` > valor estándar. Configuración legible separada; `config show` muestra rutas efectivas. Builds objetivo: Linux amd64/arm64, macOS arm64, Windows amd64, sujetos a validación.
 
-`doctor` revisa integridad SQL, FTS5 y permisos. `--repair` es explícito y distingue tareas reconstruibles de daños canónicos. Logs agregados: latencia, modo, conteos y fallos, sin consultas ni contenido salvo diagnóstico local opt-in.
+`doctor` revisa integridad SQL y FTS5 con un contrato estable por check (`check_id`, `severity`, `reason_code`, `evidence`, `safe_next_step`; `--check CODE` filtra). `doctor repair --plan|--dry-run|--apply` es explícito, mide antes de escribir y distingue tareas reconstruibles de daños canónicos. Logs agregados: latencia, modo, conteos y fallos, sin consultas ni contenido salvo diagnóstico local opt-in.
 
 ## 15. Evaluación y aceptación
 

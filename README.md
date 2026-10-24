@@ -195,7 +195,8 @@ delete            soft-delete a memory
 restore           restore a soft-deleted memory
 purge             hard-delete soft-deleted memories (dry-run by default)
 reindex           rebuild the FTS5 index from canonical data
-doctor            integrity checks; --repair rebuilds FTS5
+doctor            health checks with a stable machine contract
+doctor repair     plan / dry-run / apply — repairs what it can fix
 upgrade           check for a newer release and install it
 config show       print effective configuration and scope
 config allow-namespace
