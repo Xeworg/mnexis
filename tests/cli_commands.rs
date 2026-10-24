@@ -1104,6 +1104,97 @@ fn the_old_repair_flag_is_gone() {
     );
 }
 
+// --- T22: operational commands (board C4) ---
+
+#[test]
+fn stats_counts_every_namespace_and_the_totals() {
+    let p = Profile::new();
+    // default namespace: one live pair (older superseded by newer) and one
+    // soft-deleted memory.
+    let older = save(&p, "the port is 8081", &[]);
+    let newer = save(&p, "the port is 8082", &[]);
+    let dead = save(&p, "obsolete note", &[]);
+    p.run_silent(&[
+        "supersede",
+        "--older",
+        &older,
+        "--newer",
+        &newer,
+        "--reason",
+        "port changed",
+    ])
+    .unwrap_status("supersede for stats");
+    p.run_silent(&["delete", "--force", &dead])
+        .unwrap_status("delete for stats");
+    // a second namespace with a memory, a prompt and a session of its own.
+    p.run_silent(&["config", "allow-namespace", "other"])
+        .unwrap_status("allow the other namespace");
+    save(
+        &p,
+        "memory of the other namespace",
+        &["--namespace", "other"],
+    );
+    p.run_silent(&["session", "--id", "sess-1", "--namespace", "other"])
+        .unwrap_status("session for stats");
+    p.run_silent(&["prompt", "what the user said", "--namespace", "other"])
+        .unwrap_status("prompt for stats");
+
+    let out = p.run_silent(&["stats"]).unwrap_status("stats");
+    let json = stdout_json(&out);
+
+    // The stable contract: snake_case field names, typed shape.
+    assert!(json["schema_version"].is_u64(), "schema_version: {json}");
+    let namespaces = json["namespaces"].as_array().expect("namespaces array");
+    let by_ns = |name: &str| {
+        namespaces
+            .iter()
+            .find(|n| n["namespace"] == name)
+            .unwrap_or_else(|| panic!("namespace {name} missing: {json}"))
+    };
+    let default = by_ns("default");
+    assert_eq!(default["active"], 1, "default ns: {default}");
+    assert_eq!(default["superseded"], 1, "default ns: {default}");
+    assert_eq!(default["soft_deleted"], 1, "default ns: {default}");
+    let other = by_ns("other");
+    assert_eq!(other["active"], 1, "other ns: {other}");
+    assert_eq!(other["superseded"], 0);
+    assert_eq!(other["soft_deleted"], 0);
+
+    let totals = &json["totals"];
+    assert_eq!(totals["memories"], 4, "totals: {totals}");
+    assert_eq!(totals["active"], 2);
+    assert_eq!(totals["superseded"], 1);
+    assert_eq!(totals["soft_deleted"], 1);
+    assert_eq!(totals["supersede_links"], 1);
+    assert_eq!(totals["sessions"], 1);
+    assert_eq!(totals["prompts"], 1);
+}
+
+#[test]
+fn stats_on_an_empty_store_reports_zeroes() {
+    let p = Profile::new();
+    let out = p
+        .run_silent(&["stats"])
+        .unwrap_status("stats on empty store");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["namespaces"].as_array().map(Vec::len),
+        Some(0),
+        "{json}"
+    );
+    for field in [
+        "memories",
+        "active",
+        "superseded",
+        "soft_deleted",
+        "supersede_links",
+        "sessions",
+        "prompts",
+    ] {
+        assert_eq!(json["totals"][field], 0, "totals.{field}: {json}");
+    }
+}
+
 #[test]
 fn purge_dry_run_reports_eligible_count() {
     let p = Profile::new();

@@ -10,6 +10,7 @@ pub mod config_cmd;
 pub mod output;
 pub mod profile;
 pub mod project_cmd;
+pub mod stats_cmd;
 pub mod status_cmd;
 pub mod update_cmd;
 
@@ -326,6 +327,9 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<DoctorCommand>,
     },
+
+    /// Store-level counts: what every namespace holds, and the totals
+    Stats,
 
     /// Browse and search memories in a terminal UI
     Tui,
@@ -817,6 +821,10 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Project {
             action: ProjectAction::Unbind { namespace },
         } => project_cmd::unbind(data_dir, namespace.clone()),
+        Command::Stats => {
+            let profile = Profile::open(data_dir)?;
+            stats_cmd::stats(&profile)
+        }
         Command::Tui => {
             // The TUI owns the terminal lifecycle; profile resolution and
             // error reporting stay identical to every other command.
