@@ -18,6 +18,7 @@ out of it:
 | #28 | `memory-title` | the title derives the key and a save with a key the namespace uses **updates** the record (migration 005) |
 | #29 | `identity-visibility` | the title travels with every read answer and the index covers it (migration 006); two defects fixed (a save writing into a dead record, the on-demand tools in the wrong namespace) |
 | #30 | `agent-keywords` | the words of a fact: the agent's own vocabulary, accumulated and indexed (migration 007) |
+| #31 + #34 | `doctor-contract` | the doctor answers with a stable machine contract (check_id, severity, reason_code, evidence, safe_next_step, status/summary), `--check CODE` filters, and `doctor repair --plan/--dry-run/--apply` separates what it fixes from canonical damage; the old `--repair` flag is gone |
 
 Everything is merged. `main` is clean and only `main` remains locally (plus
 the archived branches of the features that were measured and discarded, and
@@ -112,14 +113,13 @@ What survives, because it is a mechanism and not a count:
 
 Everything else needs more runs before it is claimed.
 
-### 2. C3 — `doctor` with a stable JSON envelope — **delivered**
+### 2. C3 — `doctor` with a stable JSON envelope — **closed** (#31 + #34, in main)
 
-Implemented on `feat/doctor-contract` (odd/tasks/doctor-contract.md, T1–T4):
-the envelope (`check_id`, `severity`, `reason_code`, `evidence`,
-`safe_next_step`, top-level `status`/`summary`), the `--check CODE` filter,
-and `doctor repair --plan|--dry-run|--apply` with the repairable /
-not-repairable split. The old `--repair` flag is gone (no users yet).
-Awaiting PR + merge; when it lands, move it to the PR table above.
+In the PR table above: the envelope (`check_id`, `severity`, `reason_code`,
+`evidence`, `safe_next_step`, top-level `status`/`summary`), the `--check
+CODE` filter, and `doctor repair --plan/--dry-run/--apply` with the
+repairable / not-repairable split. The old `--repair` flag is gone (no
+users yet). The next open candidate is C4, item 3 below.
 
 Five checks today, no contract. The other engine has ten named checks with a
 machine envelope (`status`, `summary`, `checks[].check_id`, `severity`,
