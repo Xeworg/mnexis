@@ -43,9 +43,9 @@ Branch: `feat/doctor-contract`. Evidence: `tmp/bench/report.md` item 8
 | ID | Spec | Route | Commit |
 | --- | --- | --- | --- |
 | T1 | S1 | contract types + envelope in `diagnostics/doctor.rs` (severity, reason_code, evidence, safe_next_step per check; `status`/`summary` at top level), tests RED→GREEN for the 7 checks | `339a435` |
-| T2 | S2 | `--check CODE` filter in `cli/` (arg, unknown code = invalid argument), tests | |
-| T3 | S3 | `doctor repair` subcommand (`--plan/--dry-run/--apply`), repairable vs canonical classification, replaces `--repair`; tests incl. rollback proof | |
-| T4 | S4 + docs | full suite + fmt + clippy, PRD/help/docs updated, board refresh | |
+| T2 | S2 | `--check CODE` filter in `cli/` (arg, unknown code = invalid argument), tests | `55a32a9` |
+| T3 | S3 | `doctor repair` subcommand (`--plan/--dry-run/--apply`), repairable vs canonical classification, replaces `--repair`; tests incl. rollback proof | `ebf81d8` |
+| T4 | S4 + docs | full suite + fmt + clippy, PRD/help/docs updated, board refresh | `e11c8fe` |
 
 ## Log
 
@@ -58,5 +58,15 @@ Branch: `feat/doctor-contract`. Evidence: `tmp/bench/report.md` item 8
   authored lines — past the ~400 slice) because the contract rewrite touches
   every check construction atomically and splitting it would leave a
   half-old envelope at the boundary. Delivery strategy for the rest: T2
-  (filter) and T3 (repair) are separate slices under the slice size; T4
-  (docs + board) closes the feature.
+  (docs + board) closes the feature. T2 landed at `55a32a9` (slice total 1009
+  lines across two commits — the feature's delivery slice remains T1+T2 as
+  one reviewable PR unit of the same concern, the contract; T3+T4 form the
+  second).
+- **L4** (2026-10-24) — feature complete on the branch: T1 `339a435`, T2
+  `55a32a9`, T3 `ebf81d8`, T4 `e11c8fe` (1719 authored lines, 4 commits).
+  Checks: 21 cargo test binaries green, fmt clean, clippy at the 36-warning
+  baseline; node extension suite untouched (no MCP/extension surface
+  changed). The smoke of all three repair modes caught two coherence
+  defects (contradictory backup advice on an FTS-only canonical failure;
+  wire/as_str action mismatch) — both fixed and pinned. PR + merge are the
+  operator's call; the board already notes the branch as delivered-pending.

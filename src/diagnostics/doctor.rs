@@ -256,18 +256,72 @@ impl DoctorReport {
     }
 }
 
-/// `doctor repair` additionally emits this block.
+/// `doctor repair` emits this block. One type for all three modes — the
+/// `mode` field says which ran.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct RepairReport {
+    /// plan | dry_run | apply.
+    pub mode: RepairMode,
+    /// The failing checks this repair fixes, and how.
+    pub actions: Vec<PlannedAction>,
+    /// The failing checks no repair can fix, with their safe next step.
+    pub skipped: Vec<Check>,
     /// memories_fts was dropped and re-created.
     pub fts_recreated: bool,
     /// All five FTS5 triggers were re-created.
     pub triggers_recreated: bool,
     /// Number of active + non-deleted rows inserted during reindex.
     pub reindexed: usize,
-    /// All checks passed after the repair.
+    /// `PRAGMA journal_mode=WAL` was executed (apply only — never a dry-run).
+    pub wal_reactivated: bool,
+    /// All checks passed after this command ran.
     pub healthy_after: bool,
+}
+
+/// What `doctor repair` does to one failing check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepairAction {
+    /// Drop and re-create `memories_fts`, its triggers, and reindex every
+    /// active row (fixes the whole FTS family and a missing
+    /// `memories_fts` table).
+    #[serde(rename = "rebuild_memories_fts")]
+    RebuildFts,
+    /// `PRAGMA journal_mode=WAL` (instant, no data is rewritten).
+    ReactivateWal,
+}
+
+impl RepairAction {
+    /// The wire/string form.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RepairAction::RebuildFts => "rebuild_memories_fts",
+            RepairAction::ReactivateWal => "reactivate_wal",
+        }
+    }
+}
+
+/// One planned repair: which check, why, and the action that fixes it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PlannedAction {
+    pub check_id: CheckId,
+    pub reason_code: ReasonCode,
+    pub action: RepairAction,
+}
+
+/// The mode `doctor repair` ran in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepairMode {
+    /// Read-only: what would be repaired (the default).
+    Plan,
+    /// The repair runs inside a savepoint that is rolled back: the counts
+    /// are real, nothing is written. The WAL pragma is listed, never run.
+    DryRun,
+    /// The repair for real.
+    Apply,
 }
 
 // ---------------------------------------------------------------------------
@@ -345,11 +399,19 @@ fn check_canonical_tables(conn: &Connection) -> Check {
             "all canonical tables present".into(),
         )
     } else {
-        Check::fail(
+        let mut check = Check::fail(
             CheckId::CanonicalTables,
             ReasonCode::CanonicalTablesMissing,
             format!("missing tables: {}", missing.join(", ")),
-        )
+        );
+        // Contextual next step: when the only missing table is the FTS
+        // index, the rebuild recreates it — telling the operator to restore
+        // a backup would be wrong. Anything else really is canonical damage.
+        if missing.len() == 1 && missing[0] == "memories_fts" {
+            check.safe_next_step =
+                Some("run `mnexis doctor repair --apply` (recreates memories_fts)".into());
+        }
+        check
     }
 }
 
@@ -685,29 +747,166 @@ pub fn check_line(check: &Check) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Repair entry point
+// Repair: plan / dry-run / apply
 // ---------------------------------------------------------------------------
 
-/// Execute `doctor repair --apply`: rebuild `memories_fts` and its triggers
-/// from the canonical schema (`storage::sqlite::MEMORIES_FTS_SCHEMA`) and
-/// reindex all active+non-deleted rows, content, title, topic key and
-/// keywords alike.
-///
-/// The rebuild is one atomic unit of work (a savepoint), so a repair that
-/// fails leaves the profile as it was. On success, re-runs all checks and
-/// returns both the repair report and the post-repair health report.
-pub fn repair_and_rerun(conn: &Connection) -> Result<(RepairReport, DoctorReport), MnexisError> {
-    let reindexed = rebuild_memories_fts(conn)?;
+/// Which canonical tables are missing (shared by the check and the repair
+/// plan, so they can never disagree).
+fn missing_canonical_tables(conn: &Connection) -> Vec<&'static str> {
+    CANONICAL_TABLES
+        .iter()
+        .filter(|table| {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            exists == 0
+        })
+        .copied()
+        .collect()
+}
 
-    // Re-run all checks to confirm health after repair.
-    let after_report = run_checks(conn);
+/// The action that repairs one failing check, or `None` when nothing safe
+/// can fix it. `canonical_tables` is the subtle one: a missing
+/// `memories_fts` is an index problem the rebuild recreates — any other
+/// missing table is canonical damage a repair must refuse to touch.
+fn action_for(conn: &Connection, check: &Check) -> Option<RepairAction> {
+    match check.check_id {
+        CheckId::CanonicalTables => {
+            let missing = missing_canonical_tables(conn);
+            if missing.len() == 1 && missing[0] == "memories_fts" {
+                Some(RepairAction::RebuildFts)
+            } else {
+                None
+            }
+        }
+        CheckId::FtsReadable | CheckId::FtsShape | CheckId::FtsInvariant => {
+            Some(RepairAction::RebuildFts)
+        }
+        CheckId::WalMode => Some(RepairAction::ReactivateWal),
+        CheckId::SchemaVersion | CheckId::Integrity => None,
+    }
+}
 
-    let repair_report = RepairReport {
-        fts_recreated: true,
-        triggers_recreated: true,
-        reindexed,
-        healthy_after: after_report.is_healthy(),
+/// Split the failing checks of a report into (repairable actions,
+/// unfixable checks). Passing checks are ignored.
+fn plan_actions(conn: &Connection, report: &DoctorReport) -> (Vec<PlannedAction>, Vec<Check>) {
+    let mut actions = Vec::new();
+    let mut skipped = Vec::new();
+    for check in &report.checks {
+        if check.ok {
+            continue;
+        }
+        match action_for(conn, check) {
+            Some(action) => actions.push(PlannedAction {
+                check_id: check.check_id,
+                reason_code: check
+                    .reason_code
+                    .expect("a failing check carries its reason code"),
+                action,
+            }),
+            None => skipped.push(check.clone()),
+        }
+    }
+    (actions, skipped)
+}
+
+/// `doctor repair --plan` (also the default): what would be repaired, what
+/// cannot be fixed, and the current state. Reads only — writes nothing.
+pub fn plan_repair(conn: &Connection) -> (RepairReport, DoctorReport) {
+    let report = run_checks(conn);
+    let (actions, skipped) = plan_actions(conn, &report);
+    let repair = RepairReport {
+        mode: RepairMode::Plan,
+        actions,
+        skipped,
+        fts_recreated: false,
+        triggers_recreated: false,
+        reindexed: 0,
+        wal_reactivated: false,
+        healthy_after: report.is_healthy(),
     };
+    (repair, report)
+}
 
-    Ok((repair_report, after_report))
+/// `doctor repair --apply`: perform the planned actions and re-run every
+/// check. Only what is broken is touched — a healthy store is a no-op. The
+/// FTS rebuild is one atomic unit of work (its own savepoint), so a repair
+/// that fails leaves the profile as it was.
+pub fn apply_repair(conn: &Connection) -> Result<(RepairReport, DoctorReport), MnexisError> {
+    let before = run_checks(conn);
+    let (actions, skipped) = plan_actions(conn, &before);
+    let rebuild = actions.iter().any(|a| a.action == RepairAction::RebuildFts);
+    let wal = actions
+        .iter()
+        .any(|a| a.action == RepairAction::ReactivateWal);
+
+    let mut reindexed = 0;
+    if rebuild {
+        reindexed = rebuild_memories_fts(conn)?;
+    }
+    let mut wal_reactivated = false;
+    if wal {
+        conn.execute_batch("PRAGMA journal_mode=WAL")
+            .map_err(|e| MnexisError::busy(format!("reactivate WAL: {e}")))?;
+        wal_reactivated = true;
+    }
+
+    let after = run_checks(conn);
+    let repair = RepairReport {
+        mode: RepairMode::Apply,
+        actions,
+        skipped,
+        fts_recreated: rebuild,
+        triggers_recreated: rebuild,
+        reindexed,
+        wal_reactivated,
+        healthy_after: after.is_healthy(),
+    };
+    Ok((repair, after))
+}
+
+/// `doctor repair --dry-run`: the FTS rebuild really runs inside a
+/// savepoint that is rolled back — the counts are measured, the store is
+/// untouched. The WAL pragma cannot run inside a transaction, so it is
+/// planned and never executed here; `--apply` runs it.
+pub fn dry_run_repair(conn: &Connection) -> Result<(RepairReport, DoctorReport), MnexisError> {
+    let before = run_checks(conn);
+    let (actions, skipped) = plan_actions(conn, &before);
+    let rebuild = actions.iter().any(|a| a.action == RepairAction::RebuildFts);
+
+    let mut reindexed = 0;
+    if rebuild {
+        conn.execute_batch("SAVEPOINT doctor_repair_dry_run")
+            .map_err(|e| MnexisError::busy(format!("dry-run savepoint: {e}")))?;
+        match rebuild_memories_fts(conn) {
+            Ok(count) => reindexed = count,
+            Err(error) => {
+                // Undo whatever the attempt did, then report the failure.
+                let _ = conn.execute_batch(
+                    "ROLLBACK TO doctor_repair_dry_run; RELEASE doctor_repair_dry_run",
+                );
+                return Err(error);
+            }
+        }
+        conn.execute_batch("ROLLBACK TO doctor_repair_dry_run; RELEASE doctor_repair_dry_run")
+            .map_err(|e| MnexisError::busy(format!("dry-run rollback: {e}")))?;
+    }
+
+    // Post-rollback: the original state, by construction.
+    let after = run_checks(conn);
+    let repair = RepairReport {
+        mode: RepairMode::DryRun,
+        actions,
+        skipped,
+        fts_recreated: false,
+        triggers_recreated: false,
+        reindexed,
+        wal_reactivated: false,
+        healthy_after: after.is_healthy(),
+    };
+    Ok((repair, after))
 }

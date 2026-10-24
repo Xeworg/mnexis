@@ -112,7 +112,14 @@ What survives, because it is a mechanism and not a count:
 
 Everything else needs more runs before it is claimed.
 
-### 2. C3 — `doctor` with a stable JSON envelope
+### 2. C3 — `doctor` with a stable JSON envelope — **delivered**
+
+Implemented on `feat/doctor-contract` (odd/tasks/doctor-contract.md, T1–T4):
+the envelope (`check_id`, `severity`, `reason_code`, `evidence`,
+`safe_next_step`, top-level `status`/`summary`), the `--check CODE` filter,
+and `doctor repair --plan|--dry-run|--apply` with the repairable /
+not-repairable split. The old `--repair` flag is gone (no users yet).
+Awaiting PR + merge; when it lands, move it to the PR table above.
 
 Five checks today, no contract. The other engine has ten named checks with a
 machine envelope (`status`, `summary`, `checks[].check_id`, `severity`,
