@@ -1000,8 +1000,9 @@ export default function mnexisMemoryExtension(pi) {
 		description:
 			"Call this FIRST, at the start of every session and before you change code that already " +
 			"exists: it returns the namespace this workspace writes into, the read and write " +
-			"allowlists, how many memories the scope can see, and the most recent of them. The " +
-			"decisions behind the code live here, not in the files.",
+			"allowlists, how many memories the scope can see, and the most recent of them — each " +
+			"with its title and a preview, never the whole record (open one with mnexis_show when " +
+			"it is the memory you need). The decisions behind the code live here, not in the files.",
 		parameters: {
 			type: "object",
 			properties: {},

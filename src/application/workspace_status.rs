@@ -4,7 +4,9 @@
 //! `mnexis status` and the MCP `memory_workspace` tool both render this
 //! payload, so the CLI and the agent cannot drift: the workspace the process
 //! runs in, the profile's read and write allowlists, how many memories the
-//! scope can see, and the most recent of them.
+//! scope can see, and the most recent of them — each with its identity and
+//! a preview of its content (#53). The first answer a session reads is
+//! priced like every other read: the full record is one `mnexis show` away.
 //!
 //! The workspace namespace is reported even when the scope cannot read it:
 //! the agent still has to know where a write would land. In that case the
@@ -15,9 +17,9 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::application::MemoryService;
+use crate::application::preview::MemoryPreview;
 use crate::application::workspace::current_workspace;
 use crate::domain::error::MnexisError;
-use crate::domain::memory::Memory;
 use crate::domain::repository::MemoryRepository;
 
 /// The workspace → namespace and scope → recent memories payload shared by
@@ -30,8 +32,10 @@ pub struct WorkspaceStatus {
     pub scope: StatusScope,
     /// How many memories the scope can see, in every namespace it reads.
     pub memory_count: i64,
-    /// The most recent memories the caller can read, newest first.
-    pub recent: Vec<RecentMemory>,
+    /// The most recent memories the caller can read, newest first — the
+    /// priced projection (`MemoryPreview`): identity and a preview, the same
+    /// shape `list` answers with. The full record is one `mnexis show` away.
+    pub recent: Vec<MemoryPreview>,
 }
 
 /// The workspace the process runs in.
@@ -59,34 +63,6 @@ pub struct StatusScope {
     pub allow_global: bool,
     /// Whether reads are open across every namespace.
     pub allow_read_all: bool,
-}
-
-/// One entry of the recent list: enough to recognize a memory and open it,
-/// without the internal bookkeeping fields.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct RecentMemory {
-    /// The memory's stable identifier, as `mnexis show` expects it.
-    pub uuid: String,
-    /// The namespace the memory lives in.
-    pub namespace: String,
-    /// The memory's content, verbatim.
-    pub content: String,
-    /// The memory's current revision.
-    pub revision: i32,
-    /// When the memory was last written (`RFC3339`).
-    pub updated_at: String,
-}
-
-impl RecentMemory {
-    fn from_memory(memory: &Memory) -> Self {
-        Self {
-            uuid: memory.uuid.clone(),
-            namespace: memory.namespace.clone(),
-            content: memory.content.clone(),
-            revision: memory.revision,
-            updated_at: memory.updated_at.clone(),
-        }
-    }
 }
 
 /// Build the status payload: where may I write, and what is already there?
@@ -122,6 +98,6 @@ pub fn workspace_status<R: MemoryRepository>(
             allow_read_all: scope.allow_read_all,
         },
         memory_count: service.count()?,
-        recent: recent.iter().map(RecentMemory::from_memory).collect(),
+        recent: crate::application::previews(&recent),
     })
 }

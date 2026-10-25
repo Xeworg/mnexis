@@ -440,28 +440,13 @@ impl McpServer {
             &self.data_dir,
             WORKSPACE_RECENT_LIMIT,
         )?;
-        // The title is the identity of a fact and the words are its
-        // vocabulary (identity-visibility S1, agent-keywords S4), and this is
-        // the first payload a session reads: the recent list says what each
-        // memory *is*. `RecentMemory` owns the rest of that shape; both are
-        // added here because the projection lives outside this change's edit
-        // surface.
-        let recent_uuids: Vec<String> = status.recent.iter().map(|m| m.uuid.clone()).collect();
-        let identities = identities_of(&svc, &recent_uuids)?;
         drop(svc);
-        let mut payload = serde_json::to_value(&status).unwrap_or(serde_json::Value::Null);
-        if let Some(recent) = payload.get_mut("recent").and_then(|r| r.as_array_mut()) {
-            for (item, (title, keywords)) in recent.iter_mut().zip(identities) {
-                if let Some(object) = item.as_object_mut() {
-                    object.insert("title".to_string(), serde_json::Value::String(title));
-                    object.insert(
-                        "keywords".to_string(),
-                        serde_json::to_value(keywords).unwrap_or(serde_json::Value::Null),
-                    );
-                }
-            }
-        }
-        Ok(serde_json::to_string_pretty(&payload).unwrap_or_default())
+        // The recent list is the priced projection (#53): identity and a
+        // preview per memory — the same shape `memory_list` answers with —
+        // so the first payload a session reads names what each memory *is*
+        // without pasting the whole record. The full text stays one
+        // `memory_get` away.
+        Ok(serde_json::to_string_pretty(&status).unwrap_or_default())
     }
 
     fn do_update(&self, args: UpdateArgs) -> Result<String, McpError> {

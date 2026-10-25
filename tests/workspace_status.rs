@@ -253,9 +253,15 @@ fn status_reports_where_to_write_and_the_newest_memories_first() {
     );
 
     let recent = status["recent"].as_array().expect("recent array");
+    // The recent list is priced (#53): identity and preview, never the
+    // whole record — for these short contents the preview is the full text.
+    assert!(
+        recent.iter().all(|m| m.get("content").is_none()),
+        "the recent list must not paste the full record: {status}"
+    );
     let contents: Vec<&str> = recent
         .iter()
-        .map(|m| m["content"].as_str().expect("recent content"))
+        .map(|m| m["preview"].as_str().expect("recent preview"))
         .collect();
     assert_eq!(
         contents,
@@ -310,15 +316,20 @@ fn status_prints_one_line_per_fact() {
     );
     assert_eq!(
         lines.get(2).copied(),
-        Some("memories: 1 (1 most recent)"),
-        "line 3 is the count: {text:?}"
+        Some("memories: 1 (1 most recent, previews)"),
+        "line 3 is the count, and says the list is priced: {text:?}"
     );
     assert_eq!(
         lines.get(3).copied(),
-        Some(format!("  [snake] {uuid} \"la primera\"").as_str()),
-        "line 4 is the most recent memory: {text:?}"
+        Some(format!("  [snake] {uuid} \"\" — la primera").as_str()),
+        "line 4 is the most recent memory (title, then preview): {text:?}"
     );
-    assert_eq!(lines.len(), 4, "no other lines: {text:?}");
+    assert_eq!(
+        lines.get(4).copied(),
+        Some("full record: mnexis show <uuid>"),
+        "line 5 names how to open a record: {text:?}"
+    );
+    assert_eq!(lines.len(), 5, "no other lines: {text:?}");
 }
 
 /// The workspace namespace is what the agent needs to know even when its
@@ -359,7 +370,7 @@ fn a_workspace_namespace_that_only_a_marker_names_is_not_readable() {
         "the recent list falls back to the readable scope: {status}"
     );
     assert_eq!(recent[0]["namespace"].as_str(), Some("default"));
-    assert_eq!(recent[0]["content"].as_str(), Some("memoria visible"));
+    assert_eq!(recent[0]["preview"].as_str(), Some("memoria visible"));
 }
 
 /// A bound workspace may READ its namespace: the binding is a human

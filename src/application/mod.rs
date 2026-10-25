@@ -31,5 +31,5 @@ pub use service::{
     UpdateRequest,
 };
 pub use workspace_status::{
-    RecentMemory, StatusScope, StatusWorkspace, WorkspaceStatus, workspace_status,
+    StatusScope, StatusWorkspace, WorkspaceStatus, workspace_status,
 };

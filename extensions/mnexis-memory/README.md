@@ -17,7 +17,7 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 
 | Tool | Purpose |
 | --- | --- |
-| `mnexis_workspace` | First call of a session: the namespace this workspace writes into, the allowlists, and the most recent memories. |
+| `mnexis_workspace` | First call of a session: the namespace this workspace writes into, the allowlists, and the most recent memories — each with its title and a preview, never the whole record. |
 | `mnexis_save` | Store a durable, self-contained memory about the project. |
 | `mnexis_search` | Full-text search over the stored memories (ranked). |
 | `mnexis_list` | List what is already stored. |
