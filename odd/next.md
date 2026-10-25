@@ -436,7 +436,7 @@ nothing (**#55**), and the **re-measurement** of the door, which needs
 the bench environment (docker + the model provider) and cannot run in
 the sandbox that wrote it.
 
-**The identity debt, seen (#58).** The records that predate the
+**The identity debt, closed (#58).** The records that predate the
 identity work carried no title at all, so every priced answer named
 nothing — a uuid, a namespace and a preview, with no word saying what
 the fact *is*. Nothing repaired it and no check saw it: the doctor had
@@ -449,4 +449,11 @@ serves and the run does not fail on it. The status follows the
 severity, not the count of green checks: a warning is a gap, not a
 broken store.
 
-
+The repair (`doctor repair --plan|--dry-run|--apply`) fills the missing
+titles from each record's **own text** — its first sentence, the same
+thing the agent writes by hand — and the topic key that title yields,
+exactly as the save path derives it. A record whose text yields nothing
+is reported, not invented, and a key another record already holds is not
+written: merging two facts is the agent's decision, not the doctor's.
+The fact does not change, so the revision does not move and the history
+keeps what it says: only the missing identity is filled.

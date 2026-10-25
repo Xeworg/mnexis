@@ -189,7 +189,8 @@ impl ReasonCode {
                 "restore from an export or backup; a failed integrity check is not repairable in place"
             }
             ReasonCode::TitlesMissing => {
-                "give each of them a title with `mnexis update <uuid> --title \"<what the fact is>\"`"
+                "run `mnexis doctor repair --plan` to see how the missing titles would be filled \
+                 from each record's own text"
             }
             ReasonCode::TitlesUnreadable => {
                 "restore the data directory from a backup; the records cannot be read"
@@ -314,6 +315,12 @@ pub struct RepairReport {
     pub reindexed: usize,
     /// `PRAGMA journal_mode=WAL` was executed (apply only — never a dry-run).
     pub wal_reactivated: bool,
+    /// How many records got the title their own text yields (dry-run:
+    /// measured; apply: written).
+    pub titles_derived: usize,
+    /// The records left without a title: their text yields none, or the
+    /// key their title would give is already another record's.
+    pub titles_undeducible: Vec<String>,
     /// All checks passed after this command ran.
     pub healthy_after: bool,
 }
@@ -329,6 +336,10 @@ pub enum RepairAction {
     RebuildFts,
     /// `PRAGMA journal_mode=WAL` (instant, no data is rewritten).
     ReactivateWal,
+    /// Fill the missing titles from each record's own text (writes to the
+    /// records; the fact does not change, only its missing identity does).
+    #[serde(rename = "derive_titles")]
+    DeriveTitles,
 }
 
 impl RepairAction {
@@ -337,6 +348,7 @@ impl RepairAction {
         match self {
             RepairAction::RebuildFts => "rebuild_memories_fts",
             RepairAction::ReactivateWal => "reactivate_wal",
+            RepairAction::DeriveTitles => "derive_titles",
         }
     }
 }
@@ -929,7 +941,7 @@ fn action_for(conn: &Connection, check: &Check) -> Option<RepairAction> {
             Some(RepairAction::RebuildFts)
         }
         CheckId::WalMode => Some(RepairAction::ReactivateWal),
-        CheckId::TitleShape => None,
+        CheckId::TitleShape => Some(RepairAction::DeriveTitles),
         CheckId::SchemaVersion | CheckId::Integrity => None,
     }
 }
@@ -957,6 +969,85 @@ fn plan_actions(conn: &Connection, report: &DoctorReport) -> (Vec<PlannedAction>
     (actions, skipped)
 }
 
+/// Fill the missing titles from each record's own text.
+///
+/// The title is what the fact IS, and a record without one is read but
+/// never named. The text the record already carries yields a title — its
+/// first sentence — the same thing the agent writes by hand. A record
+/// whose text yields nothing is left alone and reported: a title is never
+/// invented, and a title that names nothing is worse than no title.
+///
+/// The topic key travels with the title, exactly as the save path derives
+/// it: a record with a title and no key would be a second copy of a fact
+/// the engine already knows. The key is written only when the record has
+/// none and no other record in the namespace holds it — merging two facts
+/// is the agent's decision, not the doctor's.
+///
+/// The fact does not change, so the revision does not move and the
+/// history keeps what it says: only the missing identity is filled.
+fn derive_missing_titles(conn: &Connection) -> Result<(usize, Vec<String>), MnexisError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT id, uuid, namespace, topic_key, content FROM memories \
+             WHERE deleted = 0 AND trim(title) = '' ORDER BY created_at, uuid",
+        )
+        .map_err(|e| MnexisError::busy(format!("read the records without a title: {e}")))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|e| MnexisError::busy(format!("read the records without a title: {e}")))?;
+
+    let mut derived = 0usize;
+    let mut undeducible: Vec<String> = Vec::new();
+    for row in rows {
+        let (id, uuid, namespace, topic_key, content) =
+            row.map_err(|e| MnexisError::busy(format!("read the records without a title: {e}")))?;
+        let Some(title) = crate::domain::title::derive_title_from_content(&content) else {
+            undeducible.push(uuid);
+            continue;
+        };
+        let key = crate::domain::title::key_from_title(&title);
+        if key.is_empty() {
+            undeducible.push(uuid);
+            continue;
+        };
+        // The key the record already holds wins; a key another record
+        // holds is not written — the unique index would refuse it, and
+        // merging two facts is the agent's decision.
+        let new_key = if topic_key.trim().is_empty() {
+            let held: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM memories \
+                     WHERE namespace = ?1 AND topic_key = ?2 AND id != ?3",
+                    rusqlite::params![namespace, key, id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| MnexisError::busy(format!("read the topic keys: {e}")))?;
+            if held > 0 {
+                undeducible.push(uuid);
+                continue;
+            }
+            key
+        } else {
+            topic_key
+        };
+        conn.execute(
+            "UPDATE memories SET title = ?1, topic_key = ?2 WHERE id = ?3",
+            rusqlite::params![title, new_key, id],
+        )
+        .map_err(|e| MnexisError::busy(format!("write the title: {e}")))?;
+        derived += 1;
+    }
+    Ok((derived, undeducible))
+}
+
 /// `doctor repair --plan` (also the default): what would be repaired, what
 /// cannot be fixed, and the current state. Reads only — writes nothing.
 pub fn plan_repair(conn: &Connection) -> (RepairReport, DoctorReport) {
@@ -970,6 +1061,8 @@ pub fn plan_repair(conn: &Connection) -> (RepairReport, DoctorReport) {
         triggers_recreated: false,
         reindexed: 0,
         wal_reactivated: false,
+        titles_derived: 0,
+        titles_undeducible: Vec::new(),
         healthy_after: report.is_healthy(),
     };
     (repair, report)
@@ -986,6 +1079,9 @@ pub fn apply_repair(conn: &Connection) -> Result<(RepairReport, DoctorReport), M
     let wal = actions
         .iter()
         .any(|a| a.action == RepairAction::ReactivateWal);
+    let titles = actions
+        .iter()
+        .any(|a| a.action == RepairAction::DeriveTitles);
 
     let mut reindexed = 0;
     if rebuild {
@@ -997,6 +1093,29 @@ pub fn apply_repair(conn: &Connection) -> Result<(RepairReport, DoctorReport), M
             .map_err(|e| MnexisError::busy(format!("reactivate WAL: {e}")))?;
         wal_reactivated = true;
     }
+    let mut titles_derived = 0;
+    let mut titles_undeducible: Vec<String> = Vec::new();
+    if titles {
+        // The writes are one unit of work: a repair that fails leaves the
+        // profile as it was.
+        conn.execute_batch("SAVEPOINT doctor_repair_titles")
+            .map_err(|e| MnexisError::busy(format!("title savepoint: {e}")))?;
+        match derive_missing_titles(conn) {
+            Ok((derived, undeducible)) => {
+                titles_derived = derived;
+                titles_undeducible = undeducible;
+                conn.execute_batch("RELEASE doctor_repair_titles")
+                    .map_err(|e| MnexisError::busy(format!("title savepoint: {e}")))?;
+            }
+            Err(error) => {
+                let _ = conn.execute_batch(
+                    "ROLLBACK TO doctor_repair_titles; RELEASE doctor_repair_titles",
+                );
+                return Err(error);
+            }
+        }
+    }
+
     let after = run_checks(conn);
     let repair = RepairReport {
         mode: RepairMode::Apply,
@@ -1006,6 +1125,8 @@ pub fn apply_repair(conn: &Connection) -> Result<(RepairReport, DoctorReport), M
         triggers_recreated: rebuild,
         reindexed,
         wal_reactivated,
+        titles_derived,
+        titles_undeducible,
         healthy_after: after.is_healthy(),
     };
     Ok((repair, after))
@@ -1019,15 +1140,29 @@ pub fn dry_run_repair(conn: &Connection) -> Result<(RepairReport, DoctorReport),
     let before = run_checks(conn);
     let (actions, skipped) = plan_actions(conn, &before);
     let rebuild = actions.iter().any(|a| a.action == RepairAction::RebuildFts);
+    let titles = actions
+        .iter()
+        .any(|a| a.action == RepairAction::DeriveTitles);
 
     let mut reindexed = 0;
-    if rebuild {
+    let mut titles_derived = 0;
+    let mut titles_undeducible: Vec<String> = Vec::new();
+    if rebuild || titles {
         conn.execute_batch("SAVEPOINT doctor_repair_dry_run")
             .map_err(|e| MnexisError::busy(format!("dry-run savepoint: {e}")))?;
         let mut failure: Option<MnexisError> = None;
         if rebuild {
             match rebuild_memories_fts(conn) {
                 Ok(count) => reindexed = count,
+                Err(error) => failure = Some(error),
+            }
+        }
+        if failure.is_none() && titles {
+            match derive_missing_titles(conn) {
+                Ok((derived, undeducible)) => {
+                    titles_derived = derived;
+                    titles_undeducible = undeducible;
+                }
                 Err(error) => failure = Some(error),
             }
         }
@@ -1051,6 +1186,8 @@ pub fn dry_run_repair(conn: &Connection) -> Result<(RepairReport, DoctorReport),
         triggers_recreated: false,
         reindexed,
         wal_reactivated: false,
+        titles_derived,
+        titles_undeducible,
         healthy_after: after.is_healthy(),
     };
     Ok((repair, after))

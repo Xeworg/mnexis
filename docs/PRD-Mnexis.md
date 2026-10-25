@@ -325,7 +325,7 @@ Migraciones versionadas bajo exclusión; backup coherente antes de migraciones d
 
 Datos bajo directorio de plataforma; precedencia `--data-dir` > `MNEXIS_HOME` > valor estándar. Configuración legible separada; `config show` muestra rutas efectivas. Builds objetivo: Linux amd64/arm64, macOS arm64, Windows amd64, sujetos a validación.
 
-`doctor` revisa integridad SQL y FTS5 con un contrato estable por check (`check_id`, `severity`, `reason_code`, `evidence`, `safe_next_step`; `--check CODE` filtra). `doctor repair --plan|--dry-run|--apply` es explícito, mide antes de escribir y distingue tareas reconstruibles de daños canónicos. Una advertencia no falla la corrida: un registro sin título se lee igual, solo que sin nombre. El check `title_shape` ve los registros que no tienen título: la identidad de esos hechos falta en cada respuesta. Logs agregados: latencia, modo, conteos y fallos, sin consultas ni contenido salvo diagnóstico local opt-in.
+`doctor` revisa integridad SQL y FTS5 con un contrato estable por check (`check_id`, `severity`, `reason_code`, `evidence`, `safe_next_step`; `--check CODE` filtra). `doctor repair --plan|--dry-run|--apply` es explícito, mide antes de escribir y distingue tareas reconstruibles de daños canónicos. Una advertencia no falla la corrida: un registro sin título se lee igual, solo que sin nombre. El check `title_shape` ve los registros que no tienen título, y la reparación `derive_titles` se lo da a partir del propio texto del registro (su primera frase) y del topic key que ese título produce; los que no puede derivar se reportan, nunca se inventan. Logs agregados: latencia, modo, conteos y fallos, sin consultas ni contenido salvo diagnóstico local opt-in.
 
 ## 15. Evaluación y aceptación
 
