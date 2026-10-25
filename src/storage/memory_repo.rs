@@ -924,13 +924,17 @@ impl MemoryRepository for SqliteMemoryRepository {
         }
         self.conn
             .execute(
-                "INSERT INTO sessions (id, namespace, directory, started_at) \
-                 VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO sessions (id, namespace, directory, started_at, \
+                 branch, branch_sha, branch_remote) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     session.id,
                     session.namespace,
                     session.directory,
-                    session.started_at
+                    session.started_at,
+                    session.branch,
+                    session.branch_sha,
+                    session.branch_remote
                 ],
             )
             .map_err(|e| MnexisError::busy(format!("session start: {e}")))?;
@@ -969,7 +973,8 @@ impl MemoryRepository for SqliteMemoryRepository {
     fn get_session(&self, id: &str) -> Result<Option<Session>, MnexisError> {
         self.conn
             .query_row(
-                "SELECT id, namespace, directory, started_at, ended_at, summary \
+                "SELECT id, namespace, directory, started_at, ended_at, summary, \
+                 branch, branch_sha, branch_remote \
                  FROM sessions WHERE id = ?1",
                 [id],
                 |row| {
@@ -980,6 +985,9 @@ impl MemoryRepository for SqliteMemoryRepository {
                         started_at: row.get(3)?,
                         ended_at: row.get(4)?,
                         summary: row.get(5)?,
+                        branch: row.get(6)?,
+                        branch_sha: row.get(7)?,
+                        branch_remote: row.get(8)?,
                     })
                 },
             )
@@ -1011,6 +1019,9 @@ impl MemoryRepository for SqliteMemoryRepository {
                     started_at: row.get(3)?,
                     ended_at: row.get(4)?,
                     summary: row.get(5)?,
+                    branch: row.get(6)?,
+                    branch_sha: row.get(7)?,
+                    branch_remote: row.get(8)?,
                 })
             })
             .map_err(|e| MnexisError::busy(format!("sessions list: {e}")))?;
@@ -1028,7 +1039,8 @@ impl MemoryRepository for SqliteMemoryRepository {
         // answer stays deterministic.
         self.conn
             .query_row(
-                "SELECT id, namespace, directory, started_at, ended_at, summary FROM sessions \
+                "SELECT id, namespace, directory, started_at, ended_at, summary, \
+                 branch, branch_sha, branch_remote FROM sessions \
                  WHERE namespace = ?1 AND ended_at IS NOT NULL \
                  ORDER BY ended_at DESC, started_at DESC, rowid DESC LIMIT 1",
                 [namespace],
@@ -1040,6 +1052,9 @@ impl MemoryRepository for SqliteMemoryRepository {
                         started_at: row.get(3)?,
                         ended_at: row.get(4)?,
                         summary: row.get(5)?,
+                        branch: row.get(6)?,
+                        branch_sha: row.get(7)?,
+                        branch_remote: row.get(8)?,
                     })
                 },
             )
@@ -1229,7 +1244,8 @@ fn namespace_filter(namespaces: &NamespaceScope) -> crate::retrieval::NamespaceF
 /// The session query for a namespace filter.
 fn session_query(ns: &crate::retrieval::NamespaceFilter) -> (String, Vec<String>) {
     let mut sql = String::from(
-        "SELECT id, namespace, directory, started_at, ended_at, summary FROM sessions WHERE 1=1",
+        "SELECT id, namespace, directory, started_at, ended_at, summary, \
+         branch, branch_sha, branch_remote FROM sessions WHERE 1=1",
     );
     let mut params: Vec<String> = Vec::new();
     match ns {

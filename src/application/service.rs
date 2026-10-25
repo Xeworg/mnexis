@@ -4,6 +4,7 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 
 use crate::application::io::{ConflictPolicy, ImportDecision, LocalIndex};
 use crate::domain::error::MnexisError;
@@ -793,6 +794,12 @@ impl<R: MemoryRepository> MemoryService<R> {
     /// The id is the caller's: the agent never invents one, and a session
     /// that already exists is returned as it is — the engine never restarts
     /// a session. The namespace obeys the same rules as a memory write.
+    ///
+    /// The session also records **its working context**: the branch, the
+    /// commit and the canonical remote of the repository it happened in.
+    /// That anchor is what a later session needs to judge the work; no git,
+    /// no repository or a failing git is not an error — the columns stay
+    /// empty and the session is still a session.
     pub fn start_session(
         &mut self,
         id: &str,
@@ -809,6 +816,7 @@ impl<R: MemoryRepository> MemoryService<R> {
         let ns = self.target_namespace(namespace)?;
         self.scope.authorize_write(&ns)?;
         self.scope.authorize_operation(Operation::Save)?;
+        let anchor = crate::application::workspace::git_anchor(&session_directory(directory));
         self.repo.start_session(&Session {
             id: id.to_string(),
             namespace: ns,
@@ -816,6 +824,9 @@ impl<R: MemoryRepository> MemoryService<R> {
             started_at: now.to_string(),
             ended_at: None,
             summary: None,
+            branch: anchor.branch,
+            branch_sha: anchor.sha,
+            branch_remote: anchor.remote,
         })
     }
 
@@ -1266,6 +1277,20 @@ fn validate_query(query: &str, max_bytes: usize) -> Result<(), MnexisError> {
     } else {
         Ok(())
     }
+}
+
+/// The directory a session happened in: the one the caller named, or the one
+/// the process runs in when the caller named none.
+///
+/// The named directory wins, because that is what the session says it ran
+/// in; the process's own directory is the fallback for the session that
+/// names none.
+fn session_directory(directory: &str) -> PathBuf {
+    let named = directory.trim();
+    if named.is_empty() {
+        return std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    }
+    PathBuf::from(named)
 }
 
 /// Hash the *logical* parts of a save request. The uuid is excluded

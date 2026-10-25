@@ -53,11 +53,11 @@ before. That makes the recall of a session load-bearing, not a convenience.
 
 ## Tasks
 
-| ID | Spec | Route | Allowed edit surfaces |
-| --- | --- | --- | --- |
+| ID | Spec | Route | Allowed edit surfaces | Commit |
+| --- | --- | --- | --- | --- |
 | T1 | S1 | the recall: a service method, `mnexis recall`, the MCP tool | `d0a7527` |
-| T2 | S2 | the provenance: migration 008, the capture at session start | `src/storage/sqlite.rs`, `src/application/workspace.rs`, `src/application/service.rs`, `src/domain/session.rs`, `src/storage/memory_repo.rs`, `tests/session_recall.rs` |
-| T3 | S3 + S4 | the validator, and the recall showing it | `src/application/git_state.rs`, `src/application/workspace.rs`, `src/application/session_recall.rs`, `src/cli/recall_cmd.rs`, `src/mcp/server.rs`, `tests/session_recall.rs` |
+| T2 | S2 | the provenance: migration 008, the capture at session start | `src/storage/sqlite.rs`, `src/application/workspace.rs`, `src/application/service.rs`, `src/domain/session.rs`, `src/storage/memory_repo.rs`, `src/diagnostics/doctor.rs`, `src/cli/mod.rs`, `src/cli/stats_cmd.rs`, `src/mcp/tools.rs`, `tests/session_recall.rs`, `tests/sqlite_fts5.rs`, `README.md` | `3468667` |
+| T3 | S3 + S4 | the validator, and the recall showing it | `src/application/git_state.rs`, `src/application/workspace.rs`, `src/application/session_recall.rs`, `src/cli/recall_cmd.rs`, `src/mcp/server.rs`, `tests/session_recall.rs` | |
 
 ## Log
 
@@ -121,3 +121,57 @@ before. That makes the recall of a session load-bearing, not a convenience.
   anchor the agent asks for when it saves) — the session is the context, the
   memory is the fact, and that one needs the measurement this cycle learned
   to ask for: does the agent use it when it matters?
+
+- **L5** (2026-10-26) — **T2 is done** (`3468667`, on `feat/session-recall`):
+  the session records its working context. The decisions the implementation
+  took, with the code as the evidence:
+  - **The capture is in the service, not in the CLI.** The CLI and the MCP
+    server are two doors into the same service, so a capture in the CLI
+    would leave the agent's own sessions (the MCP door) without an anchor.
+  - **The directory the session names is the source; the process's own
+    directory is the fallback.** `mnexis session --id X --directory D`
+    anchors to `D`, and a session that names none anchors to the directory
+    the process runs in. The recorded `directory` field itself is
+    unchanged: it stays what the caller said, empty included.
+  - **The anchor is the repository's, not the directory's.** A session that
+    happens in a subdirectory is anchored to the repository it belongs to
+    (`git rev-parse --show-toplevel`), because that is the thing a branch
+    lives in.
+  - **A detached HEAD has no branch.** `git symbolic-ref --short HEAD`
+    fails when the HEAD is detached, and the engine records no branch
+    instead of recording the word `HEAD` as if it were one. The commit is
+    still recorded: it is the part of the anchor that does not rot.
+  - **The three columns are probed one by one.** `ALTER TABLE ... ADD
+    COLUMN` adds one column at a time and cannot be conditional in SQL, so
+    migration 008 probes each column and adds only the missing one
+    (migration 007's pattern). A half-applied migration heals on the next
+    run instead of failing.
+  - **The schema version moves to 8**, and the doctor, the stats and the
+    migration tests follow it: a store at 8 is not "newer than this
+    binary".
+
+  The **shape of the session record changed**: `mnexis session` and
+  `mnexis sessions` now carry `branch`, `branch_sha` and `branch_remote`
+  (null when there is nothing to record). The anchor has to be readable
+  somewhere, and the session record is where it lives. The human rendering
+  of both commands did not change.
+
+  Checks: 23 cargo test binaries green (7 new tests: 5 in
+  `tests/session_recall.rs` and 2 on the **upgrade path** of the migration —
+  a profile that already holds sessions, and a migration that failed
+  halfway), fmt clean, clippy at the same 36-warning baseline, and a
+  **differential against the base commit** (`main`) over the session
+  commands: the only differences are the three new fields, the schema
+  version and the help text of `--directory` (which said "informational" and
+  now says that the working context is recorded from it).
+
+  **T3 is NOT done.** The validator still has to answer `merged` /
+  `not_merged` / `unknown` when the anchor is read, and the recall has to
+  show it. The decisions for it are already written (L2).
+
+  **Delivery note:** the branch is now three commits and about 1,600
+  authored lines ahead of `main` (T1 + T2). The slice boundary is T1 |
+  T2 | T3, one commit per task, and the delivery that fits the repo's
+  precedent is **one PR per task slice, stacked** (the way `doctor-contract`
+  went out as #31 + #34). The PRs are the operator's call at the close of
+  the feature.

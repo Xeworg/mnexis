@@ -214,7 +214,7 @@ pub enum Command {
         /// Namespace (default: the profile's default_namespace)
         #[arg(long)]
         namespace: Option<String>,
-        /// Where the session runs (informational)
+        /// Where the session runs (its working context is recorded from it)
         #[arg(long, value_name = "DIR")]
         directory: Option<String>,
     },
