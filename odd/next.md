@@ -19,6 +19,8 @@ out of it:
 | #29 | `identity-visibility` | the title travels with every read answer and the index covers it (migration 006); two defects fixed (a save writing into a dead record, the on-demand tools in the wrong namespace) |
 | #30 | `agent-keywords` | the words of a fact: the agent's own vocabulary, accumulated and indexed (migration 007) |
 | #31 + #34 | `doctor-contract` | the doctor answers with a stable machine contract (check_id, severity, reason_code, evidence, safe_next_step, status/summary), `--check CODE` filters, and `doctor repair --plan/--dry-run/--apply` separates what it fixes from canonical damage; the old `--repair` flag is gone |
+| #36 | `operational-commands` | `mnexis stats` (every namespace and the totals), `mnexis timeline <uuid>` (identity, recorded revisions, supersede links both ways), `project list --json` as a typed contract |
+| #38 | `read-granularity` | reading another project takes a human-granted permission: `config allow-read-namespace` (read only), a bound workspace may read its own namespace (the marker grants nothing), a refusal names the route, and the reserved `global` namespace cannot enter the allowlists |
 
 Everything is merged. `main` is clean and only `main` remains locally (plus
 the archived branches of the features that were measured and discarded, and
@@ -127,15 +129,38 @@ machine envelope (`status`, `summary`, `checks[].check_id`, `severity`,
 `doctor repair --plan|--dry-run|--apply` for seven specific codes. Small, and
 it is what an operator needs when something goes wrong.
 
-### 3. C4 — the operational commands — **delivered** (branch `feat/operational-commands`)
+### 3. C4 — the operational commands — **closed** (#36, in main)
 
 `mnexis stats` (what every namespace holds, and the totals), `mnexis timeline
 <uuid>` (one memory's life: identity, the revisions the store records, and
 its supersede links in both directions), and `project list --json` as a typed
-contract. Read-only, no TUI needed. Awaiting PR + merge.
+contract. Read-only, no TUI needed.
 
-`mnexis stats`, `mnexis timeline <uuid>`, `mnexis projects list`. Inspecting
-a namespace without opening the TUI. Small.
+### 3b. The closed default — **measured before it is flipped**
+
+The operator wants the agents not to see other projects' memories by default.
+The granularity is in (#38): reading and writing are two permissions, a bound
+workspace may read its own namespace, and every refusal names the route. What
+is left is the default itself: `allow_read_all` is `true` for new profiles.
+
+**It is not flipped yet, and it must not be flipped without the harness.**
+Three things the measurement has to answer (10+ runs per arm — n=3 is a smoke
+test, per the correction this board already made):
+
+- **Does the agent lose what it needs?** Cross-project findings when they
+  matter.
+- **Does the isolation create duplicates?** `UNIQUE(namespace, topic_key)`:
+  the same fact in two namespaces is two records, and an agent that cannot
+  read the other project re-saves it.
+- **How many refusals, and does the agent handle them?** The skill is not
+  read in 10 of 24 runs.
+
+**The hazard to solve first.** A read WITHOUT an explicit namespace is
+filtered by the scope and returns fewer rows **with no notice**; a read WITH
+an explicit namespace is denied. Under the closed default an agent searching
+without a namespace would read "no memories" where the truth is "no
+permission" — and then save the fact again. The closed default must say
+which it was: silence is what turns a permission into a duplicate.
 
 ### 4. B3 — the injected protocol block: measured, and **not** adopted
 
