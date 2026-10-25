@@ -256,6 +256,10 @@ impl McpServer {
             offset: args.offset,
         };
         let memories = svc.list(filter)?;
+        // The scope this read is bounded by: the answer declares it, so a
+        // short answer never reads as "there are no memories"
+        // (read-scope-disclosure S4).
+        let read_scope = svc.scope().read_scope_mode();
         // Which of these replaced which: the agent sees it in the same
         // answer, so it does not have to open every record to know which
         // one is current.
@@ -274,6 +278,7 @@ impl McpServer {
             "count": memories.len(),
             "items": items,
             "relations": relations_payload(&relations),
+            "read_scope": read_scope,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
@@ -532,6 +537,8 @@ impl McpServer {
             None => crate::domain::query::MatchMode::default(),
         };
         let hits = svc.search(&args.query, args.namespace.as_deref(), limit, mode)?;
+        // The scope this read is bounded by (read-scope-disclosure S4).
+        let read_scope = svc.scope().read_scope_mode();
         // Which of the hits replaced which, and what each hit *is*.
         let hit_uuids: Vec<String> = hits.iter().map(|h| h.uuid.clone()).collect();
         let relations = svc.relations_between(&hit_uuids)?;
@@ -562,6 +569,7 @@ impl McpServer {
             "count": hits.len(),
             "items": items,
             "relations": relations_payload(&relations),
+            "read_scope": read_scope,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }

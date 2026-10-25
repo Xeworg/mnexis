@@ -43,6 +43,25 @@ fn bootstrap_scoped_profile(data_dir: &std::path::Path) -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// A profile whose reads stay inside `read` while writes reach `write`, so a
+/// test can hold data the read scope hides (read-scope-disclosure S4).
+fn bootstrap_profile_with_scope(
+    data_dir: &std::path::Path,
+    read: &str,
+    write: &str,
+    allow_read_all: bool,
+    allow_global: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    bootstrap_profile(data_dir)?;
+    std::fs::write(
+        data_dir.join("mnexis.toml"),
+        format!(
+            "default_namespace = \"{read}\"\nread_namespaces = [\"{read}\"]\nwrite_namespaces = [\"{write}\"]\nallow_read_all = {allow_read_all}\nallow_global = {allow_global}\nexistence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n"
+        ),
+    )?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tool presence (S6)
 // ---------------------------------------------------------------------------
@@ -1767,6 +1786,118 @@ async fn the_read_payloads_carry_the_words() -> Result<(), Box<dyn std::error::E
         serde_json::json!(["puerto", "port"]),
         "the recent list carries the words: {parsed}"
     );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The scope a read was bounded by (read-scope-disclosure S4)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_mcp_read_tools_declare_the_scope_that_bounded_them()
+-> Result<(), Box<dyn std::error::Error>> {
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    for (allow_read_all, allow_global, expected) in [
+        (false, false, "restricted"),
+        (true, false, "except_global"),
+        (true, true, "all"),
+    ] {
+        let tmp = tempfile::tempdir_in("target")?;
+        let data_dir = tmp.path();
+        bootstrap_profile_with_scope(data_dir, "ns-a", "ns-a", allow_read_all, allow_global)?;
+        let transport =
+            TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+                cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+            }))?;
+        let client = ().serve(transport).await?;
+
+        call_tool_text(
+            &client,
+            "memory_save",
+            serde_json::json!({ "content": "memoria legible", "namespace": "ns-a" }),
+        )
+        .await?;
+
+        let text = call_tool_text(
+            &client,
+            "memory_search",
+            serde_json::json!({ "query": "memoria" }),
+        )
+        .await?;
+        let parsed: serde_json::Value = serde_json::from_str(&text)?;
+        assert_eq!(
+            parsed["read_scope"], expected,
+            "memory_search ({expected}): {parsed}"
+        );
+        // Additive: the answer keeps the fields it had.
+        assert_eq!(parsed["count"], 1, "memory_search: {parsed}");
+        assert!(parsed["items"].is_array(), "memory_search: {parsed}");
+        assert!(parsed["relations"].is_array(), "memory_search: {parsed}");
+
+        let text = call_tool_text(&client, "memory_list", serde_json::json!({})).await?;
+        let parsed: serde_json::Value = serde_json::from_str(&text)?;
+        assert_eq!(
+            parsed["read_scope"], expected,
+            "memory_list ({expected}): {parsed}"
+        );
+        assert_eq!(parsed["count"], 1, "memory_list: {parsed}");
+
+        client.cancel().await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_mcp_read_scope_names_no_namespace_and_counts_nothing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    // `ns-b` holds a memory this profile may not read: the declaration must
+    // not announce it, not even by counting it.
+    bootstrap_profile_with_scope(data_dir, "ns-a", "ns-b", false, false)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "memoria escondida", "namespace": "ns-b" }),
+    )
+    .await?;
+
+    let text = call_tool_text(
+        &client,
+        "memory_search",
+        serde_json::json!({ "query": "memoria" }),
+    )
+    .await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(
+        parsed["count"], 0,
+        "the scoped read returns fewer rows: {parsed}"
+    );
+    let scope = parsed["read_scope"].as_str().expect("read_scope is a word");
+    assert_eq!(scope, "restricted", "{parsed}");
+    assert!(
+        !scope.contains("ns-a") && !scope.contains("ns-b"),
+        "the mode names no namespace: {scope}"
+    );
+    assert!(
+        !scope.chars().any(|c| c.is_ascii_digit()),
+        "the mode carries no count: {scope}"
+    );
+
+    let text = call_tool_text(&client, "memory_list", serde_json::json!({})).await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(parsed["count"], 0, "{parsed}");
+    assert_eq!(parsed["read_scope"], "restricted", "{parsed}");
 
     client.cancel().await?;
     Ok(())

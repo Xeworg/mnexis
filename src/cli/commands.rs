@@ -384,6 +384,9 @@ pub fn search(
 ) -> Result<CommandOutcome, MnexisError> {
     let limit = clamp_limit(limit);
     let mode = MatchMode::parse(match_mode)?;
+    // The scope this read is bounded by: the answer declares it, so a short
+    // answer never reads as "there are no memories" (read-scope-disclosure S1).
+    let read_scope = profile.service_ref().scope().read_scope_mode();
     // service.search validates the query and authorizes the namespace.
     let hits = profile
         .service_ref()
@@ -398,10 +401,21 @@ pub fn search(
 
     if explain_hits {
         // Same filters as the repository's search path, on a second
-        // connection so the service keeps owning its own.
+        // connection so the service keeps owning its own. The namespace
+        // filter is the SCOPE's, not "any": the explanation has to describe
+        // the same rows the search would have returned. Without it, a term
+        // that only matches a namespace the caller cannot read made the
+        // whole command fail (NOT_FOUND) where the plain search had
+        // answered "nothing" — two different answers to the same question.
         let ns_filter = match &namespace {
             Some(ns) => NamespaceFilter::Namespace(ns.clone()),
-            None => NamespaceFilter::Any,
+            None => match profile.service_ref().scope().read_scope() {
+                crate::domain::scope::NamespaceScope::All => NamespaceFilter::Any,
+                crate::domain::scope::NamespaceScope::AllExcept(names) => {
+                    NamespaceFilter::AnyExcept(names)
+                }
+                crate::domain::scope::NamespaceScope::Only(names) => NamespaceFilter::Many(names),
+            },
         };
         let conn = profile.explain_connection()?;
         let explained = explain::explain(
@@ -453,12 +467,16 @@ pub fn search(
                 "namespace": namespace,
                 "count": explained.len(),
                 "items": items,
+                "read_scope": read_scope,
             }),
-            if text.is_empty() {
-                format!("query `{query}` matched 0 memories")
-            } else {
-                text
-            },
+            crate::cli::output::with_read_scope(
+                if text.is_empty() {
+                    format!("query `{query}` matched 0 memories")
+                } else {
+                    text
+                },
+                read_scope,
+            ),
         ));
     }
 
@@ -501,12 +519,16 @@ pub fn search(
             "count": hits.len(),
             "items": items,
             "relations": relations,
+            "read_scope": read_scope,
         }),
-        if text.is_empty() {
-            format!("query `{query}` matched 0 memories")
-        } else {
-            text
-        },
+        crate::cli::output::with_read_scope(
+            if text.is_empty() {
+                format!("query `{query}` matched 0 memories")
+            } else {
+                text
+            },
+            read_scope,
+        ),
     ))
 }
 
@@ -586,6 +608,7 @@ pub fn list(
     offset: usize,
     full: bool,
 ) -> Result<CommandOutcome, MnexisError> {
+    let read_scope = profile.service_ref().scope().read_scope_mode();
     let filter = ListFilter {
         namespace,
         state: state.as_deref().map(parse_state).transpose()?,
@@ -621,12 +644,16 @@ pub fn list(
             "count": memories.len(),
             "items": items,
             "relations": relations,
+            "read_scope": read_scope,
         }),
-        if text.is_empty() {
-            "no memories".to_string()
-        } else {
-            text
-        },
+        crate::cli::output::with_read_scope(
+            if text.is_empty() {
+                "no memories".to_string()
+            } else {
+                text
+            },
+            read_scope,
+        ),
     ))
 }
 
@@ -1235,17 +1262,27 @@ pub fn context(
         search: SearchFilter::default(),
         now: crate::cli::profile::now_rfc3339(),
     };
+    let read_scope = profile.service_ref().scope().read_scope_mode();
     let response = profile.service_ref().context(&req)?;
-    let json = serde_json::to_value(&response)
+    let mut json = serde_json::to_value(&response)
         .map_err(|e| MnexisError::invalid_argument("context", format!("serialise: {e}")))?;
+    if let Some(object) = json.as_object_mut() {
+        object.insert(
+            "read_scope".to_string(),
+            serde_json::to_value(read_scope).unwrap_or(serde_json::Value::Null),
+        );
+    }
     let count = response.items.len();
     Ok(CommandOutcome::new(
         json,
-        if count == 0 {
-            "no items selected".to_string()
-        } else {
-            format!("selected {count} items (tokens={})", response.tokens_used)
-        },
+        crate::cli::output::with_read_scope(
+            if count == 0 {
+                "no items selected".to_string()
+            } else {
+                format!("selected {count} items (tokens={})", response.tokens_used)
+            },
+            read_scope,
+        ),
     ))
 }
 

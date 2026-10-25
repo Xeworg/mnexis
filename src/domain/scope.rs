@@ -75,6 +75,37 @@ impl Default for ExistenceDisclosure {
     }
 }
 
+/// The mode a read without an explicit namespace is bounded by.
+///
+/// Three values, because `All` and `ExceptGlobal` are both "the reads are
+/// open" but only the second one hides something: an agent that cannot tell
+/// them apart would read "the reserved namespace is hidden" as "the profile
+/// is closed". The mode says whether an answer may be incomplete, and it
+/// never carries a count or a namespace: the shape of the allowlists is not
+/// disclosed, and a namespace the profile cannot read does not announce
+/// itself by existing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadScopeMode {
+    /// Every namespace, the reserved `global` literal included.
+    All,
+    /// Every namespace except the reserved `global` literal.
+    ExceptGlobal,
+    /// Only what the profile allows: the read allowlist plus the namespace
+    /// the workspace is bound to.
+    Restricted,
+}
+
+impl ReadScopeMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReadScopeMode::All => "all",
+            ReadScopeMode::ExceptGlobal => "except_global",
+            ReadScopeMode::Restricted => "restricted",
+        }
+    }
+}
+
 /// How a read without an explicit namespace is filtered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NamespaceScope {
@@ -148,16 +179,29 @@ impl AccessScope {
         self.write_namespaces.iter().any(|n| n == namespace)
     }
 
+    /// The mode a read without an explicit namespace is bounded by.
+    ///
+    /// This is the one place the three modes are decided, and
+    /// [`AccessScope::read_scope`] derives its filter from it: the rows a
+    /// read returns and the mode it declares cannot disagree.
+    pub fn read_scope_mode(&self) -> ReadScopeMode {
+        match (self.allow_read_all, self.allow_global) {
+            (true, true) => ReadScopeMode::All,
+            (true, false) => ReadScopeMode::ExceptGlobal,
+            (false, _) => ReadScopeMode::Restricted,
+        }
+    }
+
     /// The filter a read without an explicit namespace uses.
     ///
     /// `allow_read_all` opens the reads across projects; the reserved
     /// `global` literal stays outside them until `allow_global` permits
     /// it. A scoped profile reads only its read namespaces.
     pub fn read_scope(&self) -> NamespaceScope {
-        match (self.allow_read_all, self.allow_global) {
-            (true, true) => NamespaceScope::All,
-            (true, false) => NamespaceScope::AllExcept(vec!["global".to_string()]),
-            (false, _) => {
+        match self.read_scope_mode() {
+            ReadScopeMode::All => NamespaceScope::All,
+            ReadScopeMode::ExceptGlobal => NamespaceScope::AllExcept(vec!["global".to_string()]),
+            ReadScopeMode::Restricted => {
                 let mut names = self.read_namespaces.clone();
                 if self.allow_global && !names.iter().any(|n| n == "global") {
                     names.push("global".to_string());
@@ -285,6 +329,27 @@ mod tests {
     fn read_all_is_off_by_default_in_the_constructor() {
         let s = scope();
         assert!(!s.can_read("proyecto-c"));
+    }
+
+    #[test]
+    fn the_read_scope_mode_follows_the_two_permissions() {
+        // Open reads, reserved namespace closed: everything but `global`.
+        let s = scope().with_read_all(true);
+        assert_eq!(s.read_scope_mode(), ReadScopeMode::ExceptGlobal);
+        // Open reads and the reserved namespace permitted: everything.
+        let mut s = scope().with_read_all(true);
+        s.allow_global = true;
+        assert_eq!(s.read_scope_mode(), ReadScopeMode::All);
+        // Scoped reads: only the read namespaces, whatever `allow_global`
+        // says about the reserved namespace.
+        let mut s = scope();
+        assert_eq!(s.read_scope_mode(), ReadScopeMode::Restricted);
+        s.allow_global = true;
+        assert_eq!(s.read_scope_mode(), ReadScopeMode::Restricted);
+        // The word is the mode, never a namespace and never a count.
+        assert_eq!(ReadScopeMode::All.as_str(), "all");
+        assert_eq!(ReadScopeMode::ExceptGlobal.as_str(), "except_global");
+        assert_eq!(ReadScopeMode::Restricted.as_str(), "restricted");
     }
 
     #[test]
