@@ -203,6 +203,8 @@ upgrade           check for a newer release and install it
 config show       print effective configuration and scope
 config allow-namespace
                   authorize a namespace for read and write in the profile
+config allow-read-namespace
+                  authorize reading a namespace in the profile, without writes
 config allow-global
                   open (or --revoke) the reserved 'global' namespace
 config allow-read-all

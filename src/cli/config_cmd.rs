@@ -1,8 +1,9 @@
 //! `mnexis config` — the effective configuration and scope
 //! (e2-core §7 "Admin commands"). Prints what the process would run
 //! with; never any memory content. `allow-namespace` authorizes a
-//! namespace in the profile; `allow-global` and `allow-read-all` move
-//! the two permission flags the human owns.
+//! namespace in the profile, `allow-read-namespace` authorizes reading
+//! only; `allow-global` and `allow-read-all` move the two permission
+//! flags the human owns.
 
 use std::path::PathBuf;
 
@@ -97,17 +98,10 @@ pub fn set_permission(
     ))
 }
 
-/// `mnexis config allow-namespace <ns>` — authorize a namespace in the
-/// profile (project-bindings S3).
-///
-/// The change lands in `mnexis.toml`: the namespace joins the read and
-/// write allowlists. The allowlists only grow; nothing is revoked. The
-/// profile must already exist (`mnexis init`), because the command edits
-/// an existing profile rather than creating one.
-pub fn allow_namespace(
-    data_dir: PathBuf,
-    namespace: String,
-) -> Result<CommandOutcome, MnexisError> {
+/// Reject the namespaces the allowlists cannot carry. Both namespace
+/// commands share it so the two spellings refuse the same input the same
+/// way.
+fn validate_namespace(namespace: &str) -> Result<(), MnexisError> {
     if namespace.trim().is_empty() {
         return Err(MnexisError::invalid_argument(
             "namespace",
@@ -120,6 +114,31 @@ pub fn allow_namespace(
             "namespace must not contain line breaks",
         ));
     }
+    // The reserved `global` namespace is governed by its own permission
+    // (`allow_global`). Putting it in the namespace allowlists would open
+    // it through a door that does not check that permission.
+    if namespace.trim() == "global" {
+        return Err(MnexisError::invalid_argument(
+            "namespace",
+            "the reserved 'global' namespace is governed by \
+             `mnexis config allow-global`, not by the namespace allowlists",
+        ));
+    }
+    Ok(())
+}
+
+/// `mnexis config allow-namespace <ns>` — authorize a namespace in the
+/// profile (project-bindings S3).
+///
+/// The change lands in `mnexis.toml`: the namespace joins the read and
+/// write allowlists. The allowlists only grow; nothing is revoked. The
+/// profile must already exist (`mnexis init`), because the command edits
+/// an existing profile rather than creating one.
+pub fn allow_namespace(
+    data_dir: PathBuf,
+    namespace: String,
+) -> Result<CommandOutcome, MnexisError> {
+    validate_namespace(&namespace)?;
 
     let config_path = data_dir.join("mnexis.toml");
     let src = std::fs::read_to_string(&config_path).map_err(|e| {
@@ -168,10 +187,77 @@ pub fn allow_namespace(
     ))
 }
 
+/// `mnexis config allow-read-namespace <ns>` — authorize a namespace for
+/// reading only in the profile (read-granularity S1).
+///
+/// The change lands in `mnexis.toml`: the namespace joins the read
+/// allowlist and the write allowlist is not touched. The allowlists only
+/// grow; nothing is revoked. The profile must already exist
+/// (`mnexis init`), because the command edits an existing profile rather
+/// than creating one.
+pub fn allow_read_namespace(
+    data_dir: PathBuf,
+    namespace: String,
+) -> Result<CommandOutcome, MnexisError> {
+    validate_namespace(&namespace)?;
+
+    let config_path = data_dir.join("mnexis.toml");
+    let src = std::fs::read_to_string(&config_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            MnexisError::not_found(format!(
+                "profile at {} (run `mnexis init` first)",
+                data_dir.display()
+            ))
+        } else {
+            MnexisError::invalid_argument("mnexis.toml", format!("cannot read: {e}"))
+        }
+    })?;
+
+    let mut settings = ProfileSettings::from_toml(&src)?;
+    let changed = settings.allow_read_namespace(&namespace);
+    if changed {
+        settings.save_to(&config_path)?;
+    }
+
+    let (text, changed_json) = if changed {
+        (
+            format!(
+                "Allowed namespace {namespace} for reading only in {}",
+                config_path.display()
+            ),
+            true,
+        )
+    } else {
+        (
+            format!(
+                "Namespace {namespace} was already allowed for reading only in {}",
+                config_path.display()
+            ),
+            false,
+        )
+    };
+    Ok(CommandOutcome::new(
+        json!({
+            "namespace": namespace,
+            "changed": changed_json,
+            "read_only": true,
+            "config_path": config_path.display().to_string(),
+            "read_namespaces": settings.read_namespaces,
+            "write_namespaces": settings.write_namespaces,
+        }),
+        text,
+    ))
+}
+
 pub fn show(data_dir: PathBuf) -> Result<CommandOutcome, MnexisError> {
     let config_path = data_dir.join("mnexis.toml");
     let (settings, fell_back) = ProfileSettings::load_or_default(&config_path)?;
-    let scope = settings.to_access_scope()?;
+    let mut scope = settings.to_access_scope()?;
+    // The scope the process RUNS with, not the one the file describes: a
+    // bound workspace reads its own namespace (read-granularity S2), and
+    // `config show` must not disagree with `mnexis status`.
+    let workspace = crate::application::workspace::current_workspace(&data_dir).unwrap_or(None);
+    crate::application::workspace::allow_bound_read_namespace(&mut scope, workspace.as_ref());
     let limits = settings.to_service_config();
 
     let ops: Vec<&str> = if settings.allowed_operations.iter().any(|o| o == "all") {

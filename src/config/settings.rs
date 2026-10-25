@@ -285,6 +285,19 @@ impl ProfileSettings {
         changed
     }
 
+    /// Add a namespace to the read allowlist only (read-granularity S1).
+    /// Returns whether anything changed. The write allowlist is not
+    /// touched, so a write into that namespace is still refused, and the
+    /// allowlist only ever grows: this command authorizes, it never
+    /// revokes.
+    pub fn allow_read_namespace(&mut self, namespace: &str) -> bool {
+        if self.read_namespaces.iter().any(|n| n == namespace) {
+            return false;
+        }
+        self.read_namespaces.push(namespace.to_string());
+        true
+    }
+
     /// Write the settings to `path` atomically.
     pub fn save_to(&self, path: &Path) -> Result<(), MnexisError> {
         crate::config::write_atomic(path, &self.to_toml())

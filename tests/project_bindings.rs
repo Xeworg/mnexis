@@ -5,6 +5,7 @@
 //! stability guarantee is the point of these tests: a key must never
 //! silently change its namespace, because that would split the memories.
 
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use tempfile::tempdir_in;
 
@@ -40,6 +41,28 @@ impl Profile {
             .expect("spawn mnexis binary")
     }
 
+    fn with_config(self, toml: &str) -> Self {
+        self.set_config(toml);
+        self
+    }
+
+    fn set_config(&self, toml: &str) {
+        std::fs::write(self.data_dir.join("mnexis.toml"), toml).expect("write mnexis.toml");
+    }
+
+    /// Run with an explicit working directory, so a test chooses the
+    /// workspace the binary resolves.
+    fn run_in_dir(&self, dir: &Path, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_mnexis"))
+            .current_dir(dir)
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn mnexis binary")
+    }
+
     fn registry_text(&self) -> String {
         std::fs::read_to_string(self.data_dir.join("projects.toml")).unwrap_or_default()
     }
@@ -54,27 +77,24 @@ impl Profile {
     fn run_in_workspace(&self, remote: &str, args: &[&str]) -> Output {
         let dir = tempdir_in("target").expect("tempdir under target/");
         let root = dir.path();
-        let git = |args: &[&str]| {
-            let status = Command::new("git")
-                .args(args)
-                .current_dir(root)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .expect("run git");
-            assert!(status.success(), "git {args:?} failed");
-        };
-        git(&["init", "-q", "."]);
-        git(&["remote", "add", "origin", remote]);
-        Command::new(env!("CARGO_BIN_EXE_mnexis"))
-            .current_dir(root)
-            .arg("--data-dir")
-            .arg(&self.data_dir)
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-            .expect("spawn mnexis binary")
+        git_workspace(root, remote);
+        self.run_in_dir(root, args)
     }
+}
+
+fn git_workspace(root: &Path, remote: &str) {
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed");
+    };
+    git(&["init", "-q", "."]);
+    git(&["remote", "add", "origin", remote]);
 }
 
 fn stderr_of(out: &Output) -> String {
@@ -83,6 +103,58 @@ fn stderr_of(out: &Output) -> String {
 
 fn stdout_of(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+fn stdout_json(out: &Output) -> serde_json::Value {
+    let text = stdout_of(out);
+    serde_json::from_str(text.trim())
+        .unwrap_or_else(|e| panic!("stdout is not JSON ({e}): {text:?}"))
+}
+
+/// A profile whose reads are exactly `read` and whose writes are exactly
+/// `write`. Reads stay closed across namespaces, so a binding is the only
+/// thing that can open one.
+fn config(read: &[&str], write: &[&str]) -> String {
+    let list = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "default_namespace = \"default\"\nread_namespaces = [{}]\nwrite_namespaces = [{}]\n\
+         allow_global = false\nallow_read_all = false\n\
+         existence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n",
+        list(read),
+        list(write),
+    )
+}
+
+/// Save one memory through a working directory and return its uuid.
+fn save_in(profile: &Profile, dir: &Path, namespace: &str, content: &str) -> String {
+    let out = profile.run_in_dir(dir, &["--json", "save", "--namespace", namespace, content]);
+    assert!(
+        out.status.success(),
+        "save failed ({}): {}",
+        out.status,
+        stderr_of(&out)
+    );
+    stdout_json(&out)["uuid"]
+        .as_str()
+        .expect("uuid in save output")
+        .to_string()
+}
+
+/// A directory that names its namespace with the marker file only.
+fn marked_workspace(namespace: &str) -> tempfile::TempDir {
+    let dir = tempdir_in("target").expect("tempdir under target/");
+    std::fs::write(
+        dir.path().join(".mnexis-namespace"),
+        format!("{namespace}\n"),
+    )
+    .expect("write .mnexis-namespace");
+    dir
 }
 
 /// The key a human may write: the remote, not yet normalized.
@@ -426,5 +498,192 @@ fn a_legacy_raw_binding_is_updated_in_place_not_duplicated() {
     assert!(
         registry.contains("git:github.com-xeworg-pagos"),
         "the canonical key is recorded: {registry}"
+    );
+}
+
+// ── the binding implies reading (read-granularity S2) ──────────────────────
+//
+// A binding is a human permission recorded in the local registry. The
+// `.mnexis-namespace` marker is a file in the repository, so it is not.
+// Both facts have to hold at every read surface, and neither may widen the
+// write allowlist.
+
+const REMOTE: &str = "https://github.com/Xeworg/mnexis.git";
+const BOUND_NAMESPACE: &str = "mnexis";
+
+#[test]
+fn a_binding_opens_the_bound_namespace_for_reads() {
+    let p = Profile::new().with_config(&config(&["default"], &["default", BOUND_NAMESPACE]));
+    let seed = tempdir_in("target").expect("tempdir under target/");
+    let uuid = save_in(&p, seed.path(), BOUND_NAMESPACE, "memoria del proyecto");
+
+    // Without the binding the profile allowlist is the only source of
+    // permission, so the namespace is invisible.
+    let before = p.run_in_workspace(REMOTE, &["--json", "list", "--namespace", BOUND_NAMESPACE]);
+    assert_eq!(
+        before.status.code(),
+        Some(3),
+        "an unbound read must stay NOT_FOUND: {}",
+        stderr_of(&before)
+    );
+
+    p.run_silent(&["project", "bind", BOUND_NAMESPACE, "--key", KEY_RAW]);
+
+    let listed = p.run_in_workspace(REMOTE, &["--json", "list", "--namespace", BOUND_NAMESPACE]);
+    assert!(
+        listed.status.success(),
+        "the bound namespace must be readable: {}",
+        stderr_of(&listed)
+    );
+    assert_eq!(stdout_json(&listed)["count"], 1, "the memory is visible");
+
+    // A read without an explicit namespace uses the scope's read allowlist,
+    // so the binding has to reach that too, not only the explicit check.
+    let searched = p.run_in_workspace(REMOTE, &["--json", "search", "memoria"]);
+    assert!(
+        searched.status.success(),
+        "search failed: {}",
+        stderr_of(&searched)
+    );
+    assert_eq!(
+        stdout_json(&searched)["count"],
+        1,
+        "the binding must open the namespace for scoped reads too"
+    );
+
+    let shown = p.run_in_workspace(REMOTE, &["--json", "show", &uuid]);
+    assert!(shown.status.success(), "show failed: {}", stderr_of(&shown));
+    assert_eq!(stdout_json(&shown)["namespace"], BOUND_NAMESPACE);
+}
+
+#[test]
+fn a_binding_does_not_open_the_bound_namespace_for_writes() {
+    let p = Profile::new().with_config(&config(&["default"], &["default", BOUND_NAMESPACE]));
+    let seed = tempdir_in("target").expect("tempdir under target/");
+    save_in(&p, seed.path(), BOUND_NAMESPACE, "solo lectura");
+    // The profile no longer authorizes the namespace for writes: the
+    // binding must not put it back.
+    p.set_config(&config(&["default"], &["default"]));
+    p.run_silent(&["project", "bind", BOUND_NAMESPACE, "--key", KEY_RAW]);
+
+    // Reading is open...
+    let listed = p.run_in_workspace(REMOTE, &["--json", "list", "--namespace", BOUND_NAMESPACE]);
+    assert!(
+        listed.status.success(),
+        "the binding grants reading: {}",
+        stderr_of(&listed)
+    );
+    assert_eq!(stdout_json(&listed)["count"], 1);
+
+    // ...but writing still needs the namespace in `write_namespaces`.
+    let refused = p.run_in_workspace(
+        REMOTE,
+        &[
+            "--json",
+            "save",
+            "--namespace",
+            BOUND_NAMESPACE,
+            "no debe entrar",
+        ],
+    );
+    assert_eq!(
+        refused.status.code(),
+        Some(3),
+        "a write outside write_namespaces must stay NOT_FOUND: {}",
+        stderr_of(&refused)
+    );
+
+    let after = p.run_in_workspace(REMOTE, &["--json", "list", "--namespace", BOUND_NAMESPACE]);
+    assert_eq!(
+        stdout_json(&after)["count"],
+        1,
+        "the refused write must store nothing"
+    );
+}
+
+#[test]
+fn the_marker_does_not_open_the_marked_namespace_for_reads() {
+    let p = Profile::new().with_config(&config(&["default"], &["default", BOUND_NAMESPACE]));
+    let seed = tempdir_in("target").expect("tempdir under target/");
+    save_in(&p, seed.path(), BOUND_NAMESPACE, "memoria marcada");
+    let ws = marked_workspace(BOUND_NAMESPACE);
+
+    // The marker still resolves the workspace for writes...
+    let status = p.run_in_dir(ws.path(), &["--json", "status"]);
+    assert!(
+        status.status.success(),
+        "status failed: {}",
+        stderr_of(&status)
+    );
+    let json = stdout_json(&status);
+    assert_eq!(
+        json["workspace"]["namespace"], BOUND_NAMESPACE,
+        "the marker still names the workspace namespace: {json}"
+    );
+    // ...but it is a file, not a permission: the read scope is unchanged.
+    assert_eq!(
+        json["scope"]["read_namespaces"],
+        serde_json::json!(["default"]),
+        "the marker must not widen the read scope: {json}"
+    );
+
+    let listed = p.run_in_dir(
+        ws.path(),
+        &["--json", "list", "--namespace", BOUND_NAMESPACE],
+    );
+    assert_eq!(
+        listed.status.code(),
+        Some(3),
+        "a marked workspace must not read its namespace: {}",
+        stderr_of(&listed)
+    );
+
+    let searched = p.run_in_dir(ws.path(), &["--json", "search", "memoria"]);
+    assert!(
+        searched.status.success(),
+        "search failed: {}",
+        stderr_of(&searched)
+    );
+    assert_eq!(
+        stdout_json(&searched)["count"],
+        0,
+        "the marker must not make the namespace searchable"
+    );
+}
+
+#[test]
+fn a_binding_never_opens_the_reserved_global_namespace() {
+    let p = Profile::new();
+    // Seed a global memory while the reserved namespace is allowed...
+    p.set_config(
+        "default_namespace = \"default\"\nread_namespaces = [\"default\"]\n\
+         write_namespaces = [\"default\", \"global\"]\nallow_global = true\n\
+         allow_read_all = false\nexistence_disclosure = \"not_found\"\n\
+         allowed_operations = [\"all\"]\n",
+    );
+    let seed = tempdir_in("target").expect("tempdir under target/");
+    save_in(&p, seed.path(), "global", "memoria global");
+    // ...then close it again and bind the workspace to it. The binding must
+    // not reopen it through `read_namespaces`: `global` keeps its own flag.
+    p.set_config(&config(&["default"], &["default", BOUND_NAMESPACE]));
+    p.run_silent(&["project", "bind", "global", "--key", KEY_RAW]);
+
+    let listed = p.run_in_workspace(REMOTE, &["--json", "list"]);
+    assert!(
+        listed.status.success(),
+        "list failed: {}",
+        stderr_of(&listed)
+    );
+    assert_eq!(
+        stdout_json(&listed)["count"],
+        0,
+        "the reserved namespace stays closed without allow_global"
+    );
+    let direct = p.run_in_workspace(REMOTE, &["--json", "list", "--namespace", "global"]);
+    assert_eq!(
+        direct.status.code(),
+        Some(3),
+        "a global read must stay NOT_FOUND without allow_global: {}",
+        stderr_of(&direct)
     );
 }

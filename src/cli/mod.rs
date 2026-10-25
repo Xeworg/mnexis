@@ -414,6 +414,11 @@ pub enum ConfigAction {
         /// Namespace to authorize
         namespace: String,
     },
+    /// Authorize a namespace for reading only in the profile
+    AllowReadNamespace {
+        /// Namespace to authorize for reading
+        namespace: String,
+    },
     /// Allow (or revoke) the reserved `global` namespace
     AllowGlobal {
         /// Revoke the permission instead of granting it
@@ -796,6 +801,9 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Config {
             action: ConfigAction::AllowNamespace { namespace },
         } => config_cmd::allow_namespace(data_dir, namespace.clone()),
+        Command::Config {
+            action: ConfigAction::AllowReadNamespace { namespace },
+        } => config_cmd::allow_read_namespace(data_dir, namespace.clone()),
         Command::Config {
             action: ConfigAction::AllowGlobal { revoke },
         } => config_cmd::set_permission(data_dir, config_cmd::Permission::Global, !*revoke),
