@@ -1104,6 +1104,203 @@ fn the_old_repair_flag_is_gone() {
     );
 }
 
+// --- T22: operational commands (board C4) ---
+
+#[test]
+fn stats_counts_every_namespace_and_the_totals() {
+    let p = Profile::new();
+    // default namespace: one live pair (older superseded by newer) and one
+    // soft-deleted memory.
+    let older = save(&p, "the port is 8081", &[]);
+    let newer = save(&p, "the port is 8082", &[]);
+    let dead = save(&p, "obsolete note", &[]);
+    p.run_silent(&[
+        "supersede",
+        "--older",
+        &older,
+        "--newer",
+        &newer,
+        "--reason",
+        "port changed",
+    ])
+    .unwrap_status("supersede for stats");
+    p.run_silent(&["delete", "--force", &dead])
+        .unwrap_status("delete for stats");
+    // a second namespace with a memory, a prompt and a session of its own.
+    p.run_silent(&["config", "allow-namespace", "other"])
+        .unwrap_status("allow the other namespace");
+    save(
+        &p,
+        "memory of the other namespace",
+        &["--namespace", "other"],
+    );
+    p.run_silent(&["session", "--id", "sess-1", "--namespace", "other"])
+        .unwrap_status("session for stats");
+    p.run_silent(&["prompt", "what the user said", "--namespace", "other"])
+        .unwrap_status("prompt for stats");
+
+    let out = p.run_silent(&["stats"]).unwrap_status("stats");
+    let json = stdout_json(&out);
+
+    // The stable contract: snake_case field names, typed shape.
+    assert!(json["schema_version"].is_u64(), "schema_version: {json}");
+    let namespaces = json["namespaces"].as_array().expect("namespaces array");
+    let by_ns = |name: &str| {
+        namespaces
+            .iter()
+            .find(|n| n["namespace"] == name)
+            .unwrap_or_else(|| panic!("namespace {name} missing: {json}"))
+    };
+    let default = by_ns("default");
+    assert_eq!(default["active"], 1, "default ns: {default}");
+    assert_eq!(default["superseded"], 1, "default ns: {default}");
+    assert_eq!(default["soft_deleted"], 1, "default ns: {default}");
+    let other = by_ns("other");
+    assert_eq!(other["active"], 1, "other ns: {other}");
+    assert_eq!(other["superseded"], 0);
+    assert_eq!(other["soft_deleted"], 0);
+
+    let totals = &json["totals"];
+    assert_eq!(totals["memories"], 4, "totals: {totals}");
+    assert_eq!(totals["active"], 2);
+    assert_eq!(totals["superseded"], 1);
+    assert_eq!(totals["soft_deleted"], 1);
+    assert_eq!(totals["supersede_links"], 1);
+    assert_eq!(totals["sessions"], 1);
+    assert_eq!(totals["prompts"], 1);
+}
+
+#[test]
+fn stats_on_an_empty_store_reports_zeroes() {
+    let p = Profile::new();
+    let out = p
+        .run_silent(&["stats"])
+        .unwrap_status("stats on empty store");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["namespaces"].as_array().map(Vec::len),
+        Some(0),
+        "{json}"
+    );
+    for field in [
+        "memories",
+        "active",
+        "superseded",
+        "soft_deleted",
+        "supersede_links",
+        "sessions",
+        "prompts",
+    ] {
+        assert_eq!(json["totals"][field], 0, "totals.{field}: {json}");
+    }
+}
+
+#[test]
+fn timeline_shows_the_life_of_a_memory() {
+    let p = Profile::new();
+    let older = save(&p, "the port is 8081", &[]);
+    let newer = save(&p, "the port is 8082", &[]);
+    // An update is the one event the store records in the history table.
+    p.run_silent(&[
+        "update",
+        &older,
+        "--content",
+        "the port is 8083",
+        "--expected-revision",
+        "1",
+        "--reason",
+        "port moved",
+    ])
+    .unwrap_status("update for timeline");
+    p.run_silent(&[
+        "supersede",
+        "--older",
+        &older,
+        "--newer",
+        &newer,
+        "--reason",
+        "port changed",
+    ])
+    .unwrap_status("supersede for timeline");
+
+    let out = p
+        .run_silent(&["timeline", &older])
+        .unwrap_status("timeline of the superseded side");
+    let json = stdout_json(&out);
+    assert_eq!(json["memory"]["uuid"], older, "{json}");
+    assert_eq!(json["memory"]["state"], "superseded", "{json}");
+    assert!(json["memory"]["title"].is_string(), "{json}");
+    assert!(json["memory"]["created_at"].is_string(), "{json}");
+    // The recorded revisions, oldest first.
+    let events = json["events"].as_array().expect("events array");
+    assert!(
+        !events.is_empty(),
+        "the update the store recorded is an event: {json}"
+    );
+    assert!(events[0]["revision"].is_u64(), "{json}");
+    assert!(events[0]["at"].is_string(), "{json}");
+    let revisions: Vec<i64> = events
+        .iter()
+        .map(|e| e["revision"].as_i64().unwrap_or(-1))
+        .collect();
+    let mut sorted = revisions.clone();
+    sorted.sort_unstable();
+    assert_eq!(revisions, sorted, "the events run oldest first: {json}");
+
+    let superseded_by = json["superseded_by"].as_array().expect("superseded_by");
+    assert_eq!(superseded_by.len(), 1, "{json}");
+    assert_eq!(superseded_by[0]["uuid"], newer, "{json}");
+    assert_eq!(superseded_by[0]["reason"], "port changed", "{json}");
+    assert!(superseded_by[0]["at"].is_string(), "{json}");
+    assert_eq!(
+        json["supersedes"].as_array().map(Vec::len),
+        Some(0),
+        "{json}"
+    );
+
+    // The other side of the link.
+    let out2 = p
+        .run_silent(&["timeline", &newer])
+        .unwrap_status("timeline of the superseding side");
+    let j2 = stdout_json(&out2);
+    assert_eq!(j2["supersedes"][0]["uuid"], older, "{j2}");
+    assert_eq!(
+        j2["superseded_by"].as_array().map(Vec::len),
+        Some(0),
+        "{j2}"
+    );
+}
+
+#[test]
+fn timeline_of_an_unknown_uuid_is_not_found() {
+    let p = Profile::new();
+    let out = p.run_silent(&["timeline", "no-such-uuid"]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "an unknown uuid is NOT_FOUND, not an empty timeline: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn timeline_shows_a_soft_deleted_memory() {
+    let p = Profile::new();
+    let uuid = save(&p, "doomed memory", &[]);
+    p.run_silent(&["delete", "--force", &uuid])
+        .unwrap_status("delete for timeline");
+
+    let out = p
+        .run_silent(&["timeline", &uuid])
+        .unwrap_status("timeline of a soft-deleted memory");
+    let json = stdout_json(&out);
+    assert_eq!(json["memory"]["deleted"], true, "{json}");
+    assert!(
+        json["memory"]["deleted_at"].is_string(),
+        "the deletion is part of the life: {json}"
+    );
+}
+
 #[test]
 fn purge_dry_run_reports_eligible_count() {
     let p = Profile::new();

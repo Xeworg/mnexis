@@ -157,6 +157,72 @@ fn list_on_a_profile_without_a_registry_is_empty_and_successful() {
 }
 
 #[test]
+fn the_json_of_the_list_is_a_pinned_contract() {
+    use mnexis_core::cli::project_cmd::{ProjectBindingView, ProjectList};
+
+    let p = Profile::new();
+    p.run_silent(&["project", "bind", "mnexis", "--key", KEY_RAW]);
+
+    let out = p.run_silent(&["--json", "project", "list"]);
+    assert!(out.status.success(), "list failed: {}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("the JSON must parse: {e}: {stdout}"));
+
+    // The contract: the top-level fields, by name.
+    let bindings = json["bindings"].as_array().expect("bindings array");
+    assert_eq!(bindings.len(), 1, "one binding: {json}");
+    let binding = &bindings[0];
+    for field in ["key", "namespace", "path"] {
+        assert!(
+            binding.get(field).is_some(),
+            "every binding carries {field}: {binding}"
+        );
+    }
+    assert_eq!(
+        binding["key"], KEY_CANONICAL,
+        "the canonical key: {binding}"
+    );
+    assert_eq!(binding["namespace"], "mnexis", "{binding}");
+    assert!(
+        binding["path"].is_null(),
+        "a binding without a path: {binding}"
+    );
+    assert!(
+        json["current_key"].is_string(),
+        "current_key is always a string: {json}"
+    );
+
+    // The contract is a type, not a hand-written envelope: the wire form
+    // of the type has exactly these field names.
+    let typed = serde_json::to_value(ProjectList {
+        bindings: vec![ProjectBindingView {
+            key: KEY_CANONICAL.into(),
+            namespace: "mnexis".into(),
+            path: None,
+        }],
+        current_key: String::new(),
+    })
+    .unwrap();
+    assert_eq!(typed["bindings"][0]["key"], KEY_CANONICAL, "{typed}");
+    assert_eq!(typed["bindings"][0]["namespace"], "mnexis", "{typed}");
+    assert!(typed["bindings"][0]["path"].is_null(), "{typed}");
+    assert!(typed["current_key"].is_string(), "{typed}");
+}
+
+#[test]
+fn the_json_of_an_empty_registry_is_still_the_contract() {
+    let p = Profile::new();
+    let out = p.run_silent(&["--json", "project", "list"]);
+    assert!(out.status.success(), "list failed: {}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("the JSON must parse: {e}: {stdout}"));
+    assert_eq!(json["bindings"].as_array().map(Vec::len), Some(0), "{json}");
+    assert!(json["current_key"].is_string(), "{json}");
+}
+
+#[test]
 fn bind_is_idempotent_for_the_same_key_and_namespace() {
     let p = Profile::new();
     for _ in 0..3 {

@@ -10,7 +10,9 @@ pub mod config_cmd;
 pub mod output;
 pub mod profile;
 pub mod project_cmd;
+pub mod stats_cmd;
 pub mod status_cmd;
+pub mod timeline_cmd;
 pub mod update_cmd;
 
 use clap::{Parser, Subcommand};
@@ -290,6 +292,12 @@ pub enum Command {
         limit: Option<usize>,
     },
 
+    /// The life of one memory: identity, events, supersede links
+    Timeline {
+        /// The memory's uuid
+        uuid: String,
+    },
+
     /// Soft-delete a memory (prompts unless --force)
     Delete {
         #[arg(long)]
@@ -326,6 +334,9 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<DoctorCommand>,
     },
+
+    /// Store-level counts: what every namespace holds, and the totals
+    Stats,
 
     /// Browse and search memories in a terminal UI
     Tui,
@@ -720,6 +731,10 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             let mut profile = Profile::open(data_dir)?;
             commands::history(&mut profile, uuid.clone(), *limit)
         }
+        Command::Timeline { uuid } => {
+            let mut profile = Profile::open(data_dir)?;
+            timeline_cmd::timeline(&mut profile, uuid.clone())
+        }
         Command::Delete {
             force,
             expected_revision,
@@ -817,6 +832,10 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Project {
             action: ProjectAction::Unbind { namespace },
         } => project_cmd::unbind(data_dir, namespace.clone()),
+        Command::Stats => {
+            let profile = Profile::open(data_dir)?;
+            stats_cmd::stats(&profile)
+        }
         Command::Tui => {
             // The TUI owns the terminal lifecycle; profile resolution and
             // error reporting stay identical to every other command.

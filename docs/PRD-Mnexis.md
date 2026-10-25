@@ -183,7 +183,7 @@ Todos los contratos son versionados, usan esquemas cerrados y límites explícit
 | `memory_delete` | Borrado lógico e ID/revisión esperada |
 | `memory_restore` | Restauración antes de purga, sin activar ciegamente conocimiento sustituido |
 
-Comandos: `version`, `init`, `mcp serve`, `save`, `update`, `supersede`, `search`, `context`, `list`, `show`, `history`, `delete`, `restore`, `purge`, `export`, `import`, `reindex`, `doctor`, `config` y `eval`.
+Comandos: `version`, `init`, `mcp serve`, `save`, `update`, `supersede`, `search`, `context`, `list`, `show`, `history`, `timeline`, `delete`, `restore`, `purge`, `export`, `import`, `reindex`, `doctor`, `stats`, `config` y `eval`.
 
 La CLI administrativa opera bajo autoridad del usuario; para pruebas y automatización permite imponer el mismo ámbito restringido de MCP. Los clientes objetivo y la forma real de conectar MCP se verifican mediante pruebas: no asumir que todos soportan stdio de manera nativa.
 
