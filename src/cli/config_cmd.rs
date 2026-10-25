@@ -252,7 +252,12 @@ pub fn allow_read_namespace(
 pub fn show(data_dir: PathBuf) -> Result<CommandOutcome, MnexisError> {
     let config_path = data_dir.join("mnexis.toml");
     let (settings, fell_back) = ProfileSettings::load_or_default(&config_path)?;
-    let scope = settings.to_access_scope()?;
+    let mut scope = settings.to_access_scope()?;
+    // The scope the process RUNS with, not the one the file describes: a
+    // bound workspace reads its own namespace (read-granularity S2), and
+    // `config show` must not disagree with `mnexis status`.
+    let workspace = crate::application::workspace::current_workspace(&data_dir).unwrap_or(None);
+    crate::application::workspace::allow_bound_read_namespace(&mut scope, workspace.as_ref());
     let limits = settings.to_service_config();
 
     let ops: Vec<&str> = if settings.allowed_operations.iter().any(|o| o == "all") {

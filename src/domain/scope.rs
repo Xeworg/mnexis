@@ -175,7 +175,7 @@ impl AccessScope {
         if self.can_read(namespace) {
             Ok(())
         } else {
-            Err(self.deny_error("read", namespace))
+            Err(self.deny_error("read", "allow-read-namespace", namespace))
         }
     }
 
@@ -183,7 +183,7 @@ impl AccessScope {
         if self.can_write(namespace) {
             Ok(())
         } else {
-            Err(self.deny_error("write", namespace))
+            Err(self.deny_error("write", "allow-namespace", namespace))
         }
     }
 
@@ -198,14 +198,33 @@ impl AccessScope {
         }
     }
 
-    fn deny_error(&self, op: &str, namespace: &str) -> MnexisError {
+    /// Build the denial for an out-of-scope namespace.
+    ///
+    /// `grant` is the `config` command that grants the access, and the
+    /// answer names it (S3): a route the human can follow, never a
+    /// statement about what the namespace holds. The only namespace the
+    /// message mentions is the one that was asked for, so neither form
+    /// discloses the allowlists or the existence of records.
+    fn deny_error(&self, op: &str, grant: &str, namespace: &str) -> MnexisError {
+        // The reserved `global` namespace is governed by its own
+        // permission, so the route must be the command that actually
+        // grants it: `allow-read-namespace global` would not open it.
+        let route = if namespace == "global" {
+            format!(
+                "run `mnexis config allow-global` to grant {op} access \
+                 (the reserved 'global' namespace)"
+            )
+        } else {
+            format!("run `mnexis config {grant} {namespace}` to grant {op} access")
+        };
         match self.existence_disclosure {
             ExistenceDisclosure::NotFound => {
-                MnexisError::not_found(format!("namespace:{namespace}"))
+                MnexisError::not_found(format!("namespace:{namespace} ({route})"))
             }
-            ExistenceDisclosure::Forbid => {
-                MnexisError::forbidden(op, "namespace not allowed for this process")
-            }
+            ExistenceDisclosure::Forbid => MnexisError::forbidden(
+                op,
+                format!("namespace not allowed for this process ({route})"),
+            ),
         }
     }
 }
@@ -325,6 +344,78 @@ mod tests {
         let s = scope();
         let err = s.authorize_write("proyecto-b").unwrap_err();
         assert!(matches!(err, MnexisError::NotFound { .. }));
+    }
+
+    #[test]
+    fn authorize_read_and_write_accept_allowed_namespaces() {
+        let s = scope();
+        assert_eq!(s.authorize_read("proyecto-a"), Ok(()));
+        assert_eq!(s.authorize_read("proyecto-b"), Ok(()));
+        assert_eq!(s.authorize_write("proyecto-a"), Ok(()));
+    }
+
+    #[test]
+    fn read_denial_names_the_read_route_and_stays_not_found() {
+        let s = scope();
+        let err = s.authorize_read("proyecto-c").unwrap_err();
+        assert!(matches!(err, MnexisError::NotFound { .. }));
+        assert_eq!(
+            err.to_string(),
+            "not found: namespace:proyecto-c (run `mnexis config allow-read-namespace \
+             proyecto-c` to grant read access)"
+        );
+    }
+
+    #[test]
+    fn write_denial_names_the_write_route_and_stays_not_found() {
+        let s = scope();
+        // `proyecto-b` is readable but not writable: the denial must name
+        // the write route, never the read one.
+        let err = s.authorize_write("proyecto-b").unwrap_err();
+        assert!(matches!(err, MnexisError::NotFound { .. }));
+        assert_eq!(
+            err.to_string(),
+            "not found: namespace:proyecto-b (run `mnexis config allow-namespace \
+             proyecto-b` to grant write access)"
+        );
+    }
+
+    #[test]
+    fn forbid_disclosure_keeps_the_kind_and_names_the_route() {
+        let s = scope().with_disclosure(ExistenceDisclosure::Forbid);
+        let read = s.authorize_read("proyecto-c").unwrap_err();
+        assert!(matches!(read, MnexisError::Forbidden { .. }));
+        assert_eq!(
+            read.to_string(),
+            "forbidden: read: namespace not allowed for this process (run `mnexis \
+             config allow-read-namespace proyecto-c` to grant read access)"
+        );
+        let write = s.authorize_write("proyecto-c").unwrap_err();
+        assert!(matches!(write, MnexisError::Forbidden { .. }));
+        assert_eq!(
+            write.to_string(),
+            "forbidden: write: namespace not allowed for this process (run \
+             `mnexis config allow-namespace proyecto-c` to grant write access)"
+        );
+    }
+
+    #[test]
+    fn the_denial_is_a_route_and_carries_nothing_about_the_namespace() {
+        let s = scope();
+        // The answer differs only in the name that was asked for: it is a
+        // route, never a statement about what the namespace holds.
+        let render = |namespace: &str| {
+            s.authorize_read(namespace)
+                .unwrap_err()
+                .to_string()
+                .replace(namespace, "<ns>")
+        };
+        assert_eq!(render("proyecto-c"), render("otro-proyecto"));
+        // And it mentions no other namespace than the one requested.
+        let message = s.authorize_read("proyecto-c").unwrap_err().to_string();
+        assert!(message.contains("proyecto-c"), "message: {message}");
+        assert!(!message.contains("proyecto-a"), "message: {message}");
+        assert!(!message.contains("proyecto-b"), "message: {message}");
     }
 
     #[test]

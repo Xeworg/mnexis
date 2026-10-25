@@ -113,6 +113,18 @@ and expected; writing across them is not. If the user wants something
 recorded for another project, that is their call: ask them to run the
 command themselves, or bind that workspace first.
 
+**A refused read is a question for the human.** When a read of another
+namespace comes back denied — `NOT_FOUND namespace:<name>` by default,
+`FORBIDDEN` when the profile asks for it — the answer names
+`mnexis config allow-read-namespace <name>`. That command is the human's to
+run: ask them, say which namespace and what the read is for, and wait for
+the answer. Never widen your own reach to get past a refusal — not with
+`mnexis config allow-read-namespace`, not with `mnexis config
+allow-read-all`, and never by editing `mnexis.toml`: a permission the agent
+grants itself is not a permission. If no interactive answer is possible,
+report that the access is pending and answer from what the scope already
+holds.
+
 ## The session and what the user said
 
 Two things a repository cannot hold, and the engine keeps both:

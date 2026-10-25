@@ -159,6 +159,11 @@ Cada proceso MCP se inicia con configuración de ámbito controlada por el usuar
   escrituras no se abren: un proyecto escribe sólo en su namespace, y el
   CLI rechaza con `FORBIDDEN` la escritura a otro namespace cuando el
   workspace actual está vinculado a uno.
+- La lectura de otro namespace se concede sin abrir la escritura:
+  `mnexis config allow-read-namespace <ns>` amplía sólo la lista de lectura
+  y `mnexis config allow-namespace <ns>` concede ambas. Una lectura
+  rechazada nombra el comando que la concede y nunca dice si el namespace
+  guarda algo.
 
 `all` significa **todos los namespaces autorizados para ese proceso**, nunca todo el perfil. Una herramienta no puede ampliar su ámbito pasando un `client_id` o modificando parámetros. Solicitudes fuera del ámbito se rechazan sin revelar contenido ni existencia de IDs.
 

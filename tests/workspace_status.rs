@@ -324,19 +324,24 @@ fn status_prints_one_line_per_fact() {
 /// The workspace namespace is what the agent needs to know even when its
 /// profile cannot read it: the payload still reports it, and the recent list
 /// falls back to the namespace the scope does read.
+///
+/// A workspace that only a `.mnexis-namespace` marker names is exactly that
+/// case: a file in the repository is not a permission (read-granularity S2).
 #[test]
-fn an_unreadable_workspace_namespace_is_still_reported() {
+fn a_workspace_namespace_that_only_a_marker_names_is_not_readable() {
     let p = Profile::new().with_config(&config(&["default"], false, false));
-    // Save before the binding: a bound workspace only accepts its own
-    // namespace, and this memory lives in the readable one.
+    // Save before the workspace exists: a bound workspace only accepts its
+    // own namespace, and this memory lives in the readable one.
     let unbound = Workspace::bare();
     save(&p, unbound.path(), "default", "memoria visible");
 
+    // A workspace that only a marker names: no binding, so nothing grants
+    // reading 'snake'.
     let ws = Workspace::bare();
-    let key = bind_workspace(&p, ws.path(), "snake");
+    std::fs::write(ws.path().join(".mnexis-namespace"), "snake")
+        .expect("write the namespace marker");
 
     let status = status_json(&p, ws.path());
-    assert_eq!(status["workspace"]["key"].as_str(), Some(key.as_str()));
     assert_eq!(
         status["workspace"]["namespace"].as_str(),
         Some("snake"),
@@ -355,6 +360,74 @@ fn an_unreadable_workspace_namespace_is_still_reported() {
     );
     assert_eq!(recent[0]["namespace"].as_str(), Some("default"));
     assert_eq!(recent[0]["content"].as_str(), Some("memoria visible"));
+}
+
+/// A bound workspace may READ its namespace: the binding is a human
+/// command on the local registry, so it grants reading (and only
+/// reading). The profile below can WRITE 'snake' but not READ it, so
+/// everything visible here comes from the binding.
+#[test]
+fn a_bound_workspace_namespace_is_readable() {
+    let p = Profile::new().with_config(
+        "default_namespace = \"default\"\n\
+         read_namespaces = [\"default\"]\n\
+         write_namespaces = [\"default\", \"snake\"]\n\
+         allow_global = false\n\
+         allow_read_all = false\n\
+         existence_disclosure = \"not_found\"\n\
+         allowed_operations = [\"all\"]\n",
+    );
+
+    let ws = Workspace::bare();
+    bind_workspace(&p, ws.path(), "snake");
+    // The write is allowed by the profile; the read is not.
+    save(&p, ws.path(), "snake", "memoria del workspace");
+
+    // From the bound workspace, the namespace is readable.
+    let out = p.run_in_dir(ws.path(), &["list", "--namespace", "snake", "--full"]);
+    assert!(
+        out.status.success(),
+        "the binding grants reading: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("the list answers JSON");
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(
+        items.len(),
+        1,
+        "the memory of the bound namespace is visible: {json}"
+    );
+    assert_eq!(items[0]["content"].as_str(), Some("memoria del workspace"));
+
+    // From another workspace, the same namespace is not readable: the
+    // grant belongs to the workspace, not to the process. The other
+    // workspace is a git repository with no remote, so its key is its own
+    // path and not this repository's key.
+    let other = Workspace::bare();
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(other.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed");
+    };
+    git(&["init", "-q", "."]);
+    let denied = p.run_in_dir(other.path(), &["list", "--namespace", "snake", "--full"]);
+    assert_eq!(
+        denied.status.code(),
+        Some(3),
+        "without the binding the namespace stays unreadable: {:?}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("allow-read-namespace snake"),
+        "the refusal names the way to grant it: {:?}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
 }
 
 // --- the profile contract ---
