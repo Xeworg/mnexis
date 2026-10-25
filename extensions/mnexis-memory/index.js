@@ -748,6 +748,42 @@ export default function mnexisMemoryExtension(pi) {
 	});
 
 	pi.registerTool({
+		name: "mnexis_history",
+		label: "The history of a memory",
+		promptSnippet: "Every revision of one memory, and why each happened.",
+		description:
+			"Return the revision history of one memory: every revision in order, with its state, " +
+			"content, who changed it and why. Use it to see how a fact evolved before updating or " +
+			"superseding it — the current record alone does not say what it used to claim.",
+		parameters: {
+			type: "object",
+			properties: {
+				uuid: { type: "string", description: "Memory UUID." },
+				limit: {
+					type: "number",
+					description: "How many revisions to show, oldest first (default: all).",
+				},
+			},
+			required: ["uuid"],
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const result = await client.history({ uuid: params.uuid, limit: params.limit }, ctx.cwd);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+					uuid: params.uuid,
+				});
+			}
+			const items = readItems(result.data);
+			return ok(result.stdout.trim() || JSON.stringify(result.data), {
+				uuid: params.uuid,
+				count: items.length,
+				items,
+			});
+		},
+	});
+
+	pi.registerTool({
 		name: "mnexis_session_start",
 		label: "Start the session",
 		promptSnippet: "Register the session you are running in.",
@@ -894,6 +930,92 @@ export default function mnexisMemoryExtension(pi) {
 				? items.map((item, index) => `${index + 1}. ${JSON.stringify(item)}`).join("\n")
 				: "No prompts stored yet.";
 			return ok(text, { count: items.length, prompts: items });
+		},
+	});
+
+	pi.registerTool({
+		name: "mnexis_recall",
+		label: "Recall a session",
+		promptSnippet: "What a session was, in one answer.",
+		description:
+			"Recall what a session was: the session itself, what the user said in it in order, and " +
+			"the memories of the namespace in its window. Use `previous` for the session before this " +
+			"one — the most recent finished session of this workspace's namespace — or `session` for a " +
+			"known id. The memories are the namespace's, read by time: the engine does not know which " +
+			"session wrote which memory. Each memory is answered with its identity and a preview; pass " +
+			"`full` for the whole records, and read one with `mnexis_show`. The answer also carries the " +
+			"state of the branch the session was anchored to, validated at read time and never stored: " +
+			"`merged`, `not_merged`, or `unknown` when it could not be checked.",
+		parameters: {
+			type: "object",
+			properties: {
+				session: { type: "string", description: "The session id to recall." },
+				previous: {
+					type: "boolean",
+					description: "The session before this one (the most recent finished session of the workspace's namespace).",
+				},
+				full: {
+					type: "boolean",
+					description: "The complete content of every memory in the window, not a preview.",
+				},
+			},
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			// Exactly one way to ask: the engine refuses both and neither, and
+			// so does the tool before anything reaches the CLI.
+			if (Boolean(params.session) === Boolean(params.previous)) {
+				return fail(
+					"Give `session` (a known id) or `previous` (the session before this one), exactly one.",
+					{ session: params.session ?? null, previous: Boolean(params.previous) },
+				);
+			}
+			const result = await client.recall(
+				{ session: params.session, previous: params.previous, full: params.full },
+				ctx.cwd,
+			);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+					session: params.session ?? null,
+					previous: Boolean(params.previous),
+				});
+			}
+			return ok(result.stdout.trim() || JSON.stringify(result.data), {
+				session_id:
+					(result.data && result.data.session && result.data.session.id) ||
+					params.session ||
+					null,
+				memories: result.data && Array.isArray(result.data.memories_in_window)
+					? result.data.memories_in_window.length
+					: 0,
+				recall: result.data,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "mnexis_workspace",
+		label: "This workspace, in one answer",
+		promptSnippet: "Where this session may write, and what is already there.",
+		description:
+			"Call this FIRST, at the start of every session and before you change code that already " +
+			"exists: it returns the namespace this workspace writes into, the read and write " +
+			"allowlists, how many memories the scope can see, and the most recent of them. The " +
+			"decisions behind the code live here, not in the files.",
+		parameters: {
+			type: "object",
+			properties: {},
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const result = await client.status(ctx.cwd);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {});
+			}
+			return ok(result.stdout.trim() || JSON.stringify(result.data), {
+				workspace: result.data && result.data.workspace ? result.data.workspace : null,
+				status: result.data,
+			});
 		},
 	});
 

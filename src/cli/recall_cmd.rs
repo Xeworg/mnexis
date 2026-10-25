@@ -11,6 +11,12 @@
 //! The answer also carries the state of the branch the session was anchored to,
 //! validated when it is read (session-recall S3): `merged`, `not_merged` or
 //! `unknown`, with the base it compared against and the instant of the check.
+//!
+//! The JSON answer is priced (extension-recall S1): the identity of every
+//! memory in the window and a preview of its content by default, the whole
+//! records with `--full` — the shape `mnexis list` has had since #24/#26.
+//! The text rendering was priced by construction (a snippet per line) and
+//! does not change.
 
 use crate::application::git_state::BranchState;
 use crate::application::service::session_recall::SessionRecall;
@@ -23,6 +29,7 @@ pub fn recall(
     profile: &Profile,
     session: Option<String>,
     previous: bool,
+    full: bool,
 ) -> Result<CommandOutcome, MnexisError> {
     let now = crate::cli::profile::now_rfc3339();
     let service = profile.service_ref();
@@ -43,10 +50,7 @@ pub fn recall(
             ));
         }
     };
-    Ok(CommandOutcome::new(
-        serde_json::to_value(&recall).unwrap_or(serde_json::Value::Null),
-        render(&recall),
-    ))
+    Ok(CommandOutcome::new(recall.payload(full), render(&recall)))
 }
 
 /// Text rendering: the session, what the user said in it in order, and the

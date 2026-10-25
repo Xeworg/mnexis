@@ -2053,3 +2053,82 @@ async fn memory_recall_answers_what_a_session_was() -> Result<(), Box<dyn std::e
     client.cancel().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn memory_recall_is_priced_preview_by_default_full_on_request()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    call_tool_text(
+        &client,
+        "memory_session_start",
+        serde_json::json!({ "session_id": "01JX", "directory": "/work/project" }),
+    )
+    .await?;
+    let saved = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "el servicio escucha en 8081" }),
+    )
+    .await?;
+    let saved: serde_json::Value = serde_json::from_str(&saved)?;
+    let uuid = saved["uuid"].as_str().expect("uuid").to_string();
+    call_tool_text(
+        &client,
+        "memory_session_end",
+        serde_json::json!({ "session_id": "01JX", "summary": "el puerto" }),
+    )
+    .await?;
+
+    // Default: identity and preview, the shape `list` and `memory_search`
+    // already have (extension-recall S1).
+    let text = call_tool_text(
+        &client,
+        "memory_recall",
+        serde_json::json!({ "previous": true }),
+    )
+    .await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    let memories = parsed["memories_in_window"]
+        .as_array()
+        .expect("memories_in_window array");
+    assert_eq!(memories.len(), 1, "{parsed}");
+    assert_eq!(memories[0]["uuid"], uuid.as_str(), "{parsed}");
+    assert!(
+        memories[0]["preview"].is_string(),
+        "the default answer carries a preview: {parsed}"
+    );
+    assert!(
+        memories[0].get("content").is_none(),
+        "the default answer carries no full content: full asks for it: {parsed}"
+    );
+
+    // `full: true` asks for the whole records.
+    let text = call_tool_text(
+        &client,
+        "memory_recall",
+        serde_json::json!({ "previous": true, "full": true }),
+    )
+    .await?;
+    let full: serde_json::Value = serde_json::from_str(&text)?;
+    let memories = full["memories_in_window"]
+        .as_array()
+        .expect("memories_in_window array");
+    assert_eq!(memories.len(), 1, "{full}");
+    assert_eq!(
+        memories[0]["content"], "el servicio escucha en 8081",
+        "the full record is one argument away: {full}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}

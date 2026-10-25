@@ -23,6 +23,7 @@
 //! could not be checked (see [`crate::application::git_state`]).
 
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::application::git_state::{BranchState, GitAnchor};
 use crate::application::service::MemoryService;
@@ -67,6 +68,32 @@ pub struct SessionRecall {
     /// They are **not** the session's memories: the engine cannot tell which
     /// session wrote which record, and [`RecallWindow::label`] says so.
     pub memories_in_window: Vec<Memory>,
+}
+
+impl SessionRecall {
+    /// The priced answer: the identity of every memory and a preview of its
+    /// content by default, the whole records with `full` (extension-recall
+    /// S1).
+    ///
+    /// One projection for both surfaces — `mnexis recall` and the MCP
+    /// `memory_recall` — so they cannot drift, the same rule that keeps
+    /// `list` and `memory_list` in one shape. A recall that answers with a
+    /// hundred full memories is not the cheap door the extension opens; the
+    /// whole record stays one `mnexis show` away.
+    pub fn payload(&self, full: bool) -> Value {
+        let mut payload = serde_json::to_value(self).unwrap_or(Value::Null);
+        if full {
+            return payload;
+        }
+        let previews = crate::application::previews(&self.memories_in_window);
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "memories_in_window".to_string(),
+                serde_json::to_value(previews).unwrap_or(Value::Null),
+            );
+        }
+        payload
+    }
 }
 
 /// The window a session opens on its namespace.

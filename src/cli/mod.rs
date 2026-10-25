@@ -251,6 +251,10 @@ pub enum Command {
         /// writes into
         #[arg(long)]
         previous: bool,
+        /// The complete content of every memory in the window, not a
+        /// preview
+        #[arg(long)]
+        full: bool,
     },
 
     /// Store what the user said
@@ -711,9 +715,13 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             let mut profile = Profile::open(data_dir)?;
             commands::list_sessions(&mut profile, *limit)
         }
-        Command::Recall { session, previous } => {
+        Command::Recall {
+            session,
+            previous,
+            full,
+        } => {
             let profile = Profile::open(data_dir)?;
-            recall_cmd::recall(&profile, session.clone(), *previous)
+            recall_cmd::recall(&profile, session.clone(), *previous, *full)
         }
         Command::Prompt {
             content,
