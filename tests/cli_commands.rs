@@ -2384,6 +2384,50 @@ fn recall_carries_the_session_its_prompts_and_the_memories_of_its_window() {
 }
 
 #[test]
+fn recall_is_priced_preview_by_default_full_on_request() {
+    let p = namespaced_profile(&["ns-a"]);
+    p.run_silent(&["session", "--id", "01JX"])
+        .unwrap_status("session");
+    let inside = save(&p, "el puerto del servicio es 8081", &[]);
+
+    // Default: the identity of every memory and a preview of its content,
+    // the shape `list` got in #24/#26 (extension-recall S1). A recall that
+    // answers with 100 full memories is not the cheap door the extension
+    // would open.
+    let out = p
+        .run_silent(&["recall", "--session", "01JX"])
+        .unwrap_status("recall default");
+    let json = stdout_json(&out);
+    let memories = json["memories_in_window"]
+        .as_array()
+        .expect("memories_in_window array");
+    assert_eq!(memories.len(), 1, "{json}");
+    assert_eq!(memories[0]["uuid"], inside.as_str(), "{json}");
+    assert!(
+        memories[0]["preview"].is_string(),
+        "the default answer carries a preview: {json}"
+    );
+    assert!(
+        memories[0].get("content").is_none(),
+        "the default answer carries no full content: --full asks for it: {json}"
+    );
+
+    // `--full` asks for the whole records.
+    let out = p
+        .run_silent(&["recall", "--session", "01JX", "--full"])
+        .unwrap_status("recall --full");
+    let json = stdout_json(&out);
+    let memories = json["memories_in_window"]
+        .as_array()
+        .expect("memories_in_window array");
+    assert_eq!(memories.len(), 1, "{json}");
+    assert_eq!(
+        memories[0]["content"], "el puerto del servicio es 8081",
+        "the full record is one flag away: {json}"
+    );
+}
+
+#[test]
 fn recall_previous_is_the_most_recent_finished_session() {
     let p = Profile::new();
     for (id, summary) in [("PRIMERA", "lo primero"), ("SEGUNDA", "lo segundo")] {

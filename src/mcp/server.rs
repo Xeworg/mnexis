@@ -79,6 +79,10 @@ pub struct RecallArgs {
     /// writes into: the session before this one.
     #[serde(default)]
     pub previous: bool,
+    /// The complete content of every memory in the window, not a preview
+    /// (default: false).
+    #[serde(default)]
+    pub full: Option<bool>,
 }
 
 /// The MCP server — owns the MemoryService and exposes 15 tools.
@@ -376,7 +380,13 @@ impl McpServer {
             }
         };
         drop(svc);
-        Ok(serde_json::to_string_pretty(&recall).unwrap_or_default())
+        // A recall is priced like a list: the identity of every memory and
+        // a preview of its content by default, `full` for the whole records
+        // (extension-recall S1).
+        Ok(
+            serde_json::to_string_pretty(&recall.payload(args.full.unwrap_or(false)))
+                .unwrap_or_default(),
+        )
     }
 
     /// The topic key a title yields, and the record that already holds it.
@@ -709,7 +719,7 @@ impl McpServer {
 
     #[tool(
         name = "memory_recall",
-        description = "Recall what a session was: the session itself, what the user said in it in order, and the memories of the namespace in its window. Use `previous` for the session before this one — the most recent finished session of this workspace's namespace — or `session` for a known id. The memories are the namespace's, read by time: the engine does not know which session wrote which memory. The answer also carries the state of the branch the session was anchored to, validated at read time and never stored: `merged`, `not_merged`, or `unknown` when it could not be checked."
+        description = "Recall what a session was: the session itself, what the user said in it in order, and the memories of the namespace in its window. Use `previous` for the session before this one — the most recent finished session of this workspace's namespace — or `session` for a known id. The memories are the namespace's, read by time: the engine does not know which session wrote which memory. Each memory is answered with its identity and a preview; pass `full` for the whole records. The answer also carries the state of the branch the session was anchored to, validated at read time and never stored: `merged`, `not_merged`, or `unknown` when it could not be checked."
     )]
     fn memory_recall(&self, Parameters(args): Parameters<RecallArgs>) -> Result<String, McpError> {
         self.do_recall(args)
