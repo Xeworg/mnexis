@@ -31,7 +31,8 @@ fn bootstrap_profile(data_dir: &std::path::Path) -> Result<(), Box<dyn std::erro
 }
 
 /// A profile whose reads stay scoped to its own namespaces: the default
-/// profile opens reads across namespaces (project-isolation S3).
+/// profile scopes the reads too (closed-default), and this one says so
+/// explicitly (project-isolation S3).
 fn bootstrap_scoped_profile(data_dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     bootstrap_profile(data_dir)?;
     let path = data_dir.join("mnexis.toml");
@@ -1154,8 +1155,21 @@ async fn list_reaches_another_namespace_when_reads_are_open()
     let tmp = tempfile::tempdir_in("target")?;
     let data_dir = tmp.path();
     bootstrap_profile(data_dir)?;
-
+    // The default profile scopes the reads (closed-default), so this test
+    // opens them the way an operator would: with the explicit switch.
     let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let opened = std::process::Command::new(&binary)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .arg("config")
+        .arg("allow-read-all")
+        .output()?;
+    assert!(
+        opened.status.success(),
+        "allow-read-all failed: {}",
+        String::from_utf8_lossy(&opened.stderr)
+    );
+
     let transport =
         TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
             cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");

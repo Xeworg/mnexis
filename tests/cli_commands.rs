@@ -608,14 +608,39 @@ fn config_show_prints_effective_settings() {
 // --- config permissions (project-isolation S3, S4, S10) ---
 
 #[test]
-fn init_keeps_the_reserved_namespace_closed_and_reads_open() {
+fn init_keeps_the_reserved_namespace_closed_and_the_reads_scoped() {
     let p = Profile::new();
     let out = p
         .run_silent(&["config", "show"])
         .unwrap_status("config show");
     let json = stdout_json(&out);
     assert_eq!(json["scope"]["allow_global"], false);
+    assert_eq!(json["scope"]["allow_read_all"], false);
+    assert_eq!(
+        json["scope"]["read_namespaces"],
+        serde_json::json!(["default"]),
+        "a new profile reads its own namespace: {json}"
+    );
+}
+
+#[test]
+fn the_allow_read_all_switch_opens_the_reads_again() {
+    let p = Profile::new();
+    p.run_silent(&["config", "allow-read-all"])
+        .unwrap_status("allow-read-all");
+    let json = stdout_json(
+        &p.run_silent(&["config", "show"])
+            .unwrap_status("config show"),
+    );
     assert_eq!(json["scope"]["allow_read_all"], true);
+    // And the way back: the switch is revocable.
+    p.run_silent(&["config", "allow-read-all", "--revoke"])
+        .unwrap_status("revoke the open reads");
+    let json = stdout_json(
+        &p.run_silent(&["config", "show"])
+            .unwrap_status("config show"),
+    );
+    assert_eq!(json["scope"]["allow_read_all"], false);
 }
 
 #[test]

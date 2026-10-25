@@ -48,7 +48,13 @@ impl Default for ProfileSettings {
             read_namespaces: vec!["default".to_string()],
             write_namespaces: vec!["default".to_string()],
             allow_global: false,
-            allow_read_all: true,
+            // The reads are scoped by default: a new profile reads its own
+            // namespace, not every namespace in the store. Measured over
+            // ten runs per arm (odd/tasks/closed-default.md): the closed
+            // arm invented nothing and duplicated nothing, while the open
+            // arm copied another project's fact into its own namespace in
+            // ten of ten runs. The switch is `mnexis config allow-read-all`.
+            allow_read_all: false,
             existence_disclosure: ExistenceDisclosure::NotFound,
             allowed_operations: vec!["all".to_string()],
             max_content_bytes: None,
@@ -525,14 +531,15 @@ mod tests {
     }
 
     #[test]
-    fn default_profile_keeps_global_closed_and_reads_open() {
+    fn default_profile_keeps_global_closed_and_the_reads_scoped() {
         let settings = ProfileSettings::default();
         assert!(!settings.allow_global);
-        assert!(settings.allow_read_all);
+        assert!(!settings.allow_read_all);
         let scope = settings.to_access_scope().unwrap();
         assert!(!scope.allow_global);
-        assert!(scope.allow_read_all);
-        assert!(scope.can_read("otro-proyecto"));
+        assert!(!scope.allow_read_all);
+        assert!(scope.can_read("default"));
+        assert!(!scope.can_read("otro-proyecto"));
         assert!(!scope.can_read("global"));
         assert!(!scope.can_write("otro-proyecto"));
     }

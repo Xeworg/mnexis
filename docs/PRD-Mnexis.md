@@ -153,11 +153,20 @@ Cada proceso MCP se inicia con configuración de ámbito controlada por el usuar
 - Operaciones permitidas; purga, importación y configuración son CLI administrativa en MVP.
 - Namespace predeterminado obligatorio.
 - Permiso separado para incluir `global`; no se añade implícitamente.
-- Las lecturas pueden abrirse entre proyectos (`allow_read_all`, activo por
-  defecto en los perfiles nuevos): el agente necesita ver las memorias de
-  otros proyectos porque los proyectos comparten componentes. Las
-  escrituras no se abren: un proyecto escribe sólo en su namespace, y el
-  CLI rechaza con `FORBIDDEN` la escritura a otro namespace cuando el
+- Las lecturas **no** se abren por defecto (`allow_read_all`, inactivo en
+  los perfiles nuevos): un perfil nuevo lee su propio namespace, y el
+  namespace que el workspace tiene vinculado también (un binding es un
+  permiso humano). Abrir las lecturas entre proyectos es una decisión
+  explícita del humano (`mnexis config allow-read-all`). La medición que
+  motivó el cambio (`odd/tasks/closed-default.md`, diez corridas por
+  brazo) midió lo que cuesta: el agente con las lecturas cerradas no
+  inventó ningún valor en diez corridas y no duplicó el hecho de otro
+  proyecto en ninguna, mientras que con las lecturas abiertas duplicó
+  el hecho ajeno en diez de diez. Lo que el aislamiento cuesta es
+  explícito: una tarea que necesita los datos de otro proyecto deja de
+  ser completable sin el humano. Las escrituras nunca se abren: un
+  proyecto escribe sólo en su namespace, y el CLI rechaza con
+  `FORBIDDEN` la escritura a otro namespace cuando el
   workspace actual está vinculado a uno.
 - La lectura de otro namespace se concede sin abrir la escritura:
   `mnexis config allow-read-namespace <ns>` amplía sólo la lista de lectura
