@@ -1,6 +1,7 @@
 # The board — what is done, what is open, what comes next
 
-**Last updated:** 2026-10-26 (item 6 in main with #50). Read this first in a new session, then the
+**Last updated:** 2026-10-26 (item 6 in main with #50; the install-order trap
+closed with #52). Read this first in a new session, then the
 feature document of whatever you pick.
 
 ## Where we are
@@ -25,8 +26,10 @@ out of it:
 | #42 | `closed-default` | the reads are closed in a new profile (`allow_read_all = false`), measured over ten runs per arm: zero invented values and zero duplicated facts closed, against ten of ten duplicated facts open |
 | #46 + #47 + #48 | `session-recall` | the session answers for itself: the recall of a session (`mnexis recall --session <id>` / `--previous`, the MCP `memory_recall`), the working context of a session (migration 008: the branch, the commit and the canonical remote — never the raw URL), and the state of the anchored branch validated **when it is read** (`merged` / `not_merged` / `unknown`, never stored, never a negative) |
 | #50 | `extension-recall` | the recall is priced (identity + preview by default, `--full` / `full` for the whole records — one projection for the CLI and the MCP) and the pi extension exposes the three doors it was missing: `mnexis_recall`, `mnexis_workspace`, `mnexis_history` |
+| #52 | `install-stale-binary-rebuild` | from a repository, `install.sh skills|extensions` rebuilds a binary older than the tree before delegating (the embedded assets are a snapshot of the compiled tree — the trap that reinstalled stale assets with fresh timestamps, #51); piped mode never rebuilds, and the order of `./install.sh` and `./install.sh skills` stopped mattering |
 
-Everything is merged, and item 6 landed with **#50**. `main` is clean (plus the
+Everything is merged, item 6 landed with **#50**, and the install-order trap
+landed with **#52**. `main` is clean (plus the
 archived branches of the
 features that were measured and discarded, and `feat/near-duplicate-titles`,
 archived and **not** merged — see item 1c). The `session-recall` slices
