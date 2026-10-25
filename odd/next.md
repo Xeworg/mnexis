@@ -1,6 +1,6 @@
 # The board — what is done, what is open, what comes next
 
-**Last updated:** 2026-10-26. Read this first in a new session, then the
+**Last updated:** 2026-10-26 (item 6 delivered on `feat/extension-recall`). Read this first in a new session, then the
 feature document of whatever you pick.
 
 ## Where we are
@@ -292,6 +292,17 @@ Two moves, both small, and they are the next thing to do:
    full content on request — the shape `list` got in #24/#26 and
    `memory_search` already has. A recall that answers with 100 full memories
    is not the cheap door the extension would open.
+
+**Both landed on `feat/extension-recall`** (feature doc:
+`odd/tasks/extension-recall.md`): the recall is priced
+(`SessionRecall::payload`, one projection for the CLI `--full` and the MCP
+`full`; the old default payload is exactly preserved behind the flag — the
+differential against main proved it), and the extension exposes the three
+doors it was missing: `mnexis_recall` (with `full` through),
+`mnexis_workspace` and `mnexis_history`. The skill and the extension
+README name them. The differential also proved `list` / `list --full` /
+`search` / `status` byte-identical, so the shared projection did not
+move.
 
 **And the uncomfortable row, measured again**: offered no memory at all, the
 agent found a durable channel **twice in ten** — once by writing the

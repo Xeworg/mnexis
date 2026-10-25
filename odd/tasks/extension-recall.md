@@ -33,3 +33,14 @@ S2 (expose — odd/next.md §6, move 1, quoted verbatim):
 
 L1: "dale al item 6" (the operator, 2026-10-26) — implement board item 6
 (odd/next.md §6): the two moves the re-comparison produced.
+
+L2: verification and delivery (2026-10-26). Full suite 636/0 across the
+binaries, fmt clean, clippy at the base (no new warnings in the touched
+files), the extension 64/64. The differential against main (091aaed, a
+scratch worktree never committed): `list` / `list --full` / `search` /
+`status` byte-identical, the recall text rendering byte-identical, and the
+old default recall payload exactly preserved behind `--full`. Delivery:
+one branch (`feat/extension-recall`), three work-unit commits; one PR for
+the whole feature is the recommendation (the three units are one behavior:
+the door and its price), issue per PR per repo policy — the push, the PR
+and the merge are the operator's call.
