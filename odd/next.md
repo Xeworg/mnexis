@@ -28,6 +28,8 @@ out of it:
 | #46 + #47 + #48 | `session-recall` | the session answers for itself: the recall of a session (`mnexis recall --session <id>` / `--previous`, the MCP `memory_recall`), the working context of a session (migration 008: the branch, the commit and the canonical remote — never the raw URL), and the state of the anchored branch validated **when it is read** (`merged` / `not_merged` / `unknown`, never stored, never a negative) |
 | #50 | `extension-recall` | the recall is priced (identity + preview by default, `--full` / `full` for the whole records — one projection for the CLI and the MCP) and the pi extension exposes the three doors it was missing: `mnexis_recall`, `mnexis_workspace`, `mnexis_history` |
 | #52 | `install-stale-binary-rebuild` | from a repository, `install.sh skills|extensions` rebuilds a binary older than the tree before delegating (the embedded assets are a snapshot of the compiled tree — the trap that reinstalled stale assets with fresh timestamps, #51); piped mode never rebuilds, and the order of `./install.sh` and `./install.sh skills` stopped mattering |
+| #56 | `priced-first-answer` | the first answer a session reads — `mnexis status` and the MCP `memory_workspace` — carries the identity and a preview, not the verbatim content of the last three memories (#53): one projection (`MemoryPreview`), the fatter duplicate deleted, and the narrowing declared where the agent meets it (CLI text, tool description, extension README) |
+| #60 + #61 | `priced-first-answer-followups` | the three findings of the blind review of #56: the MCP tool description never said the list was priced, the extension's test fixture still modelled the forbidden shape, and the new renderer printed titles and previews verbatim — a title with a line break split a fact in two |
 
 Everything is merged, item 6 landed with **#50**, and the install-order trap
 landed with **#52**. `main` is clean (plus the
@@ -374,3 +376,34 @@ honesty check inherited a character-class bug from `score-door.py`
 (`/-a` is the range from "/" to "a", which swallows letters — a commit
 SHA read as an invented value). Artifacts: `tmp/bench/trigger-{measurement,report}.md`,
 copy in `/home/xeworg/lab/mnexis-bench/trigger/`.
+
+### 8. The priced first answer — in main, and what it opened
+
+The first answer a session reads now answers with identity and preview
+(PR **#56**, issue #53, merged; the follow-ups **#60** and **#61** closed
+what the blind review found). The payload went from 2 033 to 1 220 bytes
+on a fixture with one long and one short record, and the CLI gained the
+titles it did not have before (the identity patch used to live only in
+the MCP path — a drift between the two surfaces that the change closed).
+
+**What it did not settle.** The pricing moves the cost of the first call,
+but the agent still *rebuilds* the answer: the trigger measurement showed
+every run going `workspace → list/search → shows`. The one-call door that
+would replace the rebuild exists in the CLI (`mnexis context "<task>"`,
+PRD §9) and the skill tells the agent to run it — and it is not a pi
+tool (**#59**). Worse, it answers from *"scope's first read namespace"*
+rather than the workspace's, without declaring which namespace it
+searched: in a multi-namespace profile it answers with **another
+project's** memories, in silence (**#57**).
+
+**The order from here**: #57 (the namespace of the one-call door) → #59
+(expose `mnexis context` as a pi tool) → re-measure against the merged
+binary → and only then the experiment with a **steering-shaped** phase
+(issue #55): the bench asks a knowledge-shaped question ("¿en qué puerto
+escucha?"), while the recurring question is steering-shaped ("¿dónde
+quedamos?"), which is exactly what the typed-memory idea is for.
+
+Two debts are still open: the records that predate the identity answer
+with an **empty title** (**#58**), and the `memory_type` column, which
+is written but never read, erased by the next save, and filtered by
+nothing (**#55**).

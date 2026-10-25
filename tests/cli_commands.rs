@@ -143,8 +143,63 @@ fn namespaced_profile(names: &[&str]) -> Profile {
     Profile::new().with_config(&Profile::namespaces(&all))
 }
 
-// --- version / init ---
+/// A content with a carriage return: on its own it does not end the line,
+/// but a terminal reads it as "back to the start of the line" and the fact
+/// that follows is painted over. Every renderer that prints one fact per
+/// line folds it.
+#[test]
+fn a_carriage_return_in_a_content_stays_on_one_line() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    save(
+        &p,
+        "primera linea\rsegunda linea",
+        &["--namespace", "proyecto-a"],
+    );
 
+    let out = p
+        .run_text(&["list", "--namespace", "proyecto-a"])
+        .unwrap_status("list");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !text.contains('\r'),
+        "no carriage return reaches the terminal: {text:?}"
+    );
+    // The fact is one physical line: if the break had survived, the second
+    // half would sit on a line of its own.
+    let first = text.lines().next().expect("a fact line");
+    assert!(
+        first.contains("primera linea segunda linea"),
+        "the break became a space and the fact stayed on one line: {text:?}"
+    );
+}
+
+/// The timeline's header names the fact: a title with a line break must not
+/// split it into two.
+#[test]
+fn a_title_with_a_line_break_keeps_the_timeline_header_on_one_line() {
+    let p = namespaced_profile(&["proyecto-a"]);
+    let uuid = save(
+        &p,
+        "el contenido",
+        &["--namespace", "proyecto-a", "--title", "titulo\ncon salto"],
+    );
+
+    let out = p
+        .run_text(&["timeline", &uuid])
+        .unwrap_status("timeline");
+    let text = String::from_utf8_lossy(&out.stdout);
+    let header = text.lines().next().expect("a header line");
+    assert!(
+        header.contains("titulo con salto"),
+        "the break became a space in the header: {text:?}"
+    );
+    assert!(
+        header.contains(&uuid),
+        "the header is the fact's identity: {text:?}"
+    );
+}
+
+// --- version / init ---
 #[test]
 fn version_prints_name_and_semver() {
     let out = Command::new(env!("CARGO_BIN_EXE_mnexis"))
