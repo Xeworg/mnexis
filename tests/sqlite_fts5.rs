@@ -440,7 +440,7 @@ fn a_filtered_run_does_not_see_the_checks_it_did_not_run() {
 
 /// The exact ids the operator can filter with (`--check`) and pin tests on,
 /// in the order `run_checks` emits them.
-const ALL_CHECK_IDS: [&str; 7] = [
+const ALL_CHECK_IDS: [&str; 8] = [
     "schema_version",
     "canonical_tables",
     "fts_readable",
@@ -448,6 +448,7 @@ const ALL_CHECK_IDS: [&str; 7] = [
     "integrity",
     "fts_shape",
     "fts_invariant",
+    "title_shape",
 ];
 
 #[test]
@@ -469,7 +470,7 @@ fn a_healthy_store_reports_the_full_envelope() {
         mnexis_core::diagnostics::doctor::Status::Healthy
     );
     assert!(
-        report.summary.contains("7"),
+        report.summary.contains("8"),
         "summary counts the checks: {}",
         report.summary
     );
@@ -502,7 +503,7 @@ fn the_envelope_serializes_with_the_documented_field_names() {
     assert_eq!(value["status"], "healthy");
     assert!(value["summary"].is_string());
     let checks = value["checks"].as_array().expect("checks array");
-    assert_eq!(checks.len(), 7);
+    assert_eq!(checks.len(), 8);
     for c in checks {
         assert!(c["check_id"].is_string(), "snake_case check_id: {c}");
         assert!(c["ok"].is_boolean());

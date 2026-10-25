@@ -1327,6 +1327,76 @@ fn doctor_repair_dry_run_measures_and_leaves_the_store_broken() {
     );
 }
 
+/// The one check with the given id, in a doctor report.
+fn check_by_id<'a>(report: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+    report["checks"]
+        .as_array()
+        .expect("checks array")
+        .iter()
+        .find(|check| check["check_id"] == id)
+        .unwrap_or_else(|| panic!("the report carries {id}: {report}"))
+}
+
+#[test]
+fn the_doctor_sees_the_records_with_no_title() {
+    let p = Profile::new();
+    // A record with a title: the identity the priced answer carries.
+    save(
+        &p,
+        "el puerto del servicio es 8081",
+        &["--title", "puerto del servicio"],
+    );
+    // A record without one: the debt the issue is about.
+    save(&p, "la decision es staging-eu", &[]);
+
+    let out = p
+        .run_silent(&["doctor", "--check", "title_shape"])
+        .unwrap_status("doctor --check title_shape");
+    let json = stdout_json(&out);
+    let checks = json["checks"].as_array().expect("checks array");
+    assert_eq!(checks.len(), 1, "the filter runs one check: {json}");
+    let check = check_by_id(&json, "title_shape");
+    assert_eq!(check["check_id"], "title_shape", "{check}");
+    assert_eq!(check["ok"], false, "the debt is visible: {check}");
+    assert_eq!(
+        check["severity"], "warn",
+        "a record without a title does not break the store: {check}"
+    );
+    assert_eq!(
+        check["reason_code"], "TITLES_MISSING",
+        "the machine code names the gap: {check}"
+    );
+    let evidence = check["evidence"].as_str().expect("evidence is a string");
+    assert!(
+        evidence.contains('1'),
+        "the evidence counts the records without a title: {evidence}"
+    );
+    assert!(
+        check["safe_next_step"].is_string(),
+        "the check says what to do about it: {check}"
+    );
+}
+
+#[test]
+fn a_profile_whose_records_all_have_a_title_is_healthy() {
+    let p = Profile::new();
+    save(
+        &p,
+        "el puerto del servicio es 8081",
+        &["--title", "puerto del servicio"],
+    );
+
+    let out = p.run_silent(&["doctor"]).unwrap_status("doctor");
+    let json = stdout_json(&out);
+    assert_eq!(json["status"], "healthy", "the store is healthy: {json}");
+    let checks = json["checks"].as_array().expect("checks array");
+    let title_check = checks
+        .iter()
+        .find(|c| c["check_id"] == "title_shape")
+        .expect("the title check is part of the suite");
+    assert_eq!(title_check["ok"], true, "nothing to report: {title_check}");
+}
+
 #[test]
 fn the_old_repair_flag_is_gone() {
     let p = Profile::new();

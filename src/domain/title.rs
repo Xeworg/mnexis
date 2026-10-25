@@ -40,6 +40,64 @@ pub fn key_from_title(title: &str) -> String {
 /// The longest a title may be, in bytes.
 pub const MAX_TITLE_BYTES: usize = 256;
 
+/// The title a record's own text yields, when it yields one.
+///
+/// The title is what the fact IS and the content is what it says now. A
+/// record that carries no title — the ones that predate the identity work
+/// — can be given one from the text it already has: its first sentence,
+/// the same thing the agent writes by hand when it saves a fact.
+///
+/// `None` when the text yields nothing worth naming: an empty content, or
+/// a first sentence that is only punctuation. The caller reports the
+/// record and leaves it alone — a title is never invented, and a title
+/// that names nothing is worse than no title at all.
+pub fn derive_title_from_content(content: &str) -> Option<String> {
+    // One line: a title with a line break splits the identity of the fact
+    // in two, and the content of a legacy record can carry one.
+    let flat = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    let flat = flat.trim();
+    if flat.is_empty() {
+        return None;
+    }
+
+    // The first sentence ends at the first '.', '!' or '?' that is
+    // followed by a space or by the end of the text — so a decimal point
+    // ("the port 3.5") does not cut the sentence in two.
+    let bytes = flat.as_bytes();
+    let mut end = flat.len();
+    for (index, byte) in bytes.iter().enumerate() {
+        if matches!(byte, b'.' | b'!' | b'?') {
+            let next = bytes.get(index + 1);
+            if next.is_none_or(|next| next.is_ascii_whitespace()) {
+                end = index + 1;
+                break;
+            }
+        }
+    }
+
+    // The punctuation that ended the sentence is not part of the name.
+    let sentence = flat[..end].trim().trim_end_matches(['.', '!', '?']).trim();
+    if sentence.is_empty() {
+        return None;
+    }
+
+    // The title has a length limit, and the cut lands on a character
+    // boundary: a title that ends in half a letter names nothing.
+    if sentence.len() > MAX_TITLE_BYTES {
+        let mut cut = MAX_TITLE_BYTES;
+        while cut > 0 && !sentence.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let shortened = sentence[..cut].trim();
+        if shortened.is_empty() {
+            return None;
+        }
+        return Some(shortened.to_string());
+    }
+
+    Some(sentence.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,5 +174,54 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- the title a record's own text yields ---
+
+    #[test]
+    fn the_first_sentence_names_the_fact() {
+        assert_eq!(
+            derive_title_from_content("el puerto del servicio es 8081. el cliente usa TLS."),
+            Some("el puerto del servicio es 8081".to_string())
+        );
+    }
+
+    #[test]
+    fn a_text_with_no_ending_punctuation_is_its_own_title() {
+        assert_eq!(
+            derive_title_from_content("el puerto del servicio es 8081"),
+            Some("el puerto del servicio es 8081".to_string())
+        );
+    }
+
+    #[test]
+    fn a_decimal_point_does_not_cut_the_sentence() {
+        assert_eq!(
+            derive_title_from_content("el puerto es 3.5 y el cliente usa TLS"),
+            Some("el puerto es 3.5 y el cliente usa TLS".to_string())
+        );
+    }
+
+    #[test]
+    fn the_derived_title_is_one_line() {
+        assert_eq!(
+            derive_title_from_content("primera linea\nsegunda linea"),
+            Some("primera linea segunda linea".to_string())
+        );
+    }
+
+    #[test]
+    fn a_text_that_names_nothing_yields_no_title() {
+        assert_eq!(derive_title_from_content(""), None);
+        assert_eq!(derive_title_from_content("   \n  "), None);
+        assert_eq!(derive_title_from_content("!!!"), None);
+    }
+
+    #[test]
+    fn a_long_text_is_cut_on_a_character_boundary() {
+        let long = "á".repeat(200);
+        let title = derive_title_from_content(&long).expect("a title");
+        assert!(title.len() <= MAX_TITLE_BYTES, "{}", title.len());
+        assert!(title.chars().all(|c| c == 'á'), "no half a character");
     }
 }

@@ -58,6 +58,7 @@ pub enum CheckId {
     Integrity,
     FtsShape,
     FtsInvariant,
+    TitleShape,
 }
 
 impl CheckId {
@@ -71,6 +72,7 @@ impl CheckId {
             CheckId::Integrity => "integrity",
             CheckId::FtsShape => "fts_shape",
             CheckId::FtsInvariant => "fts_invariant",
+            CheckId::TitleShape => "title_shape",
         }
     }
 
@@ -81,7 +83,7 @@ impl CheckId {
 }
 
 /// Every check id, in the order a full run emits them.
-pub const ALL_CHECK_IDS: [CheckId; 7] = [
+pub const ALL_CHECK_IDS: [CheckId; 8] = [
     CheckId::SchemaVersion,
     CheckId::CanonicalTables,
     CheckId::FtsReadable,
@@ -89,6 +91,7 @@ pub const ALL_CHECK_IDS: [CheckId; 7] = [
     CheckId::Integrity,
     CheckId::FtsShape,
     CheckId::FtsInvariant,
+    CheckId::TitleShape,
 ];
 
 /// Severity of one check result. `warn` is part of the contract for checks
@@ -133,6 +136,8 @@ pub enum ReasonCode {
     FtsShapeUnreadable,
     FtsStaleShape,
     FtsOutOfSync,
+    TitlesMissing,
+    TitlesUnreadable,
 }
 
 impl ReasonCode {
@@ -152,6 +157,8 @@ impl ReasonCode {
             ReasonCode::FtsShapeUnreadable => "FTS_SHAPE_UNREADABLE",
             ReasonCode::FtsStaleShape => "FTS_STALE_SHAPE",
             ReasonCode::FtsOutOfSync => "FTS_OUT_OF_SYNC",
+            ReasonCode::TitlesMissing => "TITLES_MISSING",
+            ReasonCode::TitlesUnreadable => "TITLES_UNREADABLE",
         }
     }
 
@@ -181,14 +188,29 @@ impl ReasonCode {
             ReasonCode::IntegrityUnreadable | ReasonCode::IntegrityFailed => {
                 "restore from an export or backup; a failed integrity check is not repairable in place"
             }
+            ReasonCode::TitlesMissing => {
+                "give each of them a title with `mnexis update <uuid> --title \"<what the fact is>\"`"
+            }
+            ReasonCode::TitlesUnreadable => {
+                "restore the data directory from a backup; the records cannot be read"
+            }
         }
     }
 
     /// True when a failure with this code blocks correct service (search
     /// misses or refuses) — `status: failed`, not merely degraded. The WAL
     /// family is the exception: the store still serves correctly without it.
+    /// The title family is the other one: a record without a title is read
+    /// and answered, it is just not named — and a doctor that cannot read
+    /// the titles is blind, not broken.
     fn blocks_service(self) -> bool {
-        !matches!(self, ReasonCode::WalUnreadable | ReasonCode::WalNotActive)
+        !matches!(
+            self,
+            ReasonCode::WalUnreadable
+                | ReasonCode::WalNotActive
+                | ReasonCode::TitlesMissing
+                | ReasonCode::TitlesUnreadable
+        )
     }
 }
 
@@ -235,6 +257,22 @@ impl Check {
             safe_next_step: Some(reason.safe_next_step().to_string()),
         }
     }
+
+    /// A warning: the gap is real and it does not break the store.
+    ///
+    /// The store still serves correctly — a record without a title is
+    /// read, it is just not named — so the run does not fail on it. The
+    /// check says what it saw and what to do about it.
+    fn warn(check_id: CheckId, reason: ReasonCode, evidence: String) -> Self {
+        Check {
+            check_id,
+            ok: false,
+            severity: Severity::Warn,
+            reason_code: Some(reason),
+            evidence,
+            safe_next_step: Some(reason.safe_next_step().to_string()),
+        }
+    }
 }
 
 /// Full doctor report (serialised as JSON for `--json` output).
@@ -243,7 +281,8 @@ impl Check {
 pub struct DoctorReport {
     /// healthy | degraded | failed.
     pub status: Status,
-    /// One line: "all 7 checks passed" or "N of 7 checks failed: ...".
+    /// One line: "all N checks passed", "N of M checks failed: ..." or
+    /// "K of M checks warned: ...".
     pub summary: String,
     /// One entry per check that ran.
     pub checks: Vec<Check>,
@@ -575,6 +614,70 @@ fn check_fts_shape(conn: &Connection) -> Check {
     }
 }
 
+/// h. Every record that is not deleted carries a title.
+///
+/// The title is what the fact IS, and every priced answer names the fact
+/// with it. The records that predate the identity work carry no title at
+/// all, so their answers carry an identity of nothing: a uuid, a
+/// namespace and a preview, with nothing naming the fact.
+///
+/// This is a warning, not a failure: the store serves correctly — a
+/// record without a title is read, it is just not named — so the run
+/// does not fail on it. The gap is the debt the identity work left
+/// behind, and this check is the one that sees it.
+fn check_title_shape(conn: &Connection) -> Check {
+    let mut statement = match conn.prepare(
+        "SELECT uuid FROM memories WHERE deleted = 0 AND trim(title) = '' \
+         ORDER BY created_at, uuid",
+    ) {
+        Ok(statement) => statement,
+        Err(error) => {
+            return Check::fail(
+                CheckId::TitleShape,
+                ReasonCode::TitlesUnreadable,
+                format!("cannot read the titles: {error}"),
+            );
+        }
+    };
+    let mut uuids: Vec<String> = Vec::new();
+    match statement.query_map([], |row| row.get::<_, String>(0)) {
+        Ok(rows) => {
+            for row in rows.flatten() {
+                uuids.push(row);
+            }
+        }
+        Err(error) => {
+            return Check::fail(
+                CheckId::TitleShape,
+                ReasonCode::TitlesUnreadable,
+                format!("cannot read the titles: {error}"),
+            );
+        }
+    }
+    if uuids.is_empty() {
+        return Check::pass(
+            CheckId::TitleShape,
+            "every record carries a title".to_string(),
+        );
+    }
+    let noun = if uuids.len() == 1 {
+        "record"
+    } else {
+        "records"
+    };
+    let shown = uuids.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+    let more = uuids.len().saturating_sub(5);
+    let evidence = if more > 0 {
+        format!(
+            "{} {noun} without a title: {shown} (+{more} more)",
+            uuids.len()
+        )
+    } else {
+        format!("{} {noun} without a title: {shown}", uuids.len())
+    };
+    Check::warn(CheckId::TitleShape, ReasonCode::TitlesMissing, evidence)
+}
+
 // ---------------------------------------------------------------------------
 // Purge eligibility count
 // ---------------------------------------------------------------------------
@@ -639,6 +742,7 @@ fn check_for_id(conn: &Connection, id: CheckId) -> Check {
         CheckId::Integrity => check_integrity(conn),
         CheckId::FtsShape => check_fts_shape(conn),
         CheckId::FtsInvariant => check_fts_invariant(conn),
+        CheckId::TitleShape => check_title_shape(conn),
     }
 }
 
@@ -650,15 +754,22 @@ pub(crate) fn build_report(checks: Vec<Check>) -> DoctorReport {
         .any(|c| !c.ok && c.reason_code.is_some_and(|r| r.blocks_service()))
     {
         Status::Failed
-    } else if checks.iter().all(|c| c.ok) {
-        Status::Healthy
-    } else {
+    } else if checks
+        .iter()
+        .any(|c| !c.ok && c.severity == Severity::Error)
+    {
+        // An error that does not block service (the WAL family): the store
+        // still serves, but something is wrong with it.
         Status::Degraded
+    } else {
+        // Everything passed, or the only gaps are warnings: the store
+        // serves correctly either way.
+        Status::Healthy
     };
 
     let failed: Vec<String> = checks
         .iter()
-        .filter(|c| !c.ok)
+        .filter(|c| !c.ok && c.severity == Severity::Error)
         .map(|c| {
             format!(
                 "{} ({})",
@@ -667,16 +778,40 @@ pub(crate) fn build_report(checks: Vec<Check>) -> DoctorReport {
             )
         })
         .collect();
+    let warned: Vec<String> = checks
+        .iter()
+        .filter(|c| !c.ok && c.severity == Severity::Warn)
+        .map(|c| {
+            format!(
+                "{} ({})",
+                c.check_id.as_str(),
+                c.reason_code.map(ReasonCode::as_str).unwrap_or("WARNED")
+            )
+        })
+        .collect();
 
-    let summary = if failed.is_empty() {
-        format!("all {} checks passed", checks.len())
-    } else {
-        format!(
+    let summary = match (failed.is_empty(), warned.is_empty()) {
+        (true, true) => format!("all {} checks passed", checks.len()),
+        (false, true) => format!(
             "{} of {} checks failed: {}",
             failed.len(),
             checks.len(),
             failed.join(", ")
-        )
+        ),
+        (true, false) => format!(
+            "{} of {} checks warned: {}",
+            warned.len(),
+            checks.len(),
+            warned.join(", ")
+        ),
+        (false, false) => format!(
+            "{} of {} checks failed: {}; {} warned: {}",
+            failed.len(),
+            checks.len(),
+            failed.join(", "),
+            warned.len(),
+            warned.join(", ")
+        ),
     };
 
     DoctorReport {
@@ -703,6 +838,13 @@ fn index_unavailable_ids() -> [CheckId; 4] {
 ///
 /// Precedence: UNSUPPORTED_VERSION (9) > INDEX_UNAVAILABLE (6) > generic (1).
 pub fn failure_exit_code(report: &DoctorReport) -> Option<(i32, &'static str)> {
+    // A warning does not fail the run: only an error does. A store whose
+    // records carry no title still serves every read correctly, so the
+    // doctor says so and exits 0.
+    if !report.checks.iter().any(|c| c.severity == Severity::Error) {
+        return None;
+    }
+
     let unsupported = report
         .checks
         .iter()
@@ -787,6 +929,7 @@ fn action_for(conn: &Connection, check: &Check) -> Option<RepairAction> {
             Some(RepairAction::RebuildFts)
         }
         CheckId::WalMode => Some(RepairAction::ReactivateWal),
+        CheckId::TitleShape => None,
         CheckId::SchemaVersion | CheckId::Integrity => None,
     }
 }
@@ -854,7 +997,6 @@ pub fn apply_repair(conn: &Connection) -> Result<(RepairReport, DoctorReport), M
             .map_err(|e| MnexisError::busy(format!("reactivate WAL: {e}")))?;
         wal_reactivated = true;
     }
-
     let after = run_checks(conn);
     let repair = RepairReport {
         mode: RepairMode::Apply,
@@ -882,15 +1024,18 @@ pub fn dry_run_repair(conn: &Connection) -> Result<(RepairReport, DoctorReport),
     if rebuild {
         conn.execute_batch("SAVEPOINT doctor_repair_dry_run")
             .map_err(|e| MnexisError::busy(format!("dry-run savepoint: {e}")))?;
-        match rebuild_memories_fts(conn) {
-            Ok(count) => reindexed = count,
-            Err(error) => {
-                // Undo whatever the attempt did, then report the failure.
-                let _ = conn.execute_batch(
-                    "ROLLBACK TO doctor_repair_dry_run; RELEASE doctor_repair_dry_run",
-                );
-                return Err(error);
+        let mut failure: Option<MnexisError> = None;
+        if rebuild {
+            match rebuild_memories_fts(conn) {
+                Ok(count) => reindexed = count,
+                Err(error) => failure = Some(error),
             }
+        }
+        if let Some(error) = failure {
+            // Undo whatever the attempt did, then report the failure.
+            let _ = conn
+                .execute_batch("ROLLBACK TO doctor_repair_dry_run; RELEASE doctor_repair_dry_run");
+            return Err(error);
         }
         conn.execute_batch("ROLLBACK TO doctor_repair_dry_run; RELEASE doctor_repair_dry_run")
             .map_err(|e| MnexisError::busy(format!("dry-run rollback: {e}")))?;
