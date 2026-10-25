@@ -372,7 +372,8 @@ those.
 
 Two defects the measurement surfaced along the way: the records that
 predate the identity (#29) still answer with an **empty title**, so the
-priced answer does not say what each fact *is* (**#58**), and the
+priced answer does not say what each fact *is* (**#58**, closed below:
+the doctor sees them now and the repair fills them), and the
 honesty check inherited a character-class bug from `score-door.py`
 (`/-a` is the range from "/" to "a", which swallows letters — a commit
 SHA read as an invented value). Artifacts: `tmp/bench/trigger-{measurement,report}.md`,
@@ -429,7 +430,30 @@ bench asks a knowledge-shaped question ("¿en qué puerto
 escucha?"), while the recurring question is steering-shaped ("¿dónde
 quedamos?"), which is exactly what the typed-memory idea is for.
 
-Two debts are still open: the records that predate the identity answer
-with an **empty title** (**#58**), and the `memory_type` column, which
+Two debts are still open: the `memory_type` column, which
 is written but never read, erased by the next save, and filtered by
-nothing (**#55**).
+nothing (**#55**), and the **re-measurement** of the door, which needs
+the bench environment (docker + the model provider) and cannot run in
+the sandbox that wrote it.
+
+**The identity debt, closed (#58).** The records that predate the
+identity work carried no title at all, so every priced answer named
+nothing — a uuid, a namespace and a preview, with no word saying what
+the fact *is*. Nothing repaired it and no check saw it: the doctor had
+seven checks and none looked at the title shape.
+
+The doctor has an eighth now. `title_shape` counts the records without
+a title and names them, and it is a **warning**: a record without a
+title is read and answered, it is just not named, so the store still
+serves and the run does not fail on it. The status follows the
+severity, not the count of green checks: a warning is a gap, not a
+broken store.
+
+The repair (`doctor repair --plan|--dry-run|--apply`) fills the missing
+titles from each record's **own text** — its first sentence, the same
+thing the agent writes by hand — and the topic key that title yields,
+exactly as the save path derives it. A record whose text yields nothing
+is reported, not invented, and a key another record already holds is not
+written: merging two facts is the agent's decision, not the doctor's.
+The fact does not change, so the revision does not move and the history
+keeps what it says: only the missing identity is filled.

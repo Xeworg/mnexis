@@ -1183,6 +1183,22 @@ fn render_repair_text(repair: &RepairReport, report: &doctor::DoctorReport) -> S
     if repair.wal_reactivated {
         lines.push("  re-activated WAL journaling".into());
     }
+    if repair.titles_derived > 0 {
+        lines.push(format!(
+            "  {verb} {} title(s) from each record's own text",
+            repair.titles_derived
+        ));
+    }
+    if !repair.titles_undeducible.is_empty() {
+        // The records that keep no title: their text yields none, or the
+        // key their title would give is another record's. They are named,
+        // never invented.
+        lines.push(format!(
+            "  {} record(s) keep no title (their text yields none): {}",
+            repair.titles_undeducible.len(),
+            repair.titles_undeducible.join(", ")
+        ));
+    }
     for line in render_doctor_text(report).split('\n') {
         lines.push(line.to_string());
     }

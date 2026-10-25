@@ -1327,6 +1327,167 @@ fn doctor_repair_dry_run_measures_and_leaves_the_store_broken() {
     );
 }
 
+/// The one check with the given id, in a doctor report.
+fn check_by_id<'a>(report: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+    report["checks"]
+        .as_array()
+        .expect("checks array")
+        .iter()
+        .find(|check| check["check_id"] == id)
+        .unwrap_or_else(|| panic!("the report carries {id}: {report}"))
+}
+
+#[test]
+fn the_doctor_sees_the_records_with_no_title() {
+    let p = Profile::new();
+    // A record with a title: the identity the priced answer carries.
+    save(
+        &p,
+        "el puerto del servicio es 8081",
+        &["--title", "puerto del servicio"],
+    );
+    // A record without one: the debt the issue is about.
+    save(&p, "la decision es staging-eu", &[]);
+
+    let out = p
+        .run_silent(&["doctor", "--check", "title_shape"])
+        .unwrap_status("doctor --check title_shape");
+    let json = stdout_json(&out);
+    let checks = json["checks"].as_array().expect("checks array");
+    assert_eq!(checks.len(), 1, "the filter runs one check: {json}");
+    let check = &checks[0];
+    assert_eq!(check["check_id"], "title_shape", "{check}");
+    assert_eq!(check["ok"], false, "the debt is visible: {check}");
+    assert_eq!(
+        check["severity"], "warn",
+        "a record without a title does not break the store: {check}"
+    );
+    assert_eq!(
+        check["reason_code"], "TITLES_MISSING",
+        "the machine code names the gap: {check}"
+    );
+    let evidence = check["evidence"].as_str().expect("evidence is a string");
+    assert!(
+        evidence.contains('1'),
+        "the evidence counts the records without a title: {evidence}"
+    );
+    assert!(
+        check["safe_next_step"].is_string(),
+        "the check says what to do about it: {check}"
+    );
+}
+
+#[test]
+fn a_profile_whose_records_all_have_a_title_is_healthy() {
+    let p = Profile::new();
+    save(
+        &p,
+        "el puerto del servicio es 8081",
+        &["--title", "puerto del servicio"],
+    );
+
+    let out = p.run_silent(&["doctor"]).unwrap_status("doctor");
+    let json = stdout_json(&out);
+    assert_eq!(json["status"], "healthy", "the store is healthy: {json}");
+    let checks = json["checks"].as_array().expect("checks array");
+    let title_check = checks
+        .iter()
+        .find(|c| c["check_id"] == "title_shape")
+        .expect("the title check is part of the suite");
+    assert_eq!(title_check["ok"], true, "nothing to report: {title_check}");
+}
+
+#[test]
+fn the_repair_fills_the_missing_titles_from_the_records_own_text() {
+    let p = Profile::new();
+    save(
+        &p,
+        "el puerto del servicio es 8081. el cliente usa TLS.",
+        &[],
+    );
+
+    // The plan says what it would do, and writes nothing.
+    let plan = p
+        .run_silent(&["doctor", "repair", "--plan"])
+        .unwrap_status("doctor repair --plan");
+    let json = stdout_json(&plan);
+    let actions = json["repair"]["actions"].as_array().expect("actions array");
+    assert!(
+        actions.iter().any(|a| a["action"] == "derive_titles"),
+        "the plan names the action: {json}"
+    );
+    assert_eq!(
+        json["repair"]["titles_derived"], 0,
+        "the plan derives nothing yet: {json}"
+    );
+    let after_plan = stdout_json(&p.run_silent(&["doctor"]).unwrap_status("doctor"));
+    assert_eq!(
+        check_by_id(&after_plan, "title_shape")["ok"],
+        false,
+        "the plan heals nothing: {after_plan}"
+    );
+
+    // The dry run measures the work and leaves the store as it was.
+    let dry = p
+        .run_silent(&["doctor", "repair", "--dry-run"])
+        .unwrap_status("doctor repair --dry-run");
+    let json = stdout_json(&dry);
+    assert_eq!(json["repair"]["mode"], "dry_run", "{json}");
+    assert_eq!(
+        json["repair"]["titles_derived"], 1,
+        "the work ran inside the savepoint and was measured: {json}"
+    );
+    let after_dry = stdout_json(&p.run_silent(&["doctor"]).unwrap_status("doctor"));
+    assert_eq!(
+        check_by_id(&after_dry, "title_shape")["ok"],
+        false,
+        "a dry-run heals nothing: {after_dry}"
+    );
+
+    // The apply writes it, and the doctor is happy afterwards.
+    let applied = p
+        .run_silent(&["doctor", "repair", "--apply"])
+        .unwrap_status("doctor repair --apply");
+    let json = stdout_json(&applied);
+    assert_eq!(json["repair"]["titles_derived"], 1, "{json}");
+    assert_eq!(json["status"], "healthy", "the store is healthy: {json}");
+
+    // The record now carries the title, so the priced answer names the fact.
+    let listed = stdout_json(&p.run_silent(&["list"]).unwrap_status("list"));
+    let items = listed["items"].as_array().expect("items array");
+    assert_eq!(
+        items[0]["title"], "el puerto del servicio es 8081",
+        "the fact is named: {listed}"
+    );
+}
+
+#[test]
+fn a_record_whose_text_yields_no_title_is_reported_not_invented() {
+    let p = Profile::new();
+    save(&p, "!!!", &[]);
+
+    let applied = p
+        .run_silent(&["doctor", "repair", "--apply"])
+        .unwrap_status("doctor repair --apply");
+    let json = stdout_json(&applied);
+    assert_eq!(
+        json["repair"]["titles_derived"], 0,
+        "nothing was invented: {json}"
+    );
+    let undeducible = json["repair"]["titles_undeducible"]
+        .as_array()
+        .expect("the undeducible records are reported");
+    assert_eq!(undeducible.len(), 1, "the record is reported: {json}");
+
+    // The gap is still visible: the doctor does not pretend it is gone.
+    let after = stdout_json(&p.run_silent(&["doctor"]).unwrap_status("doctor"));
+    assert_eq!(
+        check_by_id(&after, "title_shape")["ok"],
+        false,
+        "the gap stays visible: {after}"
+    );
+}
+
 #[test]
 fn the_old_repair_flag_is_gone() {
     let p = Profile::new();
