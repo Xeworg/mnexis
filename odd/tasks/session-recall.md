@@ -57,7 +57,7 @@ before. That makes the recall of a session load-bearing, not a convenience.
 | --- | --- | --- | --- | --- |
 | T1 | S1 | the recall: a service method, `mnexis recall`, the MCP tool | `d0a7527` |
 | T2 | S2 | the provenance: migration 008, the capture at session start | `src/storage/sqlite.rs`, `src/application/workspace.rs`, `src/application/service.rs`, `src/domain/session.rs`, `src/storage/memory_repo.rs`, `src/diagnostics/doctor.rs`, `src/cli/mod.rs`, `src/cli/stats_cmd.rs`, `src/mcp/tools.rs`, `tests/session_recall.rs`, `tests/sqlite_fts5.rs`, `README.md` | `3468667` |
-| T3 | S3 + S4 | the validator, and the recall showing it | `src/application/git_state.rs`, `src/application/workspace.rs`, `src/application/session_recall.rs`, `src/cli/recall_cmd.rs`, `src/mcp/server.rs`, `tests/session_recall.rs` | |
+| T3 | S3 + S4 | the validator, and the recall showing it | `src/application/git_state.rs`, `src/application/workspace.rs`, `src/application/session_recall.rs`, `src/cli/recall_cmd.rs`, `src/mcp/server.rs`, `tests/session_recall.rs` | `a86d245` |
 
 ## Log
 
@@ -175,3 +175,56 @@ before. That makes the recall of a session load-bearing, not a convenience.
   precedent is **one PR per task slice, stacked** (the way `doctor-contract`
   went out as #31 + #34). The PRs are the operator's call at the close of
   the feature.
+
+- **L6** (2026-10-26) — **T3 is done** (`a86d245`, on `feat/session-recall`):
+  the state of the anchored branch, validated when it is read. The decisions
+  the implementation took, with the code as the evidence:
+  - **What is compared is the branch's current tip while the branch exists,
+    and the recorded commit when it is gone.** The recorded commit is where
+    the session *started*: asking whether that starting point is in the base
+    answers "yes" for every branch cut from the base, which is a lie about
+    the work. The tip is the work. When the branch is gone, the recorded
+    commit is the last evidence there is, and the answer says which one it
+    used (`compared.kind`: `branch_tip` or `recorded_commit`).
+  - **The repository is the one the anchor names.** The canonical remote key
+    decides: a candidate directory only counts when its
+    `git:<normalized>` key equals the recorded one. The reader's own
+    directory is a fallback for when the session recorded no directory, and
+    never a substitute for a different repository. A session that happened
+    in a repository **without** a remote can only be answered by the
+    directory it recorded — there is no identity to match against.
+  - **The base is `origin/HEAD` when the repository knows it, else `main`,
+    else `master`, else the answer is `unknown`.** The answer reports the
+    base it compared against and the instant of the check, because a state
+    without them looks like a fact about the session and it is a fact about
+    the repository *then*.
+  - **`null` is not `unknown`.** A session that recorded no branch and no
+    commit has nothing to validate, and the answer carries `null`. `unknown`
+    means there was an anchor and it could not be checked — with the reason
+    attached.
+  - **The git plumbing moved to `src/application/git_state.rs`** (the
+    `git_output` helper, `GitAnchor` and `git_anchor`): one module owns
+    everything git, and the move is behavior-neutral (the differential says
+    so).
+  - **The recall stayed read-only** (S4): no write, no new exit code, and
+    the session commands keep their shape — `mnexis session`, `mnexis
+    sessions` and `mnexis end` are byte-identical against the base commit.
+
+  **The known boundary, said out loud:** a branch cut from the base whose
+  work was never merged, and that was then deleted, reads as `merged` — the
+  recorded commit was already in the base, and the branch that carried the
+  work is gone. The fix would be to refresh the anchor when the session
+  ends (the tip of the branch at that moment), so the recorded commit is the
+  work and not the starting point. S2 does not ask for it, so it was not
+  done; it is the next thing to decide if the answer has to be exact.
+
+  Checks: 23 cargo test binaries green (12 in `tests/session_recall.rs`: the
+  six pinned verdicts, the rendering, and the five of T2), fmt clean, clippy
+  at the same 36-warning baseline, a **differential against the base
+  commit** (only the three anchor fields, the schema version, the new
+  `branch_state` field and the new `branch:` line differ), and a manual
+  smoke of the merged and not-merged cases.
+
+  **The feature is complete** (S1-S4, T1-T3). What is left is delivery, and
+  delivery is the operator's: the branch carries three slices (T1 | T2 | T3)
+  and the PRs are theirs to open.

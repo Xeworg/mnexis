@@ -1,6 +1,6 @@
 # The board — what is done, what is open, what comes next
 
-**Last updated:** 2026-10-23. Read this first in a new session, then the
+**Last updated:** 2026-10-26. Read this first in a new session, then the
 feature document of whatever you pick.
 
 ## Where we are
@@ -192,13 +192,24 @@ already recalls and already saves, because the tool descriptions and the
 skill say so). Recorded in `odd/tasks/agent-recall-ergonomics.md` (L4) — do
 not rebuild it without new evidence.
 
-### 5. The prompt/session layer is in, but thin
+### 5. The prompt/session layer is in, and the session now carries its context
 
-`session-and-prompts` landed the tables, the tools and the hooks. What is
-missing: the **recall** of a session (the agent can save a prompt and search
-prompts, but cannot ask "what happened in the session before this one"), and
-the **conflict layer** proper (a judgment the agent records, and the verdict
-annotated back into the search results).
+`session-and-prompts` landed the tables, the tools and the hooks. The **recall**
+of a session and the **provenance with git** are done on the branch
+`feat/session-recall` (three slices: the recall, the anchor, the validator) —
+**not in `main` yet**: the PRs are the operator's call. What the branch adds:
+
+- the recall (`mnexis recall --session <id>` / `--previous`) answers what a
+  session was: the session, its prompts in order, and the memories of its
+  namespace in the session's window — labelled as a **window**, because the
+  engine cannot know which session wrote which memory;
+- the session records its working context (branch, commit, and the canonical
+  remote — never the raw URL, which can carry credentials), and the state of
+  that branch is validated **when it is read** (`merged` / `not_merged` /
+  `unknown`): never stored, and `unknown` never becomes a negative.
+
+What is still missing: the **conflict layer** proper (a judgment the agent
+records, and the verdict annotated back into the search results).
 
 ## How to work here
 
