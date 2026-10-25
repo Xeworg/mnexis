@@ -709,7 +709,7 @@ impl McpServer {
 
     #[tool(
         name = "memory_recall",
-        description = "Recall what a session was: the session itself, what the user said in it in order, and the memories of the namespace in its window. Use `previous` for the session before this one — the most recent finished session of this workspace's namespace — or `session` for a known id. The memories are the namespace's, read by time: the engine does not know which session wrote which memory."
+        description = "Recall what a session was: the session itself, what the user said in it in order, and the memories of the namespace in its window. Use `previous` for the session before this one — the most recent finished session of this workspace's namespace — or `session` for a known id. The memories are the namespace's, read by time: the engine does not know which session wrote which memory. The answer also carries the state of the branch the session was anchored to, validated at read time and never stored: `merged`, `not_merged`, or `unknown` when it could not be checked."
     )]
     fn memory_recall(&self, Parameters(args): Parameters<RecallArgs>) -> Result<String, McpError> {
         self.do_recall(args)

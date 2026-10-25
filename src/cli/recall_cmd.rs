@@ -7,7 +7,12 @@
 //!
 //! Read-only, and it follows the same scope authorization as every other read:
 //! a session of a namespace the profile cannot read is NOT_FOUND.
+//!
+//! The answer also carries the state of the branch the session was anchored to,
+//! validated when it is read (session-recall S3): `merged`, `not_merged` or
+//! `unknown`, with the base it compared against and the instant of the check.
 
+use crate::application::git_state::BranchState;
 use crate::application::service::session_recall::SessionRecall;
 use crate::cli::output::CommandOutcome;
 use crate::cli::profile::Profile;
@@ -69,6 +74,7 @@ fn render(recall: &SessionRecall) -> String {
         "summary: {}",
         session.summary.as_deref().unwrap_or("-")
     ));
+    lines.push(branch_line(recall.branch_state.as_ref()));
 
     lines.push("prompts:".to_string());
     if recall.prompts.is_empty() {
@@ -100,4 +106,29 @@ fn render(recall: &SessionRecall) -> String {
         lines.push(crate::cli::output::memory_line(memory));
     }
     lines.join("\n")
+}
+
+/// The state of the anchored branch, in one line.
+///
+/// The state is derived when the session is read, so the line says which base
+/// it compared against and when it checked: without them the verdict would
+/// look like a fact about the session, and it is a fact about the repository at
+/// that instant. A session that recorded no anchor has nothing to validate,
+/// and the line says that too.
+fn branch_line(branch_state: Option<&BranchState>) -> String {
+    let Some(branch_state) = branch_state else {
+        return "branch: none recorded".to_string();
+    };
+    // No base means no comparison: `-` is how the rest of this rendering says
+    // "there is nothing here".
+    let base = branch_state.base.as_deref().unwrap_or("-");
+    let mut line = format!(
+        "branch: {} (base {base}, checked {})",
+        branch_state.state, branch_state.checked_at
+    );
+    if let Some(reason) = branch_state.reason.as_deref() {
+        line.push_str(" — ");
+        line.push_str(reason);
+    }
+    line
 }

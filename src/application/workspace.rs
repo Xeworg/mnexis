@@ -27,8 +27,8 @@
 //! this rule existed.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+use crate::application::git_state::git_output;
 use crate::config::projects::{ProjectRegistry, registry_path};
 use crate::domain::error::MnexisError;
 use crate::domain::scope::AccessScope;
@@ -68,69 +68,6 @@ fn current_key(cwd: &Path) -> String {
         &["config", "--get", "remote.origin.url"],
     );
     workspace_key(remote.as_deref(), repo_root.as_deref(), cwd)
-}
-
-/// One git query in `dir`. Anything but a clean, non-empty answer is `None`:
-/// a workspace without git is a normal workspace, not a failure.
-fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if text.is_empty() { None } else { Some(text) }
-}
-
-/// The git anchor of a directory: where the work happened.
-///
-/// The **anchor** is the part of the context that does not rot: the commit
-/// is still that commit, even when the branch has moved on. The branch name
-/// is recorded next to it because it is what a human reads, and the remote is
-/// recorded in its canonical form (`git:<normalized>`) because a raw URL can
-/// carry credentials.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct GitAnchor {
-    /// The branch the directory is on.
-    pub branch: Option<String>,
-    /// The commit the directory is at.
-    pub sha: Option<String>,
-    /// The canonical key of the repository (`git:<normalized>`).
-    pub remote: Option<String>,
-}
-
-/// The anchor of `directory`, as git reports it.
-///
-/// Everything but a clean answer is `None`: a directory that is not a
-/// repository, a git that is not installed, a repository with no commits, a
-/// detached HEAD, a remote that cannot be normalized. **No git is not an
-/// error** — a session that did not happen in a repository is a session, and
-/// the engine records what it can and nothing more.
-pub fn git_anchor(directory: &Path) -> GitAnchor {
-    // The root of the repository, not the directory: a session that happens
-    // in a subdirectory of a repository is anchored to that repository.
-    let Some(root) = git_output(directory, &["rev-parse", "--show-toplevel"]).map(PathBuf::from)
-    else {
-        return GitAnchor::default();
-    };
-    // `symbolic-ref` fails on a detached HEAD, which is the honest answer:
-    // there is no branch there.
-    let branch = git_output(&root, &["symbolic-ref", "--short", "HEAD"]);
-    let sha = git_output(&root, &["rev-parse", "HEAD"]);
-    // The canonical key, never the URL: a URL can carry credentials
-    // (`https://user:token@host/...`) and the key is the identity the
-    // workspace already uses.
-    let remote = git_output(&root, &["config", "--get", "remote.origin.url"])
-        .and_then(|url| normalize_remote_url(&url))
-        .map(|normalized| format!("git:{normalized}"));
-    GitAnchor {
-        branch,
-        sha,
-        remote,
-    }
 }
 
 /// The namespace named by the nearest `.mnexis-namespace` marker at or
