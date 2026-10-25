@@ -361,7 +361,9 @@ fn a_title_with_a_line_break_stays_on_one_line() {
         ws.path(),
         "snake",
         "el contenido\ncon un salto",
-        Some("titulo\ncon un salto"),
+        // A carriage return too: on its own it does not end the line, but a
+        // terminal reads it as "back to the start of the line".
+        Some("titulo\r\ncon un salto"),
     );
 
     let out = p.run_text_in_dir(ws.path(), &["status"]);
@@ -372,18 +374,32 @@ fn a_title_with_a_line_break_stays_on_one_line() {
         String::from_utf8_lossy(&out.stderr)
     );
     let text = stdout_text(&out);
-    let fact_lines: Vec<&str> = text
-        .lines()
-        .filter(|line| line.trim_start().starts_with('['))
-        .collect();
+    // The whole answer has a known shape: the workspace line, the scope
+    // line, the count, one line per fact, and the way to open a record.
+    // Counting the fact lines alone would not prove the claim: a fact whose
+    // title wraps onto a second physical line would still leave exactly one
+    // line starting with '['. The number of physical lines is the claim.
+    let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
-        fact_lines.len(),
-        1,
+        lines.len(),
+        5,
         "one fact is one physical line, got: {text:?}"
     );
     assert!(
-        fact_lines[0].contains("titulo con un salto"),
+        lines[3].contains("titulo"),
         "the break became a space: {text:?}"
+    );
+    assert!(
+        lines[3].contains("con un salto"),
+        "the title's words are all in the same line: {text:?}"
+    );
+    assert!(
+        lines[3].contains("el contenido con un salto"),
+        "the preview's break became a space too: {text:?}"
+    );
+    assert!(
+        !text.contains('\r'),
+        "no carriage return survives into the line: {text:?}"
     );
 }
 
