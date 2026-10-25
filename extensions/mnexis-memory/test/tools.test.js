@@ -136,7 +136,21 @@ if (args[0] === "project" && args[1] === "list") {
 			workspace: { key: "git:github.com-xeworg-mnexis", namespace: workspace },
 			scope: { default_namespace: "default", write_namespaces: [workspace] },
 			memory_count: 3,
-			recent: [{ uuid: "m1", namespace: workspace, content: "el puerto es 8081", revision: 1 }],
+			recent: [
+				{
+					uuid: "m1",
+					namespace: workspace,
+					title: "puerto del servicio",
+					keywords: [],
+					memory_type: "fact",
+					state: "active",
+					revision: 1,
+					topic_key: "puerto-del-servicio",
+					created_at: "2026-01-01T00:00:00Z",
+					updated_at: "2026-01-01T00:00:00Z",
+					preview: "el puerto es 8081",
+				},
+			],
 		}),
 	);
 } else if (args[0] === "history") {
@@ -534,6 +548,11 @@ test("the workspace answers where the session may write, in one call", async () 
 	const text = String(result.content?.[0]?.text ?? "");
 	assert.match(text, /git:github.com-xeworg-mnexis/, `the workspace key is in the answer: ${text}`);
 	assert.match(text, /memory_count/, `the count is in the answer: ${text}`);
+	// The recent list is priced: the answer names each memory and previews
+	// it, and never pastes the whole record (#53).
+	assert.match(text, /puerto del servicio/, `the identity reaches the model: ${text}`);
+	assert.match(text, /el puerto es 8081/, `the preview reaches the model: ${text}`);
+	assert.doesNotMatch(text, /"content"/, `the full record is not in the answer: ${text}`);
 });
 
 test("the history of one memory reaches the engine", async () => {

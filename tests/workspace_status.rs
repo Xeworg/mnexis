@@ -171,7 +171,23 @@ fn bind_workspace(profile: &Profile, dir: &Path, namespace: &str) -> String {
 
 /// Save one memory through a working directory and return its uuid.
 fn save(profile: &Profile, dir: &Path, namespace: &str, content: &str) -> String {
-    let out = profile.run_in_dir(dir, &["save", "--namespace", namespace, content]);
+    save_with_title(profile, dir, namespace, content, None)
+}
+
+/// A save with a title of its own: the status line prints it.
+fn save_with_title(
+    profile: &Profile,
+    dir: &Path,
+    namespace: &str,
+    content: &str,
+    title: Option<&str>,
+) -> String {
+    let mut args = vec!["save", "--namespace", namespace, content];
+    if let Some(title) = title {
+        args.push("--title");
+        args.push(title);
+    }
+    let out = profile.run_in_dir(dir, &args);
     assert!(
         out.status.success(),
         "save failed ({}): {}",
@@ -330,6 +346,45 @@ fn status_prints_one_line_per_fact() {
         "line 5 names how to open a record: {text:?}"
     );
     assert_eq!(lines.len(), 5, "no other lines: {text:?}");
+}
+
+/// A title or a preview can carry a line break (the store accepts them),
+/// and the status line prints one fact per line: the break becomes a
+/// space, never a second physical line.
+#[test]
+fn a_title_with_a_line_break_stays_on_one_line() {
+    let p = Profile::new().with_config(&config(&["default", "snake"], false, false));
+    let ws = Workspace::bare();
+    bind_workspace(&p, ws.path(), "snake");
+    save_with_title(
+        &p,
+        ws.path(),
+        "snake",
+        "el contenido\ncon un salto",
+        Some("titulo\ncon un salto"),
+    );
+
+    let out = p.run_text_in_dir(ws.path(), &["status"]);
+    assert!(
+        out.status.success(),
+        "status failed ({}): {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = stdout_text(&out);
+    let fact_lines: Vec<&str> = text
+        .lines()
+        .filter(|line| line.trim_start().starts_with('['))
+        .collect();
+    assert_eq!(
+        fact_lines.len(),
+        1,
+        "one fact is one physical line, got: {text:?}"
+    );
+    assert!(
+        fact_lines[0].contains("titulo con un salto"),
+        "the break became a space: {text:?}"
+    );
 }
 
 /// The workspace namespace is what the agent needs to know even when its
