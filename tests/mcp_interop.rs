@@ -99,6 +99,7 @@ async fn tools_list_contains_all_the_memory_tools_and_no_ping()
         "memory_session_end",
         "memory_save_prompt",
         "memory_search_prompts",
+        "memory_recall",
     ] {
         assert!(
             names.contains(&tool),
@@ -1912,6 +1913,142 @@ async fn the_mcp_read_scope_names_no_namespace_and_counts_nothing()
     let parsed: serde_json::Value = serde_json::from_str(&text)?;
     assert_eq!(parsed["count"], 0, "{parsed}");
     assert_eq!(parsed["read_scope"], "restricted", "{parsed}");
+
+    client.cancel().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// memory_recall: what a session was (session-recall S1)
+// ---------------------------------------------------------------------------
+
+/// The one sentence the answer uses for what a window can and cannot claim.
+const WINDOW_LABEL: &str = "the memories of the namespace in the session's window";
+
+#[tokio::test]
+async fn memory_recall_answers_what_a_session_was() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // No finished session yet: NOT_FOUND, and the message says there is
+    // none rather than answering with an empty session.
+    let no_previous = client
+        .call_tool(
+            CallToolRequestParams::new("memory_recall").with_arguments(
+                serde_json::json!({ "previous": true })
+                    .as_object()
+                    .expect("static object")
+                    .clone(),
+            ),
+        )
+        .await
+        .expect_err("no finished session must be NOT_FOUND");
+    let err_text = format!("{no_previous}");
+    assert!(err_text.contains("-32050"), "{err_text}");
+    assert!(err_text.contains("NOT_FOUND"), "{err_text}");
+    assert!(
+        err_text.contains("no finished session"),
+        "the answer says there is none: {err_text}"
+    );
+
+    // One session, with what the user said in it and one memory written
+    // while it was open.
+    call_tool_text(
+        &client,
+        "memory_session_start",
+        serde_json::json!({ "session_id": "01JX", "directory": "/work/project" }),
+    )
+    .await?;
+    call_tool_text(
+        &client,
+        "memory_save_prompt",
+        serde_json::json!({ "content": "el puerto es 8081", "session_id": "01JX" }),
+    )
+    .await?;
+    let saved = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "el servicio escucha en 8081" }),
+    )
+    .await?;
+    let saved: serde_json::Value = serde_json::from_str(&saved)?;
+    let uuid = saved["uuid"].as_str().expect("uuid").to_string();
+    call_tool_text(
+        &client,
+        "memory_session_end",
+        serde_json::json!({ "session_id": "01JX", "summary": "el puerto del servicio" }),
+    )
+    .await?;
+
+    // `previous`: the session before this one.
+    let text = call_tool_text(
+        &client,
+        "memory_recall",
+        serde_json::json!({ "previous": true }),
+    )
+    .await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(parsed["session"]["id"], "01JX", "{parsed}");
+    assert_eq!(parsed["session"]["namespace"], "default", "{parsed}");
+    assert_eq!(parsed["session"]["directory"], "/work/project", "{parsed}");
+    assert_eq!(parsed["session"]["summary"], "el puerto del servicio");
+    assert!(parsed["session"]["ended_at"].is_string(), "{parsed}");
+    assert_eq!(
+        parsed["prompts"][0]["content"], "el puerto es 8081",
+        "{parsed}"
+    );
+    assert_eq!(
+        parsed["window"]["label"], WINDOW_LABEL,
+        "the answer says what the memories are: {parsed}"
+    );
+    assert_eq!(parsed["window"]["namespace"], "default", "{parsed}");
+    assert_eq!(
+        parsed["window"]["to"], parsed["session"]["ended_at"],
+        "a finished session closes its window where it ended: {parsed}"
+    );
+    assert_eq!(parsed["window"]["open"], false, "{parsed}");
+    assert_eq!(
+        parsed["memories_in_window"][0]["uuid"],
+        uuid.as_str(),
+        "{parsed}"
+    );
+
+    // `session`: the same answer, asked by id.
+    let text = call_tool_text(
+        &client,
+        "memory_recall",
+        serde_json::json!({ "session": "01JX" }),
+    )
+    .await?;
+    let by_id: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(
+        by_id, parsed,
+        "the two ways ask the same question and get the same answer"
+    );
+
+    // An unknown session is NOT_FOUND, not an empty answer.
+    let unknown = client
+        .call_tool(
+            CallToolRequestParams::new("memory_recall").with_arguments(
+                serde_json::json!({ "session": "NO-EXISTE" })
+                    .as_object()
+                    .expect("static object")
+                    .clone(),
+            ),
+        )
+        .await
+        .expect_err("an unknown session must be NOT_FOUND");
+    let err_text = format!("{unknown}");
+    assert!(err_text.contains("-32050"), "{err_text}");
+    assert!(err_text.contains("NOT_FOUND"), "{err_text}");
 
     client.cancel().await?;
     Ok(())

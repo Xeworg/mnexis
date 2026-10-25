@@ -2282,6 +2282,246 @@ fn a_hyphenated_prompt_search_finds_the_prompt() {
     assert_eq!(stdout_json(&found)["count"], 1);
 }
 
+// --- session recall (session-recall S1) ---
+//
+// The recall answers what a session was, in one answer: the session, its
+// prompts in order, and the memories of its namespace created inside its
+// window. The window is a window, not a link: the engine does not know which
+// session wrote which memory, so the answer says exactly that and never makes
+// a claim it cannot check.
+
+/// The one sentence the answer uses for what a window can and cannot claim.
+const WINDOW_LABEL: &str = "the memories of the namespace in the session's window";
+
+#[test]
+fn recall_carries_the_session_its_prompts_and_the_memories_of_its_window() {
+    let p = namespaced_profile(&["ns-a"]);
+    p.run_silent(&["session", "--id", "01JX", "--directory", "/work/project"])
+        .unwrap_status("session");
+    for said in ["el puerto es 8081", "y el deploy va a staging-eu"] {
+        p.run_silent(&["prompt", said, "--session", "01JX"])
+            .unwrap_status("prompt");
+    }
+    // A prompt of another session is not this session's prompt.
+    p.run_silent(&["session", "--id", "OTRA"])
+        .unwrap_status("other session");
+    p.run_silent(&["prompt", "otra conversacion", "--session", "OTRA"])
+        .unwrap_status("prompt of another session");
+
+    let inside = save(&p, "el puerto del servicio es 8081", &[]);
+    // A memory of another namespace, written in the same window, is not
+    // read through this session's window.
+    let elsewhere = save(
+        &p,
+        "una memoria de otro namespace",
+        &["--namespace", "default"],
+    );
+
+    let out = p
+        .run_silent(&["recall", "--session", "01JX"])
+        .unwrap_status("recall --session");
+    let json = stdout_json(&out);
+
+    // The session itself.
+    assert_eq!(json["session"]["id"], "01JX", "{json}");
+    assert_eq!(json["session"]["namespace"], "ns-a", "{json}");
+    assert_eq!(json["session"]["directory"], "/work/project", "{json}");
+    assert!(json["session"]["started_at"].is_string(), "{json}");
+    assert_eq!(json["session"]["ended_at"], serde_json::Value::Null);
+    assert_eq!(json["session"]["summary"], serde_json::Value::Null);
+
+    // Its prompts, in the order they were said.
+    let prompts: Vec<&str> = json["prompts"]
+        .as_array()
+        .expect("prompts array")
+        .iter()
+        .map(|prompt| prompt["content"].as_str().expect("prompt content"))
+        .collect();
+    assert_eq!(
+        prompts,
+        vec!["el puerto es 8081", "y el deploy va a staging-eu"],
+        "{json}"
+    );
+
+    // The window says what it is, and it holds the memories of the
+    // session's namespace created inside it.
+    assert_eq!(json["window"]["label"], WINDOW_LABEL, "{json}");
+    assert_eq!(json["window"]["namespace"], "ns-a", "{json}");
+    assert!(json["window"]["from"].is_string(), "{json}");
+    assert_eq!(
+        json["window"]["from"], json["session"]["started_at"],
+        "the window opens when the session started: {json}"
+    );
+    assert_eq!(json["window"]["open"], true, "{json}");
+    let uuids: Vec<&str> = json["memories_in_window"]
+        .as_array()
+        .expect("memories_in_window array")
+        .iter()
+        .map(|memory| memory["uuid"].as_str().expect("memory uuid"))
+        .collect();
+    assert_eq!(uuids, vec![inside.as_str()], "{json}");
+    assert!(
+        !uuids.contains(&elsewhere.as_str()),
+        "another namespace is not read through this window: {json}"
+    );
+
+    // The human rendering says the same thing.
+    let text = p
+        .run_text(&["recall", "--session", "01JX"])
+        .unwrap_status("recall text");
+    let text = String::from_utf8_lossy(&text.stdout).to_string();
+    assert!(text.contains("01JX"), "{text}");
+    assert!(text.contains("y el deploy va a staging-eu"), "{text}");
+    assert!(
+        text.contains(WINDOW_LABEL),
+        "the text says what the memories are: {text}"
+    );
+    assert!(
+        text.contains(&inside),
+        "the memory is in the answer: {text}"
+    );
+    assert!(!text.contains(&elsewhere), "{text}");
+}
+
+#[test]
+fn recall_previous_is_the_most_recent_finished_session() {
+    let p = Profile::new();
+    for (id, summary) in [("PRIMERA", "lo primero"), ("SEGUNDA", "lo segundo")] {
+        p.run_silent(&["session", "--id", id])
+            .unwrap_status("session");
+        p.run_silent(&["end", "--id", id, "--summary", summary])
+            .unwrap_status("end");
+    }
+    // A session that has not finished is not "the session before this one".
+    p.run_silent(&["session", "--id", "ABIERTA"])
+        .unwrap_status("open session");
+
+    let out = p
+        .run_silent(&["recall", "--previous"])
+        .unwrap_status("recall --previous");
+    let json = stdout_json(&out);
+    assert_eq!(json["session"]["id"], "SEGUNDA", "{json}");
+    assert_eq!(json["session"]["summary"], "lo segundo", "{json}");
+    assert!(json["session"]["ended_at"].is_string(), "{json}");
+    assert_eq!(
+        json["window"]["to"], json["session"]["ended_at"],
+        "a finished session closes its window where it ended: {json}"
+    );
+    assert_eq!(json["window"]["open"], false, "{json}");
+}
+
+#[test]
+fn recall_previous_without_a_finished_session_says_there_is_none() {
+    let p = Profile::new();
+    // A session that is still open is not a finished one.
+    p.run_silent(&["session", "--id", "ABIERTA"])
+        .unwrap_status("open session");
+
+    let out = p.run_silent(&["recall", "--previous"]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("NOT_FOUND"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("no finished session"),
+        "the answer says there is none: {stderr}"
+    );
+    // NOT_FOUND is an error, not an empty answer.
+    assert!(
+        out.stdout.is_empty(),
+        "stdout: {:?}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
+fn recall_of_an_unknown_session_is_not_found() {
+    let p = Profile::new();
+    let out = p.run_silent(&["recall", "--session", "NO-EXISTE"]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("NOT_FOUND"), "stderr: {stderr}");
+    assert!(out.stdout.is_empty());
+}
+
+/// A profile that reads one namespace and writes two, so a session can live
+/// where the read scope does not reach.
+fn write_without_read_profile() -> Profile {
+    Profile::new().with_config(
+        "default_namespace = \"ns-a\"\nread_namespaces = [\"ns-a\"]\nwrite_namespaces = [\"ns-a\", \"otro\", \"proyecto-marcado\"]\nallow_global = false\nexistence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n",
+    )
+}
+
+#[test]
+fn recall_of_a_session_outside_the_read_scope_is_not_found() {
+    let p = write_without_read_profile();
+    p.run_silent(&["session", "--id", "AJENA", "--namespace", "otro"])
+        .unwrap_status("session outside the read scope");
+    p.run_silent(&["end", "--id", "AJENA"]).unwrap_status("end");
+
+    let out = p.run_silent(&["recall", "--session", "AJENA"]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("NOT_FOUND"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("allow-read-namespace"),
+        "the answer names the route to the missing read: {stderr}"
+    );
+    // Nothing of the session reaches a caller that cannot read it.
+    assert!(
+        out.stdout.is_empty(),
+        "stdout: {:?}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
+fn recall_previous_never_reaches_a_namespace_the_profile_cannot_read() {
+    let p = write_without_read_profile();
+    let workspace = Workspace::marked(MARKER_NAMESPACE);
+    // The session exists, in the namespace this workspace writes into.
+    p.run_in_dir(
+        workspace.path(),
+        &["session", "--id", "MARC", "--namespace", MARKER_NAMESPACE],
+    )
+    .unwrap_status("session in the workspace namespace");
+    p.run_in_dir(workspace.path(), &["end", "--id", "MARC"])
+        .unwrap_status("end");
+
+    let out = p.run_in_dir(workspace.path(), &["recall", "--previous"]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("NOT_FOUND"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("allow-read-namespace"),
+        "the answer names the route to the missing read: {stderr}"
+    );
+    assert!(
+        !stderr.contains("no finished session"),
+        "a session exists there; the read is what is missing: {stderr}"
+    );
+    assert!(out.stdout.is_empty());
+}
+
 // --- identity visibility (identity-visibility S1) ---
 //
 // The title is the identity of a fact. Every read surface carries it, so a
