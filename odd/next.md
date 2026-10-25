@@ -23,14 +23,18 @@ out of it:
 | #38 | `read-granularity` | reading another project takes a human-granted permission: `config allow-read-namespace` (read only), a bound workspace may read its own namespace (the marker grants nothing), a refusal names the route, and the reserved `global` namespace cannot enter the allowlists |
 | #40 | `read-scope-disclosure` | every read declares the scope it was bounded by (`read_scope`: all \| except_global \| restricted), so "no memories" and "no permission" are different answers; `stats` respects the scope and the pi extension carries the declaration to the agent |
 | #42 | `closed-default` | the reads are closed in a new profile (`allow_read_all = false`), measured over ten runs per arm: zero invented values and zero duplicated facts closed, against ten of ten duplicated facts open |
+| #46 + #47 + #48 | `session-recall` | the session answers for itself: the recall of a session (`mnexis recall --session <id>` / `--previous`, the MCP `memory_recall`), the working context of a session (migration 008: the branch, the commit and the canonical remote — never the raw URL), and the state of the anchored branch validated **when it is read** (`merged` / `not_merged` / `unknown`, never stored, never a negative) |
 
-Everything is merged. `main` is clean and only `main` remains locally (plus
-the archived branches of the features that were measured and discarded, and
-`feat/near-duplicate-titles`, archived and **not** merged — see item 1c).
+Everything is merged. `main` is clean (plus the archived branches of the
+features that were measured and discarded, and `feat/near-duplicate-titles`,
+archived and **not** merged — see item 1c). The `session-recall` slices
+(`feat/session-recall-command`, `feat/session-recall-anchor`,
+`feat/session-recall-state`) and the leftover `feat/session-recall` are
+merged and waiting to be deleted.
 
 **Released: v0.3.0** (2026-10-23), the identity work. The schema is at
-version 7 and there is no downgrade: an old binary refuses to open a newer
-store.
+version 8 (migration 008 added the anchor of a session) and there is no
+downgrade: an old binary refuses to open a newer store.
 
 ## The measurement that runs the board
 
@@ -195,11 +199,8 @@ not rebuild it without new evidence.
 ### 5. The prompt/session layer is in, and the session now carries its context
 
 `session-and-prompts` landed the tables, the tools and the hooks. The **recall**
-of a session and the **provenance with git** are done and open for review: three
-stacked PRs, one per slice — **#46** (the recall) → **#47** (the working
-context) → **#48** (the state of the anchored branch), each with its issue
-(#43, #44, #45). They are **not in `main` yet**: the merge is the operator's,
-in that order. What the branch adds:
+of a session and the **provenance with git** are done and **in `main`**
+(#46 → #47 → #48, each with its issue: #43, #44, #45). What they added:
 
 - the recall (`mnexis recall --session <id>` / `--previous`) answers what a
   session was: the session, its prompts in order, and the memories of its

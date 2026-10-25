@@ -253,3 +253,22 @@ before. That makes the recall of a session load-bearing, not a convenience.
   Splitting the CLI from the MCP tool would land the agent's door separately
   from the behavior it exposes, so the slice stays whole. #47 and #48 are
   within the ~600-line range of the repo's recent slices.
+
+- **L8** (2026-10-26) — **the feature is in `main`.** The three PRs were
+  merged (#46, #47, #48), and a stacked chain has one detail worth writing
+  down: **merging a child PR lands the merge in its base branch, not in
+  `main`**, so after the three merges `main` carried only the first slice.
+  The rest came into `main` with two merge commits of their own, one per PR:
+
+  | Merge | Brings | PR |
+  | --- | --- | --- |
+  | `58bba55` | the recall (GitHub's merge of #46) | #46 |
+  | `00bca6c` | the working context of a session | #47 |
+  | `f1590e2` | the state of the anchored branch | #48 |
+
+  The tree of `main` is byte-identical to the tip of the chain
+  (`git diff main origin/feat/session-recall-anchor` is empty), so nothing
+  was left behind and nothing was lost in the reshaping.
+
+  The schema is at **version 8** now, and the slice branches (plus the
+  leftover `feat/session-recall`) are merged and waiting to be deleted.
