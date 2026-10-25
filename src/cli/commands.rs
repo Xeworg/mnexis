@@ -574,7 +574,7 @@ fn title_suffix(title: &str) -> String {
     if title.is_empty() {
         String::new()
     } else {
-        format!(" \"{}\"", title.replace('\n', " "))
+        format!(" \"{}\"", crate::cli::output::one_line(title))
     }
 }
 

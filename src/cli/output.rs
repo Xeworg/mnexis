@@ -113,13 +113,15 @@ pub(crate) fn snippet(content: &str) -> String {
     s.replace('\n', " ")
 }
 
-/// One physical line out of any text: the newlines become spaces.
+/// One physical line out of any text: the line breaks become spaces.
 ///
 /// A title or a preview can carry a line break (the store accepts them),
 /// and a renderer that prints one fact per line must not be broken by a
-/// title that has two.
+/// title that has two. The carriage return goes too: on its own it does not
+/// end the line, but a terminal reads it as "back to the start of the line"
+/// and the rest of the fact overwrites what came before.
 pub(crate) fn one_line(text: &str) -> String {
-    text.replace('\n', " ")
+    text.replace(['\n', '\r'], " ")
 }
 
 // --- read scope (read-scope-disclosure S2) ---
