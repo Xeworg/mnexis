@@ -61,12 +61,18 @@ Every command accepts `--data-dir <DIR>` to target a different profile.
 The `mnexis-memory` pi extension (see `extensions/mnexis-memory/`) exposes
 the same operations as native tools — `mnexis_save`, `mnexis_search`,
 `mnexis_list`, `mnexis_show`, `mnexis_history`, `mnexis_workspace`,
-`mnexis_recall`, `mnexis_supersede` — and resolves the
+`mnexis_context`, `mnexis_recall`, `mnexis_supersede` — and resolves the
 namespace and the permission gate by itself. `mnexis_workspace` is the
 first call of every session (the namespace, the allowlists, the recent
 memories), and `mnexis_recall --previous` answers what the session before
 this one was in one call — identity and preview by default, the whole
-records with `full`. When those tools are available
+records with `full`. `mnexis_context` is the **one-call door**: give it
+the task in one line and it answers with the memories this project
+recorded that matter for it, already trimmed to a token budget, naming
+the namespace it searched. It is the cheapest way to ask the project a
+question ("where did we leave off", "which port does it listen on") —
+prefer it over walking the namespace by hand with `list` and `show`.
+When those tools are available
 in the session, prefer them: the CLI below is the fallback for hosts
 without the extension.
 

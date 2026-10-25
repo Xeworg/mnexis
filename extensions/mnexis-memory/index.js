@@ -72,6 +72,20 @@ export function scopeLine(payload) {
 }
 
 /**
+ * The namespace the engine says it searched.
+ *
+ * The one-call door declares it, so an empty answer can be told apart
+ * from an answer that looked in another project. An older engine does not
+ * declare it, and then the answer says nothing.
+ */
+export function searchedNamespace(payload) {
+	if (payload && typeof payload === "object" && typeof payload.searched_namespace === "string") {
+		return payload.searched_namespace === "" ? null : payload.searched_namespace;
+	}
+	return null;
+}
+
+/**
  * The relations between the memories a payload holds: which one replaced
  * which.
  *
@@ -1016,6 +1030,109 @@ export default function mnexisMemoryExtension(pi) {
 			return ok(result.stdout.trim() || JSON.stringify(result.data), {
 				workspace: result.data && result.data.workspace ? result.data.workspace : null,
 				status: result.data,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "mnexis_context",
+		label: "The context of this task",
+		promptSnippet: "Ask the project what it knows about this task, in one call.",
+		description:
+			"Ask the project a question in one call and get the budgeted answer: the " +
+			"memories this project recorded that matter for the task, trimmed to a token " +
+			"budget instead of the namespace and its rows. Use it as the FIRST call of a " +
+			"session, before you read the code, and whenever the task is shaped like a " +
+			"question ('where did we leave off', 'which port does it listen on', 'what did " +
+			"we decide about X'). It searches this workspace's namespace — the one a save " +
+			"lands in — and the answer declares the namespace it searched, the tokens it " +
+			"spent and how far the read reached, so an empty answer is never another " +
+			"project's silence. It does not replace mnexis_search: the search is the exact " +
+			"query, the context is the project-shaped question.",
+		parameters: {
+			type: "object",
+			properties: {
+				task: { type: "string", description: "The task in one line." },
+				namespace: {
+					type: "string",
+					description:
+						"Optional namespace to ask another project. Defaults to this workspace's.",
+				},
+				token_budget: {
+					type: "number",
+					description: "Token budget for the answer (default: 1024).",
+				},
+				max_items: {
+					type: "number",
+					description: "Maximum number of memories to consider (default: 20, capped at 100).",
+				},
+				match: {
+					type: "string",
+					enum: ["any", "all", "phrase"],
+					description:
+						"How the task's words are matched: any (default) counts every word, all " +
+						"requires every word, phrase keeps the task as one exact phrase.",
+				},
+			},
+			required: ["task"],
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			// The engine's own resolution of this workspace's namespace, read
+			// from the status answer: a read, never a binding. The door must
+			// not answer from another project, and the engine is the one that
+			// decides which project this is.
+			const status = await client.status(ctx.cwd);
+			const engineNamespace =
+				status.code === 0 &&
+				status.data &&
+				status.data.workspace &&
+				typeof status.data.workspace.namespace === "string" &&
+				status.data.workspace.namespace !== ""
+					? status.data.workspace.namespace
+					: null;
+			const namespace = readNamespace(params.namespace) ?? engineNamespace ?? undefined;
+			const result = await client.context(
+				{
+					task: params.task,
+					namespace,
+					tokenBudget: params.token_budget,
+					maxItems: params.max_items,
+					match: params.match,
+				},
+				ctx.cwd,
+			);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr, namespace }), {
+					namespace: namespace ?? null,
+				});
+			}
+			const items = readItems(result.data);
+			// What the engine says it searched — not what we asked for: the
+			// engine is the one that decided.
+			const searched = searchedNamespace(result.data) ?? namespace ?? null;
+			const scope = scopeLine(result.data);
+			const tokens =
+				result.data && typeof result.data.tokens_used === "number"
+					? result.data.tokens_used
+					: null;
+			const text = items.length
+				? items.map((item, index) => `${index + 1}. ${JSON.stringify(item)}`).join("\n")
+				: `No memories answered the task '${params.task ?? ""}'.`;
+			const declaration = [
+				`Namespace searched: ${searched ?? "unknown"}.`,
+				tokens === null ? "" : `Tokens: ${tokens}.`,
+				scope,
+			]
+				.filter(Boolean)
+				.join(" ");
+			return ok(text + `\n${declaration}`, {
+				namespace: namespace ?? null,
+				searched_namespace: searched,
+				count: items.length,
+				tokens_used: tokens,
+				memories: items,
+				read_scope: readScope(result.data),
 			});
 		},
 	});

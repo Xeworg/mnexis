@@ -18,6 +18,7 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 | Tool | Purpose |
 | --- | --- |
 | `mnexis_workspace` | First call of a session: the namespace this workspace writes into, the allowlists, and the most recent memories — each with its title and a preview, never the whole record. |
+| `mnexis_context` | The budgeted one-call door: the task in one line, and the memories this project recorded that matter for it, trimmed to a token budget. The answer declares the namespace it searched and the tokens it spent. |
 | `mnexis_save` | Store a durable, self-contained memory about the project. |
 | `mnexis_search` | Full-text search over the stored memories (ranked). |
 | `mnexis_list` | List what is already stored. |
@@ -41,6 +42,14 @@ Reads are open: `mnexis_search` and `mnexis_list` reach every project
 (projects share components) unless the model narrows them with a
 `namespace` argument, and `mnexis_show` reads any memory the profile
 allows.
+
+`mnexis_context` is the exception, and it is deliberate: it asks a
+**project-shaped** question ("where did we leave off", "which port does
+it listen on"), so it searches the workspace's own namespace — the one a
+save lands in — and says which namespace it searched. An empty answer is
+then never another project's silence. It takes `namespace` when the
+question is about another project, and `token_budget` when the default
+budget is not the one wanted.
 
 Writes are not: `mnexis_save` always targets the workspace namespace, and
 `mnexis_supersede` refuses a memory that lives in another project. The
