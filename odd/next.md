@@ -270,6 +270,14 @@ consolidated observation** and the agent answers in two calls; mnexis holds
 **six records, one per fact** (the identity work), and the agent reads them
 one by one — 45 `mnexis_show` calls across the ten sessions.
 
+**And neither arm got a skill and the other did not**: engram ships **no
+skill** (its guidance is 9 729 B across 22 tool descriptions), while mnexis
+ships a 13 KB skill the agent **reads in 20 of the 20 transcripts**. That
+skill is part of the context tax mnexis pays in the write phase (8 894 input
+tokens against engram's 4 541) — and it is also why the mnexis arm knows to
+save a memory **with a title**, which is what makes the store one record per
+fact.
+
 **And the cause is in the integration, not in the engine.** The recall
 answers "what does this project know" in one call, and the MCP server
 exposes it (`memory_recall`) — but **the pi extension does not** (ten tools,
