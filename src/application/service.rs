@@ -17,6 +17,11 @@ use crate::domain::scope::{AccessScope, NamespaceScope, Operation};
 use crate::domain::session::{Session, UserPrompt};
 use crate::retrieval::SearchHit;
 
+// The recall of one session lives beside the session reads it composes, in
+// its own file: the declaration points at it explicitly.
+#[path = "session_recall.rs"]
+pub mod session_recall;
+
 pub struct ServiceConfig {
     pub max_content_bytes: usize,
     pub max_query_bytes: usize,

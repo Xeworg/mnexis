@@ -1020,6 +1020,66 @@ impl MemoryRepository for SqliteMemoryRepository {
         Ok(sessions)
     }
 
+    fn previous_finished_session(&self, namespace: &str) -> Result<Option<Session>, MnexisError> {
+        // Finished means `ended_at` is not null; the one that ended last is
+        // the session before this one. The clock the engine writes has
+        // second granularity, so two sessions can end in the same second:
+        // `started_at`, then the registration order, break the tie, and the
+        // answer stays deterministic.
+        self.conn
+            .query_row(
+                "SELECT id, namespace, directory, started_at, ended_at, summary FROM sessions \
+                 WHERE namespace = ?1 AND ended_at IS NOT NULL \
+                 ORDER BY ended_at DESC, started_at DESC, rowid DESC LIMIT 1",
+                [namespace],
+                |row| {
+                    Ok(Session {
+                        id: row.get(0)?,
+                        namespace: row.get(1)?,
+                        directory: row.get(2)?,
+                        started_at: row.get(3)?,
+                        ended_at: row.get(4)?,
+                        summary: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| MnexisError::busy(format!("previous session: {e}")))
+    }
+
+    fn memories_in_window(
+        &self,
+        namespace: &str,
+        from: &str,
+        to: &str,
+        limit: usize,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        // The window is inclusive on both ends: a memory written in the same
+        // second the session started or ended was written inside it. The
+        // timestamps are the same fixed-width RFC3339 UTC the engine writes,
+        // so the string comparison orders them the way the clock does.
+        let limit_val: i64 = limit as i64;
+        let mut stmt = self
+            .conn
+            .prepare(&format!(
+                "SELECT {SELECT_COLUMNS} FROM memories \
+                 WHERE deleted = 0 AND namespace = ?1 \
+                 AND created_at >= ?2 AND created_at <= ?3 \
+                 ORDER BY created_at, id LIMIT ?4"
+            ))
+            .map_err(sql_to_domain)?;
+        let rows = stmt
+            .query_map(params![namespace, from, to, limit_val], |row| {
+                Self::row_to_memory(row).map_err(to_sql_err)
+            })
+            .map_err(sql_to_domain)?;
+        let mut memories = Vec::new();
+        for row in rows {
+            memories.push(row.map_err(sql_to_domain)?);
+        }
+        Ok(memories)
+    }
+
     fn save_prompt(&mut self, prompt: &UserPrompt) -> Result<i64, MnexisError> {
         self.conn
             .execute(

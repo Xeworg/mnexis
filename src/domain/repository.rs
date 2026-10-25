@@ -251,6 +251,26 @@ pub trait MemoryRepository {
         limit: usize,
     ) -> Result<Vec<Session>, MnexisError>;
 
+    /// The most recent **finished** session of one namespace: the one that
+    /// ended last, which is the session before this one. `None` when the
+    /// namespace has no finished session yet.
+    fn previous_finished_session(&self, namespace: &str) -> Result<Option<Session>, MnexisError>;
+
+    /// The memories of one namespace created inside a window, oldest first.
+    ///
+    /// The window is inclusive on both ends (`from <= created_at <= to`) and
+    /// compares the `RFC3339` UTC timestamps the engine writes. Soft-deleted
+    /// memories stay out, exactly as they do from every other read. A window
+    /// is what the engine can honestly answer: it does not know which session
+    /// wrote a memory.
+    fn memories_in_window(
+        &self,
+        namespace: &str,
+        from: &str,
+        to: &str,
+        limit: usize,
+    ) -> Result<Vec<Memory>, MnexisError>;
+
     /// Store what the user said.
     fn save_prompt(&mut self, prompt: &UserPrompt) -> Result<i64, MnexisError>;
 

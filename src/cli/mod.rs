@@ -10,6 +10,7 @@ pub mod config_cmd;
 pub mod output;
 pub mod profile;
 pub mod project_cmd;
+pub mod recall_cmd;
 pub mod stats_cmd;
 pub mod status_cmd;
 pub mod timeline_cmd;
@@ -233,6 +234,23 @@ pub enum Command {
         /// Max results (default 20, capped at 100)
         #[arg(long, default_value_t = commands::DEFAULT_LIMIT)]
         limit: usize,
+    },
+
+    /// What a session was: its prompts in order and the memories of the
+    /// namespace in its window
+    Recall {
+        /// The session to recall
+        #[arg(
+            long,
+            value_name = "ID",
+            conflicts_with = "previous",
+            required_unless_present = "previous"
+        )]
+        session: Option<String>,
+        /// The most recent finished session of the namespace this workspace
+        /// writes into
+        #[arg(long)]
+        previous: bool,
     },
 
     /// Store what the user said
@@ -693,6 +711,10 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             let mut profile = Profile::open(data_dir)?;
             commands::list_sessions(&mut profile, *limit)
         }
+        Command::Recall { session, previous } => {
+            let profile = Profile::open(data_dir)?;
+            recall_cmd::recall(&profile, session.clone(), *previous)
+        }
         Command::Prompt {
             content,
             session,
@@ -882,6 +904,8 @@ mod tests {
             "status",
             "show",
             "history",
+            "sessions",
+            "recall",
             "delete",
             "restore",
             "purge",

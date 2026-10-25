@@ -10,6 +10,8 @@ use rmcp::{
     ServerHandler, ServiceExt, handler::server::wrapper::Parameters, tool, tool_handler,
     tool_router,
 };
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::ApplicationService;
 use crate::MnexisError;
@@ -66,7 +68,20 @@ fn identities_of(
 /// How many recent memories the `memory_workspace` tool reports.
 const WORKSPACE_RECENT_LIMIT: usize = 3;
 
-/// The MCP server — owns the MemoryService and exposes 14 tools.
+/// Arguments for `memory_recall`: the two ways to ask what a session was,
+/// the same two the CLI has.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RecallArgs {
+    /// The session to recall, by its id.
+    #[serde(default)]
+    pub session: Option<String>,
+    /// The most recent finished session of the namespace this workspace
+    /// writes into: the session before this one.
+    #[serde(default)]
+    pub previous: bool,
+}
+
+/// The MCP server — owns the MemoryService and exposes 15 tools.
 ///
 /// All tool functions take `&self`; the Arc<Mutex> provides interior
 /// mutability so the service can be mutated without needing `&mut self`.
@@ -324,6 +339,44 @@ impl McpServer {
             &now,
         )?;
         Ok(serde_json::to_string_pretty(&prompt).unwrap_or_default())
+    }
+
+    /// What a session was: the session itself, what the user said in it in
+    /// order, and the memories of the namespace in its window.
+    ///
+    /// The memories are labelled as the namespace in the session's window —
+    /// the engine does not know which session wrote which memory, and it
+    /// never claims one did.
+    fn do_recall(&self, args: RecallArgs) -> Result<String, McpError> {
+        if args.session.is_some() && args.previous {
+            return Err(MnexisError::invalid_argument(
+                "session",
+                "give `session` or `previous`, not both",
+            )
+            .into());
+        }
+        let now = now_rfc3339_mcp();
+        let svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        let recall = match args.session {
+            Some(id) => svc.recall_session(&id, &now)?,
+            None if args.previous => {
+                // The namespace this server's workspace writes into; without
+                // one the profile's default namespace decides.
+                svc.recall_previous_session(self.workspace_namespace.as_deref(), &now)?
+            }
+            None => {
+                return Err(MnexisError::invalid_argument(
+                    "session",
+                    "give `session` or `previous`",
+                )
+                .into());
+            }
+        };
+        drop(svc);
+        Ok(serde_json::to_string_pretty(&recall).unwrap_or_default())
     }
 
     /// The topic key a title yields, and the record that already holds it.
@@ -652,6 +705,14 @@ impl McpServer {
         Parameters(args): Parameters<SearchPromptsArgs>,
     ) -> Result<String, McpError> {
         self.do_search_prompts(args)
+    }
+
+    #[tool(
+        name = "memory_recall",
+        description = "Recall what a session was: the session itself, what the user said in it in order, and the memories of the namespace in its window. Use `previous` for the session before this one — the most recent finished session of this workspace's namespace — or `session` for a known id. The memories are the namespace's, read by time: the engine does not know which session wrote which memory."
+    )]
+    fn memory_recall(&self, Parameters(args): Parameters<RecallArgs>) -> Result<String, McpError> {
+        self.do_recall(args)
     }
 
     #[tool(
