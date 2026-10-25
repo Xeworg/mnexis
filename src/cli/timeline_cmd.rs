@@ -88,14 +88,17 @@ fn render(
     supersedes: &[serde_json::Value],
     superseded_by: &[serde_json::Value],
 ) -> String {
+    // A title can carry a line break; the header of a fact is one line,
+    // like everywhere else that prints one.
+    let title = if memory.title.is_empty() {
+        "(no title)".to_string()
+    } else {
+        crate::cli::output::one_line(&memory.title)
+    };
     let mut lines = vec![format!(
         "{} — {} ({} · {} · revision {})",
         memory.uuid,
-        if memory.title.is_empty() {
-            "(no title)"
-        } else {
-            &memory.title
-        },
+        title,
         memory.namespace,
         memory.state.as_str(),
         memory.revision

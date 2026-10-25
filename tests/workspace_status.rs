@@ -360,7 +360,9 @@ fn a_title_with_a_line_break_stays_on_one_line() {
         &p,
         ws.path(),
         "snake",
-        "el contenido\ncon un salto",
+        // A carriage return in the content too: the preview carries the
+        // content's first words, and it goes through the same helper.
+        "el contenido\rcon un salto",
         // A carriage return too: on its own it does not end the line, but a
         // terminal reads it as "back to the start of the line".
         Some("titulo\r\ncon un salto"),
@@ -396,8 +398,7 @@ fn a_title_with_a_line_break_stays_on_one_line() {
     assert!(
         lines[3].contains("el contenido con un salto"),
         "the preview's break became a space too: {text:?}"
-    );
-    assert!(
+    );    assert!(
         !text.contains('\r'),
         "no carriage return survives into the line: {text:?}"
     );

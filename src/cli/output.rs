@@ -110,7 +110,9 @@ pub(crate) fn snippet(content: &str) -> String {
     if content.chars().count() > SNIPPET {
         s.push('…');
     }
-    s.replace('\n', " ")
+    // The same one-line policy as the status renderer: a content with a
+    // carriage return must not send the terminal back to column 0.
+    one_line(&s)
 }
 
 /// One physical line out of any text: the line breaks become spaces.
@@ -120,8 +122,22 @@ pub(crate) fn snippet(content: &str) -> String {
 /// title that has two. The carriage return goes too: on its own it does not
 /// end the line, but a terminal reads it as "back to the start of the line"
 /// and the rest of the fact overwrites what came before.
+///
+/// The policy, in full: everything that can end a line becomes a space
+/// (LF, CR, NEL, the Unicode line and paragraph separators), and so does
+/// every other control character — the escape sequences a terminal would
+/// otherwise obey and paint over the line with. A tab becomes a space for
+/// the same reason: it is whitespace, and one geometry is easier to read.
+/// A zero-width character is left alone: it does not break the line, and
+/// dropping it would change what the text says.
 pub(crate) fn one_line(text: &str) -> String {
-    text.replace(['\n', '\r'], " ")
+    text.chars()
+        .map(|c| match c {
+            '\n' | '\r' | '\u{0085}' | '\u{2028}' | '\u{2029}' | '\t' => ' ',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect()
 }
 
 // --- read scope (read-scope-disclosure S2) ---
