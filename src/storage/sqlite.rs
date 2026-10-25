@@ -282,6 +282,49 @@ fn ensure_keywords_column(conn: &Connection) -> Result<(), MnexisError> {
     Ok(())
 }
 
+/// Migration 008: the working context of a session.
+///
+/// A session happens **somewhere**: a branch, a commit, a repository. The
+/// three columns are the **anchor** — the part of the context that does not
+/// rot: the commit is still that commit, even when the branch has moved on.
+///
+/// The migration is additive and nullable, so every session that already
+/// exists reads back with no anchor (a session that happened outside a
+/// repository, or before this migration, has none) and every existing query
+/// keeps working.
+///
+/// The three statements are separate because `ALTER TABLE ... ADD COLUMN`
+/// adds one column at a time, and each one is applied only when the column
+/// is missing (migration 007's pattern).
+const MIGRATION_008_ADD_BRANCH: &str = "ALTER TABLE sessions ADD COLUMN branch TEXT;";
+const MIGRATION_008_ADD_BRANCH_SHA: &str = "ALTER TABLE sessions ADD COLUMN branch_sha TEXT;";
+const MIGRATION_008_ADD_BRANCH_REMOTE: &str = "ALTER TABLE sessions ADD COLUMN branch_remote TEXT;";
+
+/// Add the three anchor columns of a session when the table does not have
+/// them yet.
+///
+/// `ALTER TABLE ... ADD COLUMN` cannot be made conditional in SQL, and a
+/// migration that failed halfway leaves the columns without their ledger
+/// row, so the probe is the columns themselves (migration 005's lesson).
+/// Re-running is therefore always safe.
+fn ensure_session_anchor_columns(conn: &Connection) -> Result<(), MnexisError> {
+    for (column, statement) in [
+        ("branch", MIGRATION_008_ADD_BRANCH),
+        ("branch_sha", MIGRATION_008_ADD_BRANCH_SHA),
+        ("branch_remote", MIGRATION_008_ADD_BRANCH_REMOTE),
+    ] {
+        let present: i64 = conn
+            .prepare("SELECT count(*) FROM pragma_table_info('sessions') WHERE name = ?1")
+            .and_then(|mut stmt| stmt.query_row([column], |r| r.get(0)))
+            .map_err(|e| MnexisError::busy(format!("migration 008 (probe): {e}")))?;
+        if present == 0 {
+            conn.execute_batch(statement)
+                .map_err(|e| MnexisError::busy(format!("migration 008 ({column}): {e}")))?;
+        }
+    }
+    Ok(())
+}
+
 /// The columns the full-text index carries, in declaration order — which is
 /// also the order `bm25` reads its weights in.
 ///
@@ -436,7 +479,7 @@ pub fn missing_fts_columns(conn: &Connection) -> Result<Vec<&'static str>, Mnexi
 }
 
 /// Applies pending migrations. Creates the `schema_migrations` ledger if
-/// absent. Applies migrations 001 through 007 if not already recorded. A
+/// absent. Applies migrations 001 through 008 if not already recorded. A
 /// recorded version higher than the binary's known migrations returns
 /// `MnexisError::UnsupportedVersion` (no-downgrade rule).
 pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
@@ -456,7 +499,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
         )
         .map_err(|e| MnexisError::busy(format!("read schema_migrations: {e}")))?;
 
-    if applied > 7 {
+    if applied > 8 {
         return Err(MnexisError::unsupported_version(applied));
     }
 
@@ -560,6 +603,20 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
             .map_err(|e| MnexisError::busy(format!("record migration 007: {e}")))?;
     }
 
+    if applied < 8 {
+        // Migration 008: the session carries its working context.
+        //
+        // The branch, the commit and the canonical key of the repository are
+        // recorded when the session starts, so a later session can ask what
+        // the work was anchored to. The columns are nullable and the probe
+        // is the columns themselves, so a half-applied migration heals on
+        // the next run instead of failing.
+        ensure_session_anchor_columns(conn)
+            .map_err(|e| MnexisError::busy(format!("migration 008: {e}")))?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (8)", [])
+            .map_err(|e| MnexisError::busy(format!("record migration 008: {e}")))?;
+    }
+
     Ok(())
 }
 
@@ -579,7 +636,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 7, "migrations 001 through 007 should be recorded");
+        assert_eq!(version, 8, "migrations 001 through 008 should be recorded");
 
         // Migration 003 added the persisted supersede reason column.
         let (col_type, dflt, notnull): (String, String, i64) = conn
@@ -601,7 +658,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version_again, 7, "005 must not double-record on a re-run");
+        assert_eq!(version_again, 8, "008 must not double-record on a re-run");
     }
 
     #[test]
@@ -678,7 +735,102 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 7, "the migration was applied");
+        assert_eq!(version, 8, "the migration was applied");
+    }
+
+    #[test]
+    fn migration_008_adds_the_anchor_to_a_profile_that_already_has_sessions() {
+        let dir = tempdir_in("target").unwrap();
+        let path = dir.path().join("mig008.db");
+        let conn = open_sqlite(&path).unwrap();
+        run_migrations(&conn).unwrap();
+
+        // A profile at version 7: the sessions table is the one migration 004
+        // created, and it already holds a session.
+        conn.execute_batch(
+            "DROP TABLE sessions; \
+             CREATE TABLE sessions ( \
+                 id          TEXT PRIMARY KEY, \
+                 namespace   TEXT NOT NULL, \
+                 directory   TEXT NOT NULL DEFAULT '', \
+                 started_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')), \
+                 ended_at    TEXT, \
+                 summary     TEXT); \
+             INSERT INTO sessions (id, namespace, directory, started_at) \
+                 VALUES ('01JX', 'payments', '/work', '2026-01-01T00:00:00Z'); \
+             DELETE FROM schema_migrations WHERE version >= 8;",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 8, "the ledger records the migration");
+
+        // The session survived, and reads back with no anchor: it happened
+        // before the engine knew how to record one.
+        let row: (String, Option<String>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT id, branch, branch_sha, branch_remote \
+                 FROM sessions WHERE id = '01JX'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .expect("the session survived the migration");
+        assert_eq!(row.0, "01JX");
+        assert_eq!(row.1, None, "an old session has no anchor");
+        assert_eq!(row.2, None, "an old session has no anchor");
+        assert_eq!(row.3, None, "an old session has no anchor");
+    }
+
+    #[test]
+    fn migration_008_heals_a_half_applied_migration() {
+        let dir = tempdir_in("target").unwrap();
+        let path = dir.path().join("mig008_half.db");
+        let conn = open_sqlite(&path).unwrap();
+        run_migrations(&conn).unwrap();
+
+        // A migration that failed halfway: one column is there, the ledger
+        // row is not.
+        conn.execute_batch(
+            "DROP TABLE sessions; \
+             CREATE TABLE sessions ( \
+                 id          TEXT PRIMARY KEY, \
+                 namespace   TEXT NOT NULL, \
+                 directory   TEXT NOT NULL DEFAULT '', \
+                 started_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')), \
+                 ended_at    TEXT, \
+                 summary     TEXT, \
+                 branch      TEXT); \
+             DELETE FROM schema_migrations WHERE version >= 8;",
+        )
+        .unwrap();
+
+        run_migrations(&conn).expect("the re-run must not fail on the column it already added");
+
+        let columns: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('sessions')")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<String>, _>>()
+            .unwrap();
+        for column in ["branch", "branch_sha", "branch_remote"] {
+            assert!(
+                columns.iter().any(|name| name == column),
+                "the migration healed {column}: {columns:?}"
+            );
+        }
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 8, "the ledger records it");
     }
 
     #[test]
@@ -732,7 +884,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 7, "the ledger records it");
+        assert_eq!(version, 8, "the ledger records it");
     }
 
     #[test]

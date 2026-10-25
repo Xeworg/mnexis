@@ -25,6 +25,14 @@ pub struct Session {
     pub ended_at: Option<String>,
     /// What the session was about, when it was told.
     pub summary: Option<String>,
+    /// The branch the session ran on, when it ran in a repository.
+    pub branch: Option<String>,
+    /// The commit the session started from, when it ran in a repository.
+    pub branch_sha: Option<String>,
+    /// The canonical key of the repository the session ran in
+    /// (`git:<normalized>`) — never the raw URL, which can carry
+    /// credentials.
+    pub branch_remote: Option<String>,
 }
 
 /// One thing the user said.
@@ -55,10 +63,18 @@ mod tests {
             started_at: "2026-01-01T00:00:00Z".to_string(),
             ended_at: Some("2026-01-01T01:00:00Z".to_string()),
             summary: Some("what the session did".to_string()),
+            branch: Some("main".to_string()),
+            branch_sha: Some("0123456789abcdef".to_string()),
+            branch_remote: Some("git:github.com-xeworg-mnexis".to_string()),
         };
         assert_eq!(session.id, "01JX");
         assert!(session.ended_at.is_some());
         assert_eq!(session.summary.as_deref(), Some("what the session did"));
+        assert_eq!(session.branch.as_deref(), Some("main"));
+        assert_eq!(
+            session.branch_remote.as_deref(),
+            Some("git:github.com-xeworg-mnexis")
+        );
     }
 
     #[test]

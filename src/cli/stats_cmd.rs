@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn the_text_renders_a_table_and_a_totals_line() {
         let report = StatsReport {
-            schema_version: 7,
+            schema_version: 8,
             namespaces: vec![NamespaceStats {
                 namespace: "default".into(),
                 active: 2,
@@ -248,6 +248,6 @@ mod tests {
         let text = render(&report);
         assert!(text.contains("default"), "{text}");
         assert!(text.contains("4 memories"), "{text}");
-        assert!(text.contains("schema 7"), "{text}");
+        assert!(text.contains("schema 8"), "{text}");
     }
 }

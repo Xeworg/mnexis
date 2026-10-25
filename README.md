@@ -80,6 +80,11 @@ mnexis prompts --search "puerto 8081"         # find it again
 mnexis end --id 01JX --summary "qué hicimos"  # end it with a summary
 ```
 
+A session also records **where it happened**: the branch, the commit and the
+canonical key of the repository (`git:github.com-owner-repo`) — never the raw
+URL, which can carry credentials. A session that did not happen in a
+repository records none of it: no git is not an error.
+
 A search query is plain language: every word counts, a hyphen is part of a
 word, and `--match all` narrows it to the memories that hold every word.
 
