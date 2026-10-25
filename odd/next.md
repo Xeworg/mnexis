@@ -21,6 +21,8 @@ out of it:
 | #31 + #34 | `doctor-contract` | the doctor answers with a stable machine contract (check_id, severity, reason_code, evidence, safe_next_step, status/summary), `--check CODE` filters, and `doctor repair --plan/--dry-run/--apply` separates what it fixes from canonical damage; the old `--repair` flag is gone |
 | #36 | `operational-commands` | `mnexis stats` (every namespace and the totals), `mnexis timeline <uuid>` (identity, recorded revisions, supersede links both ways), `project list --json` as a typed contract |
 | #38 | `read-granularity` | reading another project takes a human-granted permission: `config allow-read-namespace` (read only), a bound workspace may read its own namespace (the marker grants nothing), a refusal names the route, and the reserved `global` namespace cannot enter the allowlists |
+| #40 | `read-scope-disclosure` | every read declares the scope it was bounded by (`read_scope`: all \| except_global \| restricted), so "no memories" and "no permission" are different answers; `stats` respects the scope and the pi extension carries the declaration to the agent |
+| #42 | `closed-default` | the reads are closed in a new profile (`allow_read_all = false`), measured over ten runs per arm: zero invented values and zero duplicated facts closed, against ten of ten duplicated facts open |
 
 Everything is merged. `main` is clean and only `main` remains locally (plus
 the archived branches of the features that were measured and discarded, and
@@ -136,7 +138,7 @@ it is what an operator needs when something goes wrong.
 its supersede links in both directions), and `project list --json` as a typed
 contract. Read-only, no TUI needed.
 
-### 3b. The closed default — **measured, and closing** (branch `feat/closed-default`)
+### 3b. The closed default — **closed** (#40 + #42, in main)
 
 The operator wants the agents not to see other projects' memories by default.
 The granularity is in (#38) and the hazard is closed (#40): a read now
@@ -168,7 +170,7 @@ a task that needs another project's facts stops being finishable without
 the human. That is a privacy decision, priced.
 
 **The criterion (written before the runs) holds on all three bullets**, so
-the default is closing: `allow_read_all` is `false` in a new profile.
+the default is closed (#42): `allow_read_all` is `false` in a new profile.
 Existing profiles keep what they have. The switch is
 `mnexis config allow-read-all`.
 
