@@ -132,6 +132,28 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
+		/**
+		 * The budgeted one-call door: the task-shaped question, answered
+		 * inside a token budget.
+		 */
+		async context({ task, namespace, tokenBudget, maxItems, match }, cwd) {
+			const args = ["context"];
+			if (namespace) {
+				args.push("--namespace", namespace);
+			}
+			if (typeof tokenBudget === "number") {
+				args.push("--token-budget", String(tokenBudget));
+			}
+			if (typeof maxItems === "number") {
+				args.push("--max-items", String(maxItems));
+			}
+			if (typeof match === "string" && match !== "") {
+				args.push("--match", match);
+			}
+			args.push(task);
+			return run(args, { json: true, cwd });
+		},
+
 		async list({ namespace, limit, full }, cwd) {
 			const args = ["list"];
 			if (namespace) {

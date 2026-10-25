@@ -153,6 +153,40 @@ if (args[0] === "project" && args[1] === "list") {
 			],
 		}),
 	);
+} else if (args[0] === "context") {
+	// The budgeted door: the engine declares the namespace it searched
+	// and the budget it spent, so the agent knows what it got.
+	const scope = process.env.MNEXIS_FAKE_READ_SCOPE;
+	const payload = {
+		items: [
+			{
+				uuid: "m1",
+				title: "puerto del servicio",
+				keywords: ["puerto"],
+				namespace: workspace,
+				content: "el puerto es 8081",
+				memory_type: "fact",
+				state: "active",
+				revision: 1,
+				topic_key: "puerto-del-servicio",
+				assertion_basis: "user_stated",
+				created_at: "2026-01-01T00:00:00Z",
+			},
+		],
+		searched_namespace: workspace,
+		retrieval_mode: "textual",
+		budget_enforcement: "estimated",
+		tokens_used: 147,
+		bytes_used: 356,
+		tokenizer_id: "supported-tokenizer-v1",
+		index_status: "ok",
+		warnings: ["lexical_estimation"],
+		empty_reason: null,
+	};
+	if (scope) {
+		payload.read_scope = scope;
+	}
+	process.stdout.write(JSON.stringify(payload));
 } else if (args[0] === "history") {
 	if (process.env.MNEXIS_FAKE_HISTORY_FAIL) {
 		process.stderr.write(process.env.MNEXIS_FAKE_HISTORY_FAIL);
@@ -874,4 +908,152 @@ test("an open read says so too", async () => {
 	} finally {
 		delete process.env.MNEXIS_FAKE_READ_SCOPE;
 	}
+});
+
+// --- the one-call door (mnexis_context) ---
+
+test("the context tool asks the CLI for the workspace's namespace", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const contextTool = tools.get("mnexis_context");
+	assert.ok(contextTool, "mnexis_context is registered");
+
+	const result = await contextTool.execute(
+		"t-context",
+		{ task: "el puerto del servicio" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.notEqual(result.isError, true);
+
+	const contextCall = calls(log).find((args) => args[0] === "context");
+	assert.ok(contextCall, "context was called");
+	assert.ok(
+		contextCall.includes("--namespace"),
+		`the door searches the workspace's namespace: ${JSON.stringify(contextCall)}`,
+	);
+	assert.ok(
+		contextCall.includes("mnexis"),
+		`and that namespace is the workspace's: ${JSON.stringify(contextCall)}`,
+	);
+	assert.ok(
+		contextCall.includes("el puerto del servicio"),
+		`the task reaches the CLI: ${JSON.stringify(contextCall)}`,
+	);
+});
+
+test("the answer declares the namespace it searched and the budget it spent", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const contextTool = tools.get("mnexis_context");
+	assert.ok(contextTool, "mnexis_context is registered");
+
+	const result = await contextTool.execute(
+		"t-context-decl",
+		{ task: "el puerto del servicio" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.notEqual(result.isError, true);
+	const text = String(result.content?.[0]?.text ?? result.output ?? "");
+	assert.match(
+		text,
+		/mnexis/,
+		`the answer names the namespace it searched: ${text}`,
+	);
+	assert.match(
+		text,
+		/147/,
+		`and the tokens it spent: ${text}`,
+	);
+	assert.equal(
+		result.details?.searched_namespace,
+		"mnexis",
+		`the payload carries the namespace: ${JSON.stringify(result.details)}`,
+	);
+	assert.equal(
+		result.details?.tokens_used,
+		147,
+		`and the tokens: ${JSON.stringify(result.details)}`,
+	);
+	assert.equal(
+		result.details?.count,
+		1,
+		`and how many memories it carries: ${JSON.stringify(result.details)}`,
+	);
+});
+
+test("an explicit namespace still wins over the workspace's", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const contextTool = tools.get("mnexis_context");
+
+	await contextTool.execute(
+		"t-context-ns",
+		{ task: "el puerto", namespace: "otro-proyecto" },
+		undefined,
+		undefined,
+		context(),
+	);
+
+	const contextCall = calls(log).find((args) => args[0] === "context");
+	assert.ok(contextCall, "context was called");
+	assert.ok(
+		contextCall.includes("otro-proyecto"),
+		`the caller asked for that namespace: ${JSON.stringify(contextCall)}`,
+	);
+});
+
+test("the context tool can be given a budget", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const contextTool = tools.get("mnexis_context");
+
+	await contextTool.execute(
+		"t-context-budget",
+		{ task: "el puerto", token_budget: 512 },
+		undefined,
+		undefined,
+		context(),
+	);
+
+	const contextCall = calls(log).find((args) => args[0] === "context");
+	assert.ok(contextCall, "context was called");
+	assert.ok(
+		contextCall.includes("--token-budget"),
+		`the budget reaches the CLI: ${JSON.stringify(contextCall)}`,
+	);
+	assert.ok(
+		contextCall.includes("512"),
+		`and it is the one asked for: ${JSON.stringify(contextCall)}`,
+	);
+});
+
+test("the context tool binds nothing: a read does not write", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const contextTool = tools.get("mnexis_context");
+	assert.ok(contextTool, "mnexis_context is registered");
+
+	await contextTool.execute(
+		"t-context-read",
+		{ task: "el puerto" },
+		undefined,
+		undefined,
+		context(),
+	);
+
+	const binds = calls(log).filter((args) => args[0] === "project" && args[1] === "bind");
+	assert.equal(
+		binds.length,
+		0,
+		`asking a question does not bind a namespace: ${JSON.stringify(binds)}`,
+	);
 });

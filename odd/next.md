@@ -30,6 +30,8 @@ out of it:
 | #52 | `install-stale-binary-rebuild` | from a repository, `install.sh skills|extensions` rebuilds a binary older than the tree before delegating (the embedded assets are a snapshot of the compiled tree — the trap that reinstalled stale assets with fresh timestamps, #51); piped mode never rebuilds, and the order of `./install.sh` and `./install.sh skills` stopped mattering |
 | #56 | `priced-first-answer` | the first answer a session reads — `mnexis status` and the MCP `memory_workspace` — carries the identity and a preview, not the verbatim content of the last three memories (#53): one projection (`MemoryPreview`), the fatter duplicate deleted, and the narrowing declared where the agent meets it (CLI text, tool description, extension README) |
 | #60 + #61 | `priced-first-answer-followups` | the three findings of the blind review of #56: the MCP tool description never said the list was priced, the extension's test fixture still modelled the forbidden shape, and the new renderer printed titles and previews verbatim — a title with a line break split a fact in two |
+| #62 | `one-line-per-renderer` | the blind review of #61 found two paths where the "one physical line per fact" rule still did not hold: `snippet` folded only the newline (a stored carriage return reached `mnexis list` and painted the fact over) and the timeline's header interpolated the title verbatim — `one_line` is now the single helper for the rule |
+| #63 | `context-workspace-namespace` | the one-call door searches the **workspace's** namespace — the one a save lands in — instead of the allowlist's first entry, and the envelope declares the namespace it searched (`searched_namespace`): in a multi-namespace profile it answered with another project's memories, in silence (#57) |
 
 Everything is merged, item 6 landed with **#50**, and the install-order trap
 landed with **#52**. `main` is clean (plus the
@@ -407,9 +409,23 @@ is "it looked in another project". The differential against the base
 commit: every other read surface is byte-identical, and `context` moves
 only by that field.
 
-**The order from here**: #59 (expose `mnexis context` as a pi tool) →
-re-measure against the merged binary → and only then the experiment with a
-**steering-shaped** phase (issue #55): the bench asks a knowledge-shaped question ("¿en qué puerto
+**The door, in the agent's hands (#59).** The tool the agent never walked
+through is now declared to the model in every session: `mnexis_context`
+takes the task in one line and answers with the memories this project
+recorded that matter for it, already trimmed to a token budget. It is the
+cheapest way to ask a project-shaped question — "where did we leave off",
+"which port does it listen on" — and the answer names the namespace it
+searched and the tokens it spent, so the agent can tell what it got. The
+tool searches the workspace's own namespace, resolved by the engine and
+read from the status answer (asking a question binds nothing), and never
+another project's — which is what #57 made possible. It does not replace
+`mnexis_search`: the search is the exact query, the context is the
+project-shaped question.
+
+**The order from here**: re-measure against the merged binary (the
+trigger batch, with the criterion written before the numbers) → and only
+then the experiment with a **steering-shaped** phase (issue #55): the
+bench asks a knowledge-shaped question ("¿en qué puerto
 escucha?"), while the recurring question is steering-shaped ("¿dónde
 quedamos?"), which is exactly what the typed-memory idea is for.
 
