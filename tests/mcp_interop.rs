@@ -140,6 +140,47 @@ async fn tools_list_contains_all_the_memory_tools_and_no_ping()
     Ok(())
 }
 
+// The workspace answer is priced: the recent list carries the identity and
+// a preview, never the whole record. The tool description is how the model
+// learns that, so it has to say it — the CLI text and the pi extension say
+// it too, and the three cannot drift (#53).
+#[tokio::test]
+async fn the_workspace_tool_description_declares_the_pricing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let tools = client.list_all_tools().await?;
+    let workspace = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "memory_workspace")
+        .expect("memory_workspace present in the tool list");
+    let description = workspace
+        .description
+        .as_ref()
+        .map(|d| d.as_ref())
+        .unwrap_or_default();
+    assert!(
+        description.contains("preview"),
+        "the description must say the recent list is priced, got: {description:?}"
+    );
+    assert!(
+        description.contains("memory_get"),
+        "the description must name the door to the full record, got: {description:?}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // memory_workspace: where may I write, and what is already there?
 // (agent-memory-ergonomics S4)

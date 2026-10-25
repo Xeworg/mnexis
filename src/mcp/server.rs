@@ -652,7 +652,7 @@ impl McpServer {
 
     #[tool(
         name = "memory_workspace",
-        description = "Call this FIRST, at the start of every session and before you change code that already exists: it returns the namespace this workspace writes into, the read and write allowlists, how many memories the scope can see, and the most recent of them. The decisions behind the code live here, not in the files."
+        description = "Call this FIRST, at the start of every session and before you change code that already exists: it returns the namespace this workspace writes into, the read and write allowlists, how many memories the scope can see, and the most recent of them — each with its title and a preview, never the whole record (open one with memory_get(uuid) when it is the memory you need). The decisions behind the code live here, not in the files."
     )]
     fn memory_workspace(&self) -> Result<String, McpError> {
         self.do_workspace()

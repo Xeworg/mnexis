@@ -13,7 +13,7 @@ use serde_json::json;
 
 use crate::application::WorkspaceStatus;
 use crate::application::workspace_status::workspace_status;
-use crate::cli::output::CommandOutcome;
+use crate::cli::output::{CommandOutcome, one_line};
 use crate::cli::profile::Profile;
 use crate::domain::error::MnexisError;
 
@@ -69,8 +69,8 @@ fn render_text(status: &WorkspaceStatus) -> String {
             "\n  [{}] {} \"{}\" — {}",
             memory.namespace,
             memory.uuid,
-            memory.title,
-            memory.preview
+            one_line(&memory.title),
+            one_line(&memory.preview)
         ));
     }
     text.push_str("\nfull record: mnexis show <uuid>");

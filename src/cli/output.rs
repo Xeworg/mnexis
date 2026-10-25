@@ -113,6 +113,15 @@ pub(crate) fn snippet(content: &str) -> String {
     s.replace('\n', " ")
 }
 
+/// One physical line out of any text: the newlines become spaces.
+///
+/// A title or a preview can carry a line break (the store accepts them),
+/// and a renderer that prints one fact per line must not be broken by a
+/// title that has two.
+pub(crate) fn one_line(text: &str) -> String {
+    text.replace('\n', " ")
+}
+
 // --- read scope (read-scope-disclosure S2) ---
 
 /// The one line that says how far a read reached.
