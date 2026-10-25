@@ -41,7 +41,8 @@ Branch: `feat/operational-commands`.
 | --- | --- | --- | --- |
 | T1 | S1 | `stats` command (new `src/cli/stats_cmd.rs`, doctor-pattern connection), tests RED→GREEN | `70c94ff` |
 | T2 | S2 | `timeline <uuid>` (service wrapper over `history` + `links_for`, NOT_FOUND), tests | `3d1071e` |
-| T3 | S3 + S4 | `project list --json` typed contract + pinned field test; docs, board, issue + PR | |
+| T3 | S3 + S4 | `project list --json` typed contract + pinned field test; docs, board, issue + PR | `4877d1e` |
+| T4 | S4 | suite completa + fmt + clippy, assess de review, issue #35 y PR #36 | |
 
 ## Log
 
@@ -59,3 +60,10 @@ Branch: `feat/operational-commands`.
   (with their date and reason). Writing history rows for save/supersede/
   delete would change what the store writes — a different feature, with
   data-write risk, not this one.
+- **L4** (2026-10-24) — delivered: issue #35, PR #36 (`feat/operational-commands`
+  → main, `type:feature`), commits `70c94ff` (stats), `3d1071e` (timeline),
+  `4877d1e` (project list contract). 736 authored lines, 3 commits. Checks:
+  21 cargo test binaries green, fmt clean, clippy at the 36-warning baseline,
+  plus text smokes of `stats` and of both sides of a supersede in
+  `timeline`. Native `assess`: risk medium, `reviewDue: false`
+  (under_budget) — no review opened, per the RDD switch. Awaiting merge.
