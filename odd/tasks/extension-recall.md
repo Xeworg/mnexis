@@ -27,7 +27,7 @@ S2 (expose — odd/next.md §6, move 1, quoted verbatim):
 | --- | --- | --- | --- |
 | T1 The recall is priced: `memories_in_window` answers with identity + preview by default; `--full` (CLI) / `full` (MCP) asks for the whole records. One projection (`SessionRecall::payload`), both surfaces | S1 | inline | 3ed1f45 |
 | T2 `mnexis_recall` in the pi extension: client method + tool + tests | S2 | inline | 182b7f3 |
-| T3 `mnexis_workspace` + `mnexis_history` in the extension, and the docs that name the tools (SKILL.md, extension README) | S2 | inline | |
+| T3 `mnexis_workspace` + `mnexis_history` in the extension, and the docs that name the tools (SKILL.md, extension README) | S2 | inline | 6dd3f4d |
 
 ## Log
 

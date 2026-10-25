@@ -202,6 +202,20 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
+		/** Where this workspace may write, and what is already there. */
+		async status(cwd) {
+			return run(["status"], { json: true, cwd });
+		},
+
+		/** The revision history of one memory. */
+		async history({ uuid, limit }, cwd) {
+			const args = ["history", uuid];
+			if (typeof limit === "number") {
+				args.push("--limit", String(limit));
+			}
+			return run(args, { json: true, cwd });
+		},
+
 		async suggestTopicKey({ title, namespace }, cwd) {
 			const args = ["suggest-topic-key", title];
 			if (namespace) {

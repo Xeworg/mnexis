@@ -130,6 +130,27 @@ if (args[0] === "project" && args[1] === "list") {
 			],
 		}),
 	);
+} else if (args[0] === "status") {
+	process.stdout.write(
+		JSON.stringify({
+			workspace: { key: "git:github.com-xeworg-mnexis", namespace: workspace },
+			scope: { default_namespace: "default", write_namespaces: [workspace] },
+			memory_count: 3,
+			recent: [{ uuid: "m1", namespace: workspace, content: "el puerto es 8081", revision: 1 }],
+		}),
+	);
+} else if (args[0] === "history") {
+	if (process.env.MNEXIS_FAKE_HISTORY_FAIL) {
+		process.stderr.write(process.env.MNEXIS_FAKE_HISTORY_FAIL);
+		process.exit(3);
+	}
+	process.stdout.write(
+		JSON.stringify({
+			uuid: args[1],
+			count: 1,
+			items: [{ revision: 1, state: "active", content: "el puerto es 8081", changed_by: "user", changed_at: "2026-10-26T00:00:00Z" }],
+		}),
+	);
 } else {
 	process.stdout.write("{}");
 }
@@ -494,6 +515,59 @@ test("a failed recall surfaces the engine's answer", async () => {
 		assert.match(text, /no finished session/, `the reason reaches the model: ${text}`);
 	} finally {
 		delete process.env.MNEXIS_FAKE_RECALL_FAIL;
+	}
+});
+
+test("the workspace answers where the session may write, in one call", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+
+	const workspace = tools.get("mnexis_workspace");
+	assert.ok(workspace, "mnexis_workspace is registered");
+
+	const result = await workspace.execute("w1", {}, undefined, undefined, context());
+	assert.notEqual(result.isError, true);
+	const statusCall = calls(log).find((args) => args[0] === "status");
+	assert.ok(statusCall, "the status was asked");
+	assert.deepEqual(statusCall, ["status", "--json"]);
+	const text = String(result.content?.[0]?.text ?? "");
+	assert.match(text, /git:github.com-xeworg-mnexis/, `the workspace key is in the answer: ${text}`);
+	assert.match(text, /memory_count/, `the count is in the answer: ${text}`);
+});
+
+test("the history of one memory reaches the engine", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+
+	const history = tools.get("mnexis_history");
+	assert.ok(history, "mnexis_history is registered");
+
+	const result = await history.execute("h1", { uuid: "m1" }, undefined, undefined, context());
+	assert.notEqual(result.isError, true);
+	const historyCall = calls(log).find((args) => args[0] === "history");
+	assert.ok(historyCall, "the history was asked");
+	assert.deepEqual(historyCall, ["history", "m1", "--json"]);
+
+	await history.execute("h2", { uuid: "m1", limit: 5 }, undefined, undefined, context());
+	const limited = calls(log).filter((args) => args[0] === "history").pop();
+	assert.deepEqual(limited, ["history", "m1", "--limit", "5", "--json"]);
+});
+
+test("a history the engine cannot find surfaces the reason", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_HISTORY_FAIL = "NOT_FOUND: not found: memory NO-EXISTE";
+	try {
+		const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+		const history = tools.get("mnexis_history");
+		const result = await history.execute("h3", { uuid: "NO-EXISTE" }, undefined, undefined, context());
+		assert.equal(result.isError, true, "it must fail");
+		const text = String(result.content?.[0]?.text ?? "");
+		assert.match(text, /NO-EXISTE/, `the reason reaches the model: ${text}`);
+	} finally {
+		delete process.env.MNEXIS_FAKE_HISTORY_FAIL;
 	}
 });
 

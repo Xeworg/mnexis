@@ -17,10 +17,13 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 
 | Tool | Purpose |
 | --- | --- |
+| `mnexis_workspace` | First call of a session: the namespace this workspace writes into, the allowlists, and the most recent memories. |
 | `mnexis_save` | Store a durable, self-contained memory about the project. |
 | `mnexis_search` | Full-text search over the stored memories (ranked). |
 | `mnexis_list` | List what is already stored. |
 | `mnexis_show` | Read one memory by UUID. |
+| `mnexis_history` | Every revision of one memory, and why each happened. |
+| `mnexis_recall` | What a session was, in one answer: the session, its prompts, and the memories of its window (previews by default, `full` for the records). |
 | `mnexis_supersede` | Replace an outdated memory with a newer one, keeping history. |
 
 Every tool is declared to the model in every session: availability does not

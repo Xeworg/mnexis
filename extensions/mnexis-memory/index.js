@@ -748,6 +748,42 @@ export default function mnexisMemoryExtension(pi) {
 	});
 
 	pi.registerTool({
+		name: "mnexis_history",
+		label: "The history of a memory",
+		promptSnippet: "Every revision of one memory, and why each happened.",
+		description:
+			"Return the revision history of one memory: every revision in order, with its state, " +
+			"content, who changed it and why. Use it to see how a fact evolved before updating or " +
+			"superseding it — the current record alone does not say what it used to claim.",
+		parameters: {
+			type: "object",
+			properties: {
+				uuid: { type: "string", description: "Memory UUID." },
+				limit: {
+					type: "number",
+					description: "How many revisions to show, oldest first (default: all).",
+				},
+			},
+			required: ["uuid"],
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const result = await client.history({ uuid: params.uuid, limit: params.limit }, ctx.cwd);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+					uuid: params.uuid,
+				});
+			}
+			const items = readItems(result.data);
+			return ok(result.stdout.trim() || JSON.stringify(result.data), {
+				uuid: params.uuid,
+				count: items.length,
+				items,
+			});
+		},
+	});
+
+	pi.registerTool({
 		name: "mnexis_session_start",
 		label: "Start the session",
 		promptSnippet: "Register the session you are running in.",
@@ -953,6 +989,32 @@ export default function mnexisMemoryExtension(pi) {
 					? result.data.memories_in_window.length
 					: 0,
 				recall: result.data,
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "mnexis_workspace",
+		label: "This workspace, in one answer",
+		promptSnippet: "Where this session may write, and what is already there.",
+		description:
+			"Call this FIRST, at the start of every session and before you change code that already " +
+			"exists: it returns the namespace this workspace writes into, the read and write " +
+			"allowlists, how many memories the scope can see, and the most recent of them. The " +
+			"decisions behind the code live here, not in the files.",
+		parameters: {
+			type: "object",
+			properties: {},
+			additionalProperties: false,
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const result = await client.status(ctx.cwd);
+			if (result.code !== 0) {
+				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {});
+			}
+			return ok(result.stdout.trim() || JSON.stringify(result.data), {
+				workspace: result.data && result.data.workspace ? result.data.workspace : null,
+				status: result.data,
 			});
 		},
 	});
