@@ -19,9 +19,9 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 | --- | --- |
 | `mnexis_workspace` | First call of a session: the namespace this workspace writes into, the allowlists, and the most recent memories — each with its title and a preview, never the whole record. |
 | `mnexis_context` | The budgeted one-call door: the task in one line, and the memories this project recorded that matter for it, trimmed to a token budget. The answer declares the namespace it searched and the tokens it spent. |
-| `mnexis_save` | Store a durable, self-contained memory about the project. |
-| `mnexis_search` | Full-text search over the stored memories (ranked). |
-| `mnexis_list` | List what is already stored. |
+| `mnexis_save` | Store a durable, self-contained memory about the project, with the `type` of fact it is when the agent knows it: one of `knowledge`, `decision`, `preference`, `procedure`, `project_state`, `episode`, `fact` (optional, so the engine decides otherwise). |
+| `mnexis_search` | Full-text search over the stored memories (ranked), narrowed by `type` when only some kinds matter. |
+| `mnexis_list` | List what is already stored, narrowed by `type` when only some kinds matter. |
 | `mnexis_show` | Read one memory by UUID. |
 | `mnexis_history` | Every revision of one memory, and why each happened. |
 | `mnexis_recall` | What a session was, in one answer: the session, its prompts, and the memories of its window (previews by default, `full` for the records). |
@@ -40,8 +40,10 @@ words the memory carries now — read it and prune a word that is wrong.
 
 Reads are open: `mnexis_search` and `mnexis_list` reach every project
 (projects share components) unless the model narrows them with a
-`namespace` argument, and `mnexis_show` reads any memory the profile
-allows.
+`namespace` argument or a `type` argument — `type` being a comma-separated
+list of the kinds (`knowledge`, `decision`, `preference`, `procedure`,
+`project_state`, `episode`, `fact`), matched exactly — and `mnexis_show`
+reads any memory the profile allows.
 
 `mnexis_context` is the exception, and it is deliberate: it asks a
 **project-shaped** question ("where did we leave off", "which port does

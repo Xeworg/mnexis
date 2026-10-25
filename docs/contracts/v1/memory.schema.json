@@ -9,7 +9,7 @@
     "id": { "type": "string", "format": "uuid" },
     "namespace": { "type": "string", "minLength": 1 },
     "topic_key": { "type": ["string", "null"], "minLength": 1 },
-    "type": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "minLength": 1, "enum": ["knowledge", "decision", "preference", "procedure", "project_state", "episode", "fact"] },
     "content": { "type": "string", "minLength": 1, "maxLength": 16384 },
     "state": { "enum": ["proposed", "active", "disputed", "superseded", "archived"] },
     "revision": { "type": "integer", "minimum": 1 },

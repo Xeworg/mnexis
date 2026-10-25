@@ -47,7 +47,7 @@ fn generate_corpus(n: usize) -> Vec<SaveRequest> {
                 replace_keywords: false,
                 topic_key: format!("mnx.topic.{i:06}"),
                 namespace: namespaces[i % namespaces.len()].to_string(),
-                memory_type: "fact".to_string(),
+                memory_type: Some("fact".to_string()),
                 content: format!("graph mnx{i:06} algorithms for distributed systems"),
                 actor: "user".to_string(),
                 channel: "cli".to_string(),
@@ -121,6 +121,7 @@ fn search_warm_10k(b: &mut Bencher) {
             StateFilter::default(),
             DeletedFilter::default(),
             None,
+            &[],
             5,
         )
         .expect("search");

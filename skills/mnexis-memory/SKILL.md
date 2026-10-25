@@ -171,11 +171,21 @@ Two things a repository cannot hold, and the engine keeps both:
    that never decided anything.
    Write the query the way you would say it: every word counts, a hyphen
    is part of a word (`staging-eu` is one search, not FTS5 syntax), and
-   `--match all` narrows it to memories that hold every word.
+   `--match all` narrows it to memories that hold every word, and
+   `--type decision,preference` narrows it to the kinds of thing you
+   ask about.
 2. **Save what matters.** After a milestone — a decision, a discovery, a
    user preference — store it immediately, in this project's namespace:
-   `mnexis save --namespace <name> --title "<what the fact IS>" --keywords "<the words it is called by>" "<one self-contained sentence>" --tags a,b`.
+   `mnexis save --namespace <name> --title "<what the fact IS>" --keywords "<the words it is called by>" --type <kind> "<one self-contained sentence>" --tags a,b`.
    The content must make sense months later with no surrounding chat.
+   `--type` says what kind of thing the fact is, and the kinds are a
+   closed set: `knowledge` (a fact about the world), `decision` (a choice
+   that was made), `preference` (a stated taste or constraint),
+   `procedure` (how something is done here), `project_state` (where the
+   project is right now), `episode` (what happened, once) or `fact` (the
+   generic one). Leave it out and the record keeps the type it already
+   has — a save that says nothing about the type never demotes a typed
+   fact.
    `--idempotency-key` makes retries safe.
 3. **One fact, one record — the title is what does it.** The **title** is
    what the fact *is*; the content is what it says *right now*. The topic

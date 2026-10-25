@@ -264,7 +264,7 @@ mod tests {
             title: String::new(),
             topic_key: format!("topic.{uuid}"),
             namespace: NS.to_string(),
-            memory_type: "fact".to_string(),
+            memory_type: Some("fact".to_string()),
             content: format!("memory {uuid}"),
             actor: "user".to_string(),
             channel: "cli".to_string(),

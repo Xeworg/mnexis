@@ -152,6 +152,9 @@ impl Form {
                 Field::single("basis", memory.assertion_basis.clone()),
                 Field::single("reason", "").hint("required"),
                 Field::single("expected_revision", memory.revision.to_string()),
+                // The kind of thing the fact is, at the end of the walk: the
+                // fields before it keep their place.
+                Field::single("type", memory.memory_type.clone()).hint("blank keeps current"),
             ],
             index: 0,
             error: None,
@@ -414,6 +417,7 @@ impl Form {
         let req: UpdateRequest = commands::update_request(
             uuid,
             Some(content),
+            blank_to_none(self.value("type")),
             state.map(|s| s.as_str().to_string()),
             blank_to_none(&tags),
             basis,

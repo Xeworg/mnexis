@@ -175,6 +175,7 @@ fn search_ids(conn: &Connection, query: &str) -> Vec<String> {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("the query must run")

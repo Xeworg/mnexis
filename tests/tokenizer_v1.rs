@@ -141,7 +141,7 @@ fn save(svc: &mut MemoryService<SqliteMemoryRepository>, uuid: &str, content: &s
         title: String::new(),
         topic_key: format!("topic.{uuid}"),
         namespace: "default".into(),
-        memory_type: kind.into(),
+        memory_type: Some(kind.into()),
         content: content.into(),
         actor: "user".into(),
         channel: "cli".into(),

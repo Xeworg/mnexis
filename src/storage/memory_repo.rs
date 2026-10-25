@@ -81,6 +81,7 @@ impl SqliteMemoryRepository {
     /// [`MemoryRepository::list_recent`]; `deleted` selects which side of the
     /// soft-delete flag the query returns and `newest_first` selects the row
     /// order (`id DESC` instead of `id`).
+    #[allow(clippy::too_many_arguments)]
     fn list_filtered(
         &self,
         namespaces: &NamespaceScope,
@@ -89,9 +90,12 @@ impl SqliteMemoryRepository {
         offset: usize,
         deleted: bool,
         newest_first: bool,
+        memory_types: &[String],
     ) -> Result<Vec<Memory>, MnexisError> {
         let state = state.map(String::from);
-        let Some((filter, mut param_refs)) = filter_sql(namespaces, state.as_ref(), deleted) else {
+        let Some((filter, mut param_refs)) =
+            filter_sql(namespaces, state.as_ref(), deleted, memory_types)
+        else {
             return Ok(Vec::new());
         };
         let mut sql = format!("SELECT {SELECT_COLUMNS}{filter}");
@@ -129,6 +133,7 @@ fn filter_sql<'a>(
     namespaces: &'a NamespaceScope,
     state: Option<&'a String>,
     deleted: bool,
+    memory_types: &'a [String],
 ) -> Option<(String, Vec<&'a dyn ToSql>)> {
     let mut sql = format!(
         " FROM memories WHERE deleted = {}",
@@ -161,6 +166,17 @@ fn filter_sql<'a>(
     if let Some(st) = state {
         sql.push_str(" AND state = ?");
         param_refs.push(st as &dyn ToSql);
+    }
+    // The kind of thing the fact is: an exact match, and it filters
+    // BEFORE the limit, so a filtered answer is not a short answer.
+    if !memory_types.is_empty() {
+        sql.push_str(&format!(
+            " AND memory_type IN ({})",
+            placeholders(memory_types.len())
+        ));
+        for memory_type in memory_types {
+            param_refs.push(memory_type as &dyn ToSql);
+        }
     }
     Some((sql, param_refs))
 }
@@ -287,7 +303,7 @@ impl MemoryRepository for SqliteMemoryRepository {
             Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
             None => NamespaceScope::All,
         };
-        self.list_filtered(&scope, state, limit, offset, false, false)
+        self.list_filtered(&scope, state, limit, offset, false, false, &[])
     }
 
     fn list_deleted(
@@ -300,18 +316,27 @@ impl MemoryRepository for SqliteMemoryRepository {
             Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
             None => NamespaceScope::All,
         };
-        self.list_filtered(&scope, None, limit, offset, true, false)
+        self.list_filtered(&scope, None, limit, offset, true, false, &[])
     }
 
-    fn list_in(
+    fn list_in_typed(
         &self,
         namespaces: &NamespaceScope,
         state: Option<&str>,
         limit: usize,
         offset: usize,
         deleted: bool,
+        memory_types: &[String],
     ) -> Result<Vec<Memory>, MnexisError> {
-        self.list_filtered(namespaces, state, limit, offset, deleted, false)
+        self.list_filtered(
+            namespaces,
+            state,
+            limit,
+            offset,
+            deleted,
+            false,
+            memory_types,
+        )
     }
 
     fn list_recent(
@@ -319,11 +344,11 @@ impl MemoryRepository for SqliteMemoryRepository {
         namespaces: &NamespaceScope,
         limit: usize,
     ) -> Result<Vec<Memory>, MnexisError> {
-        self.list_filtered(namespaces, None, limit, 0, false, true)
+        self.list_filtered(namespaces, None, limit, 0, false, true, &[])
     }
 
     fn count_in(&self, namespaces: &NamespaceScope) -> Result<i64, MnexisError> {
-        let Some((filter, param_refs)) = filter_sql(namespaces, None, false) else {
+        let Some((filter, param_refs)) = filter_sql(namespaces, None, false, &[]) else {
             return Ok(0);
         };
         let sql = format!("SELECT count(*){filter}");
@@ -888,12 +913,13 @@ impl MemoryRepository for SqliteMemoryRepository {
         self.search_in(&scope, query, limit, mode)
     }
 
-    fn search_in(
+    fn search_in_typed(
         &self,
         namespaces: &NamespaceScope,
         query: &str,
         limit: usize,
         mode: MatchMode,
+        memory_types: &[String],
     ) -> Result<Vec<SearchHit>, MnexisError> {
         let ns_filter = match namespaces {
             NamespaceScope::All => crate::retrieval::NamespaceFilter::Any,
@@ -910,6 +936,7 @@ impl MemoryRepository for SqliteMemoryRepository {
             crate::retrieval::StateFilter::default(),
             crate::retrieval::DeletedFilter::default(),
             None,
+            memory_types,
             limit,
         )
     }

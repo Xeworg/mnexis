@@ -26,7 +26,7 @@ fn save(profile: &mut Profile, ns: &str, content: &str) -> String {
             title: String::new(),
             topic_key: String::new(),
             namespace: ns.to_string(),
-            memory_type: "fact".to_string(),
+            memory_type: Some("fact".to_string()),
             content: content.to_string(),
             actor: "user".to_string(),
             channel: "cli".to_string(),
@@ -121,6 +121,7 @@ fn enter_on_a_memory_shows_detail_with_revision_history() {
     let current = p.service_ref().get(&uuid).unwrap().unwrap();
     p.service_mut()
         .update(UpdateRequest {
+            memory_type: None,
             uuid: uuid.clone(),
             expected_revision: current.revision,
             content: Some("second wording".to_string()),

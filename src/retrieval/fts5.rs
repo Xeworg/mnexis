@@ -98,6 +98,7 @@ pub fn search(
     state: StateFilter,
     deleted: DeletedFilter,
     valid_window: Option<ValidWindow>,
+    memory_types: &[String],
     limit: usize,
 ) -> Result<Vec<SearchHit>, MnexisError> {
     // The caller's words become a safe expression before they reach the
@@ -163,6 +164,16 @@ pub fn search(
         if let Some(vu) = &window.valid_until {
             sql.push_str(" AND (m.valid_until IS NULL OR m.valid_until >= ?)");
             params.push(vu);
+        }
+    }
+
+    // The kind of thing the fact is: an exact match, and it filters
+    // BEFORE the limit, so a filtered answer is not a short answer.
+    if !memory_types.is_empty() {
+        let placeholders = vec!["?"; memory_types.len()].join(", ");
+        sql.push_str(&format!(" AND m.memory_type IN ({placeholders})"));
+        for memory_type in memory_types {
+            params.push(memory_type);
         }
     }
 

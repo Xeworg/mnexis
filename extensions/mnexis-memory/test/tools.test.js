@@ -308,6 +308,44 @@ test("an explicit namespace still narrows the search", async () => {
 	]);
 });
 
+test("the search tool can ask for a memory type", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const search = tools.get("mnexis_search");
+	assert.ok(search, "mnexis_search is registered");
+
+	await search.execute(
+		"t1c",
+		{ query: "puerto", type: "decision,preference" },
+		undefined,
+		undefined,
+		context(),
+	);
+
+	const searchCall = calls(log).find((args) => args[0] === "search");
+	assert.ok(searchCall, "search was called");
+	assert.deepEqual(searchCall, ["search", "puerto", "--type", "decision,preference", "--json"]);
+});
+
+test("a search with no type sends no filter", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const search = tools.get("mnexis_search");
+	assert.ok(search, "mnexis_search is registered");
+
+	await search.execute("t1d", { query: "puerto" }, undefined, undefined, context());
+
+	const searchCall = calls(log).find((args) => args[0] === "search");
+	assert.ok(searchCall, "search was called");
+	assert.equal(
+		searchCall.includes("--type"),
+		false,
+		`a search with no type is not narrowed: ${JSON.stringify(searchCall)}`,
+	);
+});
+
 test("list reads across projects unless a namespace is given", async () => {
 	const { log } = setup();
 	const { tools, pi } = fakeHost();
@@ -324,6 +362,25 @@ test("list reads across projects unless a namespace is given", async () => {
 		listCall.includes("--namespace"),
 		false,
 		`list must not narrow to one project: ${JSON.stringify(listCall)}`,
+	);
+});
+
+test("the list tool can ask for a memory type", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const list = tools.get("mnexis_list");
+	assert.ok(list, "mnexis_list is registered");
+
+	await list.execute("t3b", { type: "procedure" }, undefined, undefined, context());
+
+	const listCall = calls(log).find((args) => args[0] === "list");
+	assert.ok(listCall, "list was called");
+	assert.ok(listCall.includes("--type"), `the type reaches the CLI: ${JSON.stringify(listCall)}`);
+	assert.equal(
+		listCall[listCall.indexOf("--type") + 1],
+		"procedure",
+		`and it is the type asked for: ${JSON.stringify(listCall)}`,
 	);
 });
 
@@ -737,6 +794,40 @@ test("the save carries the title the agent gave", async () => {
 	assert.ok(call, "the engine was asked");
 	assert.ok(call.includes("--title"), `the title reaches the engine: ${JSON.stringify(call)}`);
 	assert.ok(call.includes("puerto del servicio"), "and it is the title the agent gave");
+});
+
+test("the save carries the type of the fact the agent stores", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+	assert.ok(save, "mnexis_save is registered");
+
+	await save.execute(
+		"ty1",
+		{ content: "el puerto es 8081", type: "decision" },
+		undefined,
+		undefined,
+		context(),
+	);
+	const typed = calls(log).find((args) => args[0] === "save");
+	assert.ok(typed, "the engine was asked");
+	assert.ok(typed.includes("--type"), `the type reaches the engine: ${JSON.stringify(typed)}`);
+	assert.equal(
+		typed[typed.indexOf("--type") + 1],
+		"decision",
+		`and it is the type the agent gave: ${JSON.stringify(typed)}`,
+	);
+
+	// The type is the agent's to name, never the extension's: a save
+	// without one sends no flag, and the engine decides.
+	await save.execute("ty2", { content: "sin tipo" }, undefined, undefined, context());
+	const untyped = calls(log).filter((args) => args[0] === "save").pop();
+	assert.equal(
+		untyped.includes("--type"),
+		false,
+		`no type means no flag: ${JSON.stringify(untyped)}`,
+	);
 });
 
 test("the relations travel with the list the model reads", async () => {

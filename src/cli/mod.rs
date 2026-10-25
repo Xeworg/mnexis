@@ -82,6 +82,10 @@ pub enum Command {
         /// else the scope's first read namespace)
         #[arg(long)]
         namespace: Option<String>,
+        /// Only the memories of these kinds (comma separated): knowledge,
+        /// decision, preference, procedure, project_state, episode, fact
+        #[arg(long = "type", value_name = "TYPE[,TYPE...]")]
+        memory_type: Option<String>,
         /// Token budget for the response envelope
         #[arg(long, default_value_t = 1024)]
         token_budget: i64,
@@ -150,6 +154,9 @@ pub enum Command {
         uuid: String,
         #[arg(long)]
         content: Option<String>,
+        /// Kind of thing the fact is (default: the type the record has)
+        #[arg(long = "type", value_name = "TYPE")]
+        memory_type: Option<String>,
         #[arg(long)]
         state: Option<String>,
         #[arg(long, value_name = "TAG[,...]")]
@@ -180,6 +187,10 @@ pub enum Command {
     Search {
         #[arg(long)]
         namespace: Option<String>,
+        /// Only the memories of these kinds (comma separated): knowledge,
+        /// decision, preference, procedure, project_state, episode, fact
+        #[arg(long = "type", value_name = "TYPE[,TYPE...]")]
+        memory_type: Option<String>,
         /// Max results (default 20, capped at 100)
         #[arg(long, default_value_t = commands::DEFAULT_LIMIT)]
         limit: usize,
@@ -196,6 +207,10 @@ pub enum Command {
     List {
         #[arg(long)]
         namespace: Option<String>,
+        /// Only the memories of these kinds (comma separated): knowledge,
+        /// decision, preference, procedure, project_state, episode, fact
+        #[arg(long = "type", value_name = "TYPE[,TYPE...]")]
+        memory_type: Option<String>,
         #[arg(long)]
         state: Option<String>,
         #[arg(long, default_value_t = commands::DEFAULT_LIMIT)]
@@ -571,6 +586,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         }
         Command::Context {
             namespace,
+            memory_type,
             token_budget,
             tokenizer_id,
             max_items,
@@ -582,6 +598,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             commands::context(
                 &profile,
                 namespace.clone(),
+                memory_type.clone(),
                 *token_budget,
                 tokenizer_id.clone(),
                 *max_items,
@@ -626,6 +643,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::Update {
             uuid,
             content,
+            memory_type,
             state,
             tags,
             basis,
@@ -637,6 +655,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 &mut profile,
                 uuid.clone(),
                 content.clone(),
+                memory_type.clone(),
                 state.clone(),
                 tags.clone(),
                 basis.clone(),
@@ -663,6 +682,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         }
         Command::Search {
             namespace,
+            memory_type,
             limit,
             explain,
             match_mode,
@@ -673,6 +693,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 &mut profile,
                 query.clone(),
                 namespace.clone(),
+                memory_type.clone(),
                 *limit,
                 *explain,
                 match_mode,
@@ -680,6 +701,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         }
         Command::List {
             namespace,
+            memory_type,
             state,
             limit,
             offset,
@@ -689,6 +711,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             commands::list(
                 &mut profile,
                 namespace.clone(),
+                memory_type.clone(),
                 state.clone(),
                 *limit,
                 *offset,

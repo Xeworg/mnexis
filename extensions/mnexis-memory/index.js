@@ -515,6 +515,13 @@ export default function mnexisMemoryExtension(pi) {
 						"topic's vocabulary, never a value, and they accumulate across saves.",
 				},
 				topic_key: { type: "string", description: "Stable key grouping facts about one topic." },
+				type: {
+					type: "string",
+					description:
+						"Optional: the kind of thing this fact is, one of `knowledge`, `decision`, " +
+						"`preference`, `procedure`, `project_state`, `episode`, `fact`. Without it " +
+						"the engine decides.",
+				},
 				idempotency_key: { type: "string", description: "Makes retries safe." },
 			},
 			required: ["content"],
@@ -534,6 +541,7 @@ export default function mnexisMemoryExtension(pi) {
 					keywords: params.keywords,
 					topicKey: params.topic_key,
 					idempotencyKey: params.idempotency_key,
+					type: params.type,
 				},
 				ctx.cwd,
 			);
@@ -602,6 +610,13 @@ export default function mnexisMemoryExtension(pi) {
 						"How the words are matched: any (default) counts every word, all requires " +
 						"every word, phrase keeps the query as one exact phrase.",
 				},
+				type: {
+					type: "string",
+					description:
+						"Optional: keep only the memories of these kinds — a comma-separated list of " +
+						"`knowledge`, `decision`, `preference`, `procedure`, `project_state`, " +
+						"`episode`, `fact`.",
+				},
 			},
 			required: ["query"],
 			additionalProperties: false,
@@ -609,7 +624,7 @@ export default function mnexisMemoryExtension(pi) {
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const namespace = readNamespace(params.namespace);
 			const result = await client.search(
-				{ query: params.query, namespace, limit: params.limit, match: params.match },
+				{ query: params.query, namespace, limit: params.limit, match: params.match, type: params.type },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
@@ -709,13 +724,20 @@ export default function mnexisMemoryExtension(pi) {
 					type: "boolean",
 					description: "The complete content of every memory, not a preview.",
 				},
+				type: {
+					type: "string",
+					description:
+						"Optional: keep only the memories of these kinds — a comma-separated list of " +
+						"`knowledge`, `decision`, `preference`, `procedure`, `project_state`, " +
+						"`episode`, `fact`.",
+				},
 			},
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const namespace = readNamespace(params.namespace);
 			const result = await client.list(
-				{ namespace, limit: params.limit, full: params.full },
+				{ namespace, limit: params.limit, full: params.full, type: params.type },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
