@@ -71,13 +71,15 @@ if (args[0] === "project" && args[1] === "list") {
 		}),
 	);
 } else if (args[0] === "list") {
-	process.stdout.write(
-		JSON.stringify({
-			count: 1,
-			items: [{ uuid: "m1", namespace: "payments", preview: "el puerto es 8081" }],
-			relations: [{ older: "m1", newer: "m2", type: "supersedes", reason: "el puerto cambió" }],
-		}),
-	);
+	const listPayload = {
+		count: 1,
+		items: [{ uuid: "m1", namespace: "payments", preview: "el puerto es 8081" }],
+		relations: [{ older: "m1", newer: "m2", type: "supersedes", reason: "el puerto cambió" }],
+	};
+	if (process.env.MNEXIS_FAKE_READ_SCOPE) {
+		listPayload.read_scope = process.env.MNEXIS_FAKE_READ_SCOPE;
+	}
+	process.stdout.write(JSON.stringify(listPayload));
 } else if (args[0] === "save") {
 	// The words the engine answers with: the ones this save asked for, plus
 	// the ones the record already carried. MNEXIS_FAKE_KEYWORDS stands for a
@@ -100,7 +102,12 @@ if (args[0] === "project" && args[1] === "list") {
 		JSON.stringify({ uuid: "u-1", row_id: 1, keywords: accumulated }),
 	);
 } else if (args[0] === "search" || args[0] === "prompts") {
-	process.stdout.write(JSON.stringify({ count: 0, items: [] }));
+	const scope = process.env.MNEXIS_FAKE_READ_SCOPE;
+	const payload = { count: 0, items: [] };
+	if (scope) {
+		payload.read_scope = scope;
+	}
+	process.stdout.write(JSON.stringify(payload));
 } else if (args[0] === "suggest-topic-key") {
 	process.stdout.write(JSON.stringify({ title: args[2], topic_key: "puerto-del-servicio", recorded_by: null }));
 } else if (args[0] === "session" || args[0] === "end" || args[0] === "prompt") {
@@ -638,4 +645,49 @@ test("a save with no words says nothing about them", async () => {
 		false,
 		`no words means no flag: ${JSON.stringify(call)}`,
 	);
+});
+
+test("a bounded read tells the agent the scope it was bounded by", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_READ_SCOPE = "restricted";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const search = tools.get("mnexis_search");
+		assert.ok(search, "mnexis_search is registered");
+
+		const result = await search.execute("t-scope", { query: "puerto" }, undefined, undefined, context());
+		assert.notEqual(result.isError, true);
+		const text = String(result.content?.[0]?.text ?? result.output ?? "");
+		assert.match(
+			text,
+			/Read scope: restricted/,
+			`the answer must say it was bounded: ${text}`,
+		);
+		assert.equal(
+			result.details?.read_scope,
+			"restricted",
+			`and the payload carries the mode: ${JSON.stringify(result.details)}`,
+		);
+	} finally {
+		delete process.env.MNEXIS_FAKE_READ_SCOPE;
+	}
+});
+
+test("an open read says so too", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_READ_SCOPE = "all";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const list = tools.get("mnexis_list");
+		assert.ok(list, "mnexis_list is registered");
+
+		const result = await list.execute("t-scope-all", {}, undefined, undefined, context());
+		assert.notEqual(result.isError, true);
+		const text = String(result.content?.[0]?.text ?? result.output ?? "");
+		assert.match(text, /Read scope: all/, `the answer must say it was open: ${text}`);
+	} finally {
+		delete process.env.MNEXIS_FAKE_READ_SCOPE;
+	}
 });

@@ -722,6 +722,150 @@ fn an_open_profile_searches_across_projects() {
     assert_eq!(stdout_json(&listed)["count"], 1);
 }
 
+// --- the scope a read was bounded by (read-scope-disclosure S1-S3) ---
+//
+// A read without an explicit namespace is filtered by the scope, so it
+// returns fewer rows than exist. Without a declaration that silence reads as
+// "there are no memories" when the truth is "you may not read them", and the
+// agent saves the fact again. Every read answer says which mode bounded it,
+// and the mode names no namespace and counts nothing.
+
+/// A profile that reads `ns-a` while `ns-b` may hold data it cannot read.
+fn read_scope_profile(allow_read_all: bool, allow_global: bool) -> Profile {
+    Profile::new().with_config(&format!(
+        "default_namespace = \"ns-a\"\nread_namespaces = [\"ns-a\"]\nwrite_namespaces = [\"ns-a\", \"ns-b\"]\nallow_read_all = {allow_read_all}\nallow_global = {allow_global}\nexistence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n"
+    ))
+}
+
+#[test]
+fn every_read_answer_declares_the_scope_that_bounded_it() {
+    // The three modes and the two permissions that decide them.
+    for (allow_read_all, allow_global, expected) in [
+        (false, false, "restricted"),
+        (true, false, "except_global"),
+        (true, true, "all"),
+    ] {
+        let p = read_scope_profile(allow_read_all, allow_global);
+        save(&p, "memoria legible", &["--namespace", "ns-a"]);
+
+        let search = p.run_silent(&["search", "memoria"]).unwrap_status("search");
+        let json = stdout_json(&search);
+        assert_eq!(json["read_scope"], expected, "search ({expected}): {json}");
+        // Additive: the envelope keeps every field it had.
+        assert_eq!(json["query"], "memoria", "{json}");
+        assert_eq!(json["namespace"], serde_json::Value::Null, "{json}");
+        assert_eq!(json["count"], 1, "{json}");
+        assert!(json["items"].is_array(), "{json}");
+        assert!(json["relations"].is_array(), "{json}");
+
+        let explained = p
+            .run_silent(&["search", "--explain", "memoria"])
+            .unwrap_status("search --explain");
+        let json = stdout_json(&explained);
+        assert_eq!(
+            json["read_scope"], expected,
+            "search --explain ({expected}): {json}"
+        );
+        assert_eq!(json["query"], "memoria", "{json}");
+        assert_eq!(json["count"], 1, "{json}");
+        assert!(json["items"].is_array(), "{json}");
+
+        let listed = p.run_silent(&["list"]).unwrap_status("list");
+        let json = stdout_json(&listed);
+        assert_eq!(json["read_scope"], expected, "list ({expected}): {json}");
+        assert_eq!(json["count"], 1, "{json}");
+        assert!(json["items"].is_array(), "{json}");
+        assert!(json["relations"].is_array(), "{json}");
+
+        let context = p
+            .run_silent(&["context", "--token-budget", "1024", "memoria"])
+            .unwrap_status("context");
+        let json = stdout_json(&context);
+        assert_eq!(json["read_scope"], expected, "context ({expected}): {json}");
+        assert!(json["items"].is_array(), "{json}");
+        assert!(json["tokenizer_id"].is_string(), "{json}");
+    }
+}
+
+#[test]
+fn the_human_text_of_a_read_says_which_scope_bounded_it() {
+    let p = read_scope_profile(false, false);
+    save(&p, "memoria legible", &["--namespace", "ns-a"]);
+
+    let search = p
+        .run_text(&["search", "memoria"])
+        .unwrap_status("search text");
+    let text = String::from_utf8_lossy(&search.stdout);
+    assert!(
+        text.contains("read scope: restricted"),
+        "the text of a search names the mode: {text}"
+    );
+    assert!(
+        text.contains("this profile may not read every namespace"),
+        "and what the mode means: {text}"
+    );
+
+    // A zero-row answer says it too: silence is the hazard this closes.
+    let empty = p
+        .run_text(&["search", "zxcvbnmqwerty"])
+        .unwrap_status("empty search text");
+    let text = String::from_utf8_lossy(&empty.stdout);
+    assert!(
+        text.contains("matched 0 memories"),
+        "the empty answer keeps its wording: {text}"
+    );
+    assert!(
+        text.contains("read scope: restricted"),
+        "and says the answer was bounded: {text}"
+    );
+
+    let listed = p.run_text(&["list"]).unwrap_status("list text");
+    let text = String::from_utf8_lossy(&listed.stdout);
+    assert!(
+        text.contains("read scope: restricted"),
+        "the text of a list names the mode: {text}"
+    );
+
+    let context = p
+        .run_text(&["context", "--token-budget", "1024", "memoria"])
+        .unwrap_status("context text");
+    let text = String::from_utf8_lossy(&context.stdout);
+    assert!(
+        text.contains("read scope: restricted"),
+        "the text of a context names the mode: {text}"
+    );
+}
+
+#[test]
+fn the_read_scope_names_no_namespace_and_counts_nothing() {
+    let p = read_scope_profile(false, false);
+    // `ns-b` holds a memory this profile may not read: the declaration must
+    // not announce it, not even by counting it.
+    save(&p, "memoria escondida", &["--namespace", "ns-b"]);
+
+    let search = p.run_silent(&["search", "memoria"]).unwrap_status("search");
+    let json = stdout_json(&search);
+    assert_eq!(
+        json["count"], 0,
+        "the scoped read returns fewer rows: {json}"
+    );
+    let scope = json["read_scope"].as_str().expect("read_scope is a word");
+    assert_eq!(scope, "restricted", "{json}");
+    assert!(
+        !scope.contains("ns-a") && !scope.contains("ns-b"),
+        "the mode names no namespace: {scope}"
+    );
+    assert!(
+        !scope.chars().any(|c| c.is_ascii_digit()),
+        "the mode carries no count: {scope}"
+    );
+
+    let listed = p.run_silent(&["list"]).unwrap_status("list");
+    let json = stdout_json(&listed);
+    assert_eq!(json["count"], 0, "{json}");
+    assert_eq!(json["read_scope"], "restricted", "{json}");
+}
+
 // --- errors and scope (S10) ---
 
 #[test]
@@ -2611,5 +2755,109 @@ fn a_context_item_carries_the_words() {
     assert_eq!(
         items[0]["content"], "listen on port 8081",
         "additive: the content stays: {json}"
+    );
+}
+
+// --- the explanation answers what the search answers (read-scope-disclosure) --
+
+#[test]
+fn an_explanation_of_a_bounded_search_answers_the_same_as_the_search() {
+    let p = Profile::new().with_config(
+        "default_namespace = \"default\"\n\
+         read_namespaces = [\"default\"]\n\
+         write_namespaces = [\"default\", \"secreto\"]\n\
+         allow_global = false\n\
+         allow_read_all = false\n\
+         existence_disclosure = \"not_found\"\n\
+         allowed_operations = [\"all\"]\n",
+    );
+    // A memory the profile may write but not read.
+    let seeded = p.run_silent(&["save", "--namespace", "secreto", "el codigo es zafiro7"]);
+    assert!(
+        seeded.status.success(),
+        "the seed must land: {:?}",
+        String::from_utf8_lossy(&seeded.stderr)
+    );
+
+    let plain = p
+        .run_silent(&["search", "zafiro7"])
+        .unwrap_status("plain search");
+    let explained = p
+        .run_silent(&["search", "zafiro7", "--explain"])
+        .unwrap_status("explained search");
+
+    let plain_json = stdout_json(&plain);
+    let explained_json = stdout_json(&explained);
+    assert_eq!(
+        plain_json["count"], 0,
+        "the plain search sees nothing: {plain_json}"
+    );
+    assert_eq!(
+        explained_json["count"], 0,
+        "the explanation must answer the same as the search: {explained_json}"
+    );
+    assert_eq!(
+        explained_json["read_scope"], "restricted",
+        "and it declares the bound: {explained_json}"
+    );
+}
+
+// --- stats does not reveal what the profile cannot read ---
+
+#[test]
+fn stats_does_not_reveal_a_namespace_the_profile_cannot_read() {
+    let p = Profile::new().with_config(
+        "default_namespace = \"default\"\n\
+         read_namespaces = [\"default\"]\n\
+         write_namespaces = [\"default\", \"secreto\"]\n\
+         allow_global = false\n\
+         allow_read_all = false\n\
+         existence_disclosure = \"not_found\"\n\
+         allowed_operations = [\"all\"]\n",
+    );
+    let seeded = p.run_silent(&["save", "--namespace", "secreto", "un dato de otro proyecto"]);
+    assert!(
+        seeded.status.success(),
+        "the seed must land: {:?}",
+        String::from_utf8_lossy(&seeded.stderr)
+    );
+
+    let out = p
+        .run_silent(&["stats"])
+        .unwrap_status("stats with a closed scope");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["namespaces"].as_array().map(Vec::len),
+        Some(0),
+        "a namespace the profile cannot read must not be counted: {json}"
+    );
+    assert_eq!(json["totals"]["memories"], 0, "{json}");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !text.contains("secreto"),
+        "and it must not be named in the text: {text}"
+    );
+}
+
+#[test]
+fn stats_with_open_reads_counts_every_namespace() {
+    let p = Profile::new();
+    p.run_silent(&["config", "allow-namespace", "otro"])
+        .unwrap_status("allow the other namespace");
+    let seeded = p.run_silent(&["save", "--namespace", "otro", "un dato de otro proyecto"]);
+    assert!(
+        seeded.status.success(),
+        "the seed must land: {:?}",
+        String::from_utf8_lossy(&seeded.stderr)
+    );
+
+    let out = p
+        .run_silent(&["stats"])
+        .unwrap_status("stats with open reads");
+    let json = stdout_json(&out);
+    let namespaces = json["namespaces"].as_array().expect("namespaces array");
+    assert!(
+        namespaces.iter().any(|n| n["namespace"] == "otro"),
+        "with the reads open every namespace is counted: {json}"
     );
 }

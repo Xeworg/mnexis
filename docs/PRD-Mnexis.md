@@ -232,7 +232,7 @@ El identificador es ilustrativo; el spike debe fijar y publicar los tokenizers r
 
 Sin tokenizer soportado, se permite modo explícito de estimación con `budget_enforcement: estimated` y límite duro en bytes; no se afirma una garantía exacta de tokens. El cliente puede exigir conteo exacto y rechazar dicho modo. No truncar frases ni generar resúmenes automáticamente en MVP.
 
-La salida incluye `items`, `retrieval_mode`, `budget_enforcement`, `tokens_used` o estimación, `tokenizer_id`, `index_status`, `warnings` y `empty_reason` cuando corresponda. Cada item incluye ID, revisión, namespace, contenido, tipo, estado y procedencia. `search --explain` muestra rankings, filtros y motivos de exclusión sin revelar candidatos no autorizados.
+La salida incluye `items`, `retrieval_mode`, `budget_enforcement`, `tokens_used` o estimación, `tokenizer_id`, `index_status`, `warnings` y `empty_reason` cuando corresponda. Cada item incluye ID, revisión, namespace, contenido, tipo, estado y procedencia. `search --explain` muestra rankings, filtros y motivos de exclusión sin revelar candidatos no autorizados. Toda lectura declara su alcance con `read_scope` (`all`, `except_global` o `restricted`): el agente puede distinguir "no hay nada" de "no podés ver todo", sin que la respuesta revele namespaces ni conteos que el perfil no puede leer.
 
 ### Abstención y degradación
 

@@ -8,6 +8,7 @@ use serde_json::{Value, to_string_pretty};
 
 use crate::domain::error::MnexisError;
 use crate::domain::memory::{Memory, MemoryHistory};
+use crate::domain::scope::ReadScopeMode;
 use crate::retrieval::explain::ExplainedHit;
 use crate::retrieval::fts5::SearchHit;
 
@@ -112,6 +113,30 @@ pub(crate) fn snippet(content: &str) -> String {
     s.replace('\n', " ")
 }
 
+// --- read scope (read-scope-disclosure S2) ---
+
+/// The one line that says how far a read reached.
+///
+/// It lives here so `search`, `list` and `context` say the same thing in the
+/// same words: a bounded answer that stays silent reads as "there are no
+/// memories" when the truth is "you may not read them". The mode is the
+/// whole declaration: the line never names a namespace nor counts the ones
+/// the profile cannot read.
+pub fn read_scope_line(mode: ReadScopeMode) -> String {
+    let meaning = match mode {
+        ReadScopeMode::All => "every namespace is readable",
+        ReadScopeMode::ExceptGlobal => "the reserved namespace is not readable",
+        ReadScopeMode::Restricted => "this profile may not read every namespace",
+    };
+    format!("read scope: {} ({meaning})", mode.as_str())
+}
+
+/// Close the human text of a read with the scope line, so a bounded answer
+/// never reads like a complete one.
+pub fn with_read_scope(text: impl Into<String>, mode: ReadScopeMode) -> String {
+    format!("{}\n{}", text.into(), read_scope_line(mode))
+}
+
 /// One line per memory, matching the e2-core §7 sample:
 /// `[ns] uuid type/state "content" rev=N date`
 pub fn memory_line(m: &Memory) -> String {
@@ -211,6 +236,22 @@ mod tests {
         assert_eq!(
             render_error(&err, OutputMode::Text),
             "error[NOT_FOUND]: not found: memory:uuid-1"
+        );
+    }
+
+    #[test]
+    fn the_read_scope_line_names_the_mode_and_its_meaning() {
+        assert_eq!(
+            read_scope_line(ReadScopeMode::All),
+            "read scope: all (every namespace is readable)"
+        );
+        assert_eq!(
+            read_scope_line(ReadScopeMode::ExceptGlobal),
+            "read scope: except_global (the reserved namespace is not readable)"
+        );
+        assert_eq!(
+            read_scope_line(ReadScopeMode::Restricted),
+            "read scope: restricted (this profile may not read every namespace)"
         );
     }
 
