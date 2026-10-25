@@ -39,6 +39,39 @@ export function readItems(payload) {
 }
 
 /**
+ * The scope a read was bounded by, as the engine declared it: `all`,
+ * `except_global` or `restricted`.
+ *
+ * The engine answers every read with it, so the agent can tell "there are
+ * no memories" from "you may not read them". An older engine does not
+ * declare it, and then the answer says nothing.
+ */
+export function readScope(payload) {
+	if (payload && typeof payload === "object" && typeof payload.read_scope === "string") {
+		return payload.read_scope;
+	}
+	return "";
+}
+
+/**
+ * One line telling the agent how bounded the answer was. Empty when the
+ * engine did not say (an older engine, or a payload without the field).
+ */
+export function scopeLine(payload) {
+	const scope = readScope(payload);
+	if (!scope) {
+		return "";
+	}
+	if (scope === "all") {
+		return "Read scope: all (every namespace is readable).";
+	}
+	if (scope === "except_global") {
+		return "Read scope: except_global (the reserved namespace is not readable).";
+	}
+	return "Read scope: restricted (this profile may not read every namespace).";
+}
+
+/**
  * The relations between the memories a payload holds: which one replaced
  * which.
  *
@@ -572,16 +605,18 @@ export default function mnexisMemoryExtension(pi) {
 			}
 			const hits = readItems(result.data);
 			const relations = readRelations(result.data);
+			const scope = scopeLine(result.data);
 			const text = hits.length
 				? hits
 						.map((hit, index) => `${index + 1}. ${JSON.stringify(hit)}`)
 						.join("\n")
 				: `No memories matched '${params.query ?? ""}'.`;
-			return ok(text + relationLines(relations), {
+			return ok(text + relationLines(relations) + (scope ? `\n${scope}` : ""), {
 				namespace: namespace ?? null,
 				count: hits.length,
 				hits,
 				relations,
+				read_scope: readScope(result.data),
 			});
 		},
 	});
@@ -676,13 +711,17 @@ export default function mnexisMemoryExtension(pi) {
 			}
 			const items = readItems(result.data);
 			const relations = readRelations(result.data);
+			const scope = scopeLine(result.data);
 			const text = items.length
 				? items.map((item, index) => `${index + 1}. ${JSON.stringify(item)}`).join("\n")
 				: "No memories stored yet.";
-			return ok(
-				text + relationLines(relations),
-				{ namespace: namespace ?? null, count: items.length, memories: items, relations },
-			);
+			return ok(text + relationLines(relations) + (scope ? `\n${scope}` : ""), {
+				namespace: namespace ?? null,
+				count: items.length,
+				memories: items,
+				relations,
+				read_scope: readScope(result.data),
+			});
 		},
 	});
 

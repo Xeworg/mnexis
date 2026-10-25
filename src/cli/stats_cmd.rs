@@ -51,8 +51,17 @@ fn count(conn: &Connection, sql: &str) -> Result<i64, MnexisError> {
         .map_err(|e| MnexisError::busy(format!("stats: {e}")))
 }
 
-/// Collect the counts from the store.
-pub fn collect(conn: &Connection) -> Result<StatsReport, MnexisError> {
+/// Collect the counts from the store, counting only what the scope reads.
+///
+/// The scope is not an optional courtesy here: a count of the namespaces
+/// the profile cannot read tells the caller they exist, and the operator's
+/// own memory is not the only caller of this command. With the reads open
+/// (`allow_read_all`) the scope reads everything and the counts are the
+/// whole store, as they were before.
+pub fn collect(
+    conn: &Connection,
+    scope: &crate::domain::scope::AccessScope,
+) -> Result<StatsReport, MnexisError> {
     let schema_version = conn
         .query_row(
             "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
@@ -61,14 +70,38 @@ pub fn collect(conn: &Connection) -> Result<StatsReport, MnexisError> {
         )
         .map_err(|e| MnexisError::busy(format!("stats schema version: {e}")))?;
 
+    // The namespaces this profile reads, as a predicate per table alias.
+    let readable = scope.read_scope();
+    let ns_clause = |column: &str| -> String {
+        match &readable {
+            crate::domain::scope::NamespaceScope::All => String::new(),
+            crate::domain::scope::NamespaceScope::AllExcept(excluded) => {
+                if excluded.is_empty() {
+                    String::new()
+                } else {
+                    format!(" AND {column} NOT IN ({})", sql_list(excluded))
+                }
+            }
+            crate::domain::scope::NamespaceScope::Only(names) => {
+                if names.is_empty() {
+                    // Nothing is readable: the counts are zeroes, not a leak.
+                    " AND 0".to_string()
+                } else {
+                    format!(" AND {column} IN ({})", sql_list(names))
+                }
+            }
+        }
+    };
+
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT namespace, \
                     COALESCE(SUM(state = 'active' AND deleted = 0), 0), \
                     COALESCE(SUM(state = 'superseded' AND deleted = 0), 0), \
                     COALESCE(SUM(deleted = 1), 0) \
-             FROM memories GROUP BY namespace ORDER BY namespace",
-        )
+             FROM memories WHERE 1=1{} GROUP BY namespace ORDER BY namespace",
+            ns_clause("namespace")
+        ))
         .map_err(|e| MnexisError::busy(format!("stats namespaces: {e}")))?;
     let namespaces = stmt
         .query_map([], |row| {
@@ -84,9 +117,25 @@ pub fn collect(conn: &Connection) -> Result<StatsReport, MnexisError> {
         .map_err(|e| MnexisError::busy(format!("stats namespaces: {e}")))?;
 
     let mut totals = TotalsStats {
-        supersede_links: count(conn, "SELECT count(*) FROM memory_links")?,
-        sessions: count(conn, "SELECT count(*) FROM sessions")?,
-        prompts: count(conn, "SELECT count(*) FROM user_prompts")?,
+        supersede_links: count_links(
+            conn,
+            &ns_clause("older.namespace"),
+            &ns_clause("newer.namespace"),
+        )?,
+        sessions: count(
+            conn,
+            &format!(
+                "SELECT count(*) FROM sessions WHERE 1=1{}",
+                ns_clause("namespace")
+            ),
+        )?,
+        prompts: count(
+            conn,
+            &format!(
+                "SELECT count(*) FROM user_prompts WHERE 1=1{}",
+                ns_clause("namespace")
+            ),
+        )?,
         ..TotalsStats::default()
     };
     for ns in &namespaces {
@@ -101,6 +150,33 @@ pub fn collect(conn: &Connection) -> Result<StatsReport, MnexisError> {
         namespaces,
         totals,
     })
+}
+
+/// A SQL list of namespace literals, escaped.
+fn sql_list(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|ns| format!("'{}'", ns.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The supersede links whose BOTH sides are readable: a link between two
+/// memories the profile cannot see is not part of what it can see.
+fn count_links(
+    conn: &Connection,
+    older_clause: &str,
+    newer_clause: &str,
+) -> Result<i64, MnexisError> {
+    count(
+        conn,
+        &format!(
+            "SELECT count(*) FROM memory_links l \
+             JOIN memories older ON older.uuid = l.older_uuid \
+             JOIN memories newer ON newer.uuid = l.newer_uuid \
+             WHERE 1=1{older_clause}{newer_clause}"
+        ),
+    )
 }
 
 /// Text rendering: a compact per-namespace table and a totals line.
@@ -138,7 +214,8 @@ pub fn render(report: &StatsReport) -> String {
 /// `mnexis stats` — the whole store in one answer.
 pub fn stats(profile: &Profile) -> Result<CommandOutcome, MnexisError> {
     let conn = crate::storage::sqlite::open_sqlite(&profile.db_path())?;
-    let report = collect(&conn)?;
+    let scope = profile.service_ref().scope();
+    let report = collect(&conn, scope)?;
     let json = serde_json::to_value(&report)
         .map_err(|e| MnexisError::busy(format!("serialize stats report: {e}")))?;
     Ok(CommandOutcome::new(json, render(&report)))

@@ -2801,3 +2801,63 @@ fn an_explanation_of_a_bounded_search_answers_the_same_as_the_search() {
         "and it declares the bound: {explained_json}"
     );
 }
+
+// --- stats does not reveal what the profile cannot read ---
+
+#[test]
+fn stats_does_not_reveal_a_namespace_the_profile_cannot_read() {
+    let p = Profile::new().with_config(
+        "default_namespace = \"default\"\n\
+         read_namespaces = [\"default\"]\n\
+         write_namespaces = [\"default\", \"secreto\"]\n\
+         allow_global = false\n\
+         allow_read_all = false\n\
+         existence_disclosure = \"not_found\"\n\
+         allowed_operations = [\"all\"]\n",
+    );
+    let seeded = p.run_silent(&["save", "--namespace", "secreto", "un dato de otro proyecto"]);
+    assert!(
+        seeded.status.success(),
+        "the seed must land: {:?}",
+        String::from_utf8_lossy(&seeded.stderr)
+    );
+
+    let out = p
+        .run_silent(&["stats"])
+        .unwrap_status("stats with a closed scope");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["namespaces"].as_array().map(Vec::len),
+        Some(0),
+        "a namespace the profile cannot read must not be counted: {json}"
+    );
+    assert_eq!(json["totals"]["memories"], 0, "{json}");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !text.contains("secreto"),
+        "and it must not be named in the text: {text}"
+    );
+}
+
+#[test]
+fn stats_with_open_reads_counts_every_namespace() {
+    let p = Profile::new();
+    p.run_silent(&["config", "allow-namespace", "otro"])
+        .unwrap_status("allow the other namespace");
+    let seeded = p.run_silent(&["save", "--namespace", "otro", "un dato de otro proyecto"]);
+    assert!(
+        seeded.status.success(),
+        "the seed must land: {:?}",
+        String::from_utf8_lossy(&seeded.stderr)
+    );
+
+    let out = p
+        .run_silent(&["stats"])
+        .unwrap_status("stats with open reads");
+    let json = stdout_json(&out);
+    let namespaces = json["namespaces"].as_array().expect("namespaces array");
+    assert!(
+        namespaces.iter().any(|n| n["namespace"] == "otro"),
+        "with the reads open every namespace is counted: {json}"
+    );
+}
