@@ -53,11 +53,11 @@ before. That makes the recall of a session load-bearing, not a convenience.
 
 ## Tasks
 
-| ID | Spec | Route | Allowed edit surfaces | Commit |
-| --- | --- | --- | --- | --- |
-| T1 | S1 | the recall: a service method, `mnexis recall`, the MCP tool | `d0a7527` |
-| T2 | S2 | the provenance: migration 008, the capture at session start | `src/storage/sqlite.rs`, `src/application/workspace.rs`, `src/application/service.rs`, `src/domain/session.rs`, `src/storage/memory_repo.rs`, `src/diagnostics/doctor.rs`, `src/cli/mod.rs`, `src/cli/stats_cmd.rs`, `src/mcp/tools.rs`, `tests/session_recall.rs`, `tests/sqlite_fts5.rs`, `README.md` | `3468667` |
-| T3 | S3 + S4 | the validator, and the recall showing it | `src/application/git_state.rs`, `src/application/workspace.rs`, `src/application/session_recall.rs`, `src/cli/recall_cmd.rs`, `src/mcp/server.rs`, `tests/session_recall.rs` | `a86d245` |
+| ID | Spec | Route | Allowed edit surfaces | Commit | PR |
+| --- | --- | --- | --- | --- | --- |
+| T1 | S1 | the recall: a service method, `mnexis recall`, the MCP tool | `d0a7527` | #46 |
+| T2 | S2 | the provenance: migration 008, the capture at session start | `src/storage/sqlite.rs`, `src/application/workspace.rs`, `src/application/service.rs`, `src/domain/session.rs`, `src/storage/memory_repo.rs`, `src/diagnostics/doctor.rs`, `src/cli/mod.rs`, `src/cli/stats_cmd.rs`, `src/mcp/tools.rs`, `tests/session_recall.rs`, `tests/sqlite_fts5.rs`, `README.md` | `3468667` | #47 |
+| T3 | S3 + S4 | the validator, and the recall showing it | `src/application/git_state.rs`, `src/application/workspace.rs`, `src/application/session_recall.rs`, `src/cli/recall_cmd.rs`, `src/mcp/server.rs`, `tests/session_recall.rs` | `a86d245` | #48 |
 
 ## Log
 
@@ -228,3 +228,28 @@ before. That makes the recall of a session load-bearing, not a convenience.
   **The feature is complete** (S1-S4, T1-T3). What is left is delivery, and
   delivery is the operator's: the branch carries three slices (T1 | T2 | T3)
   and the PRs are theirs to open.
+
+- **L7** (2026-10-26) — **the delivery is open**: three stacked PRs, one per
+  slice, each with its issue (the repo's issue-per-PR policy):
+
+  | PR | Slice | Head | Base | Size |
+  | --- | --- | --- | --- | --- |
+  | #46 | T1 — the recall | `feat/session-recall-command` | `main` | +1161 |
+  | #47 | T2 — the anchor | `feat/session-recall-anchor` | `feat/session-recall-command` | +608 |
+  | #48 | T3 — the state | `feat/session-recall-state` | `feat/session-recall-anchor` | +777 |
+
+  The issues are #43 (the recall), #44 (the working context) and #45 (the
+  state), and each PR closes its own. The chain is the repo's precedent
+  (`doctor-contract` went out as #31 + #34): the first slice lands on `main`
+  by itself and the next two stack on it, in order.
+
+  **The branch `feat/session-recall` on the remote still points at the whole
+  feature** (58393f9): it is the integration branch, and it is a leftover of
+  the reshaping. The slice branches are the ones the PRs use. Deleting the
+  leftover is the operator's call.
+
+  **Review load, said out loud:** #46 is ~1160 lines — one cohesive unit
+  (the service method, the CLI command, the MCP tool and their tests).
+  Splitting the CLI from the MCP tool would land the agent's door separately
+  from the behavior it exposes, so the slice stays whole. #47 and #48 are
+  within the ~600-line range of the repo's recent slices.

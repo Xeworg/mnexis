@@ -195,9 +195,11 @@ not rebuild it without new evidence.
 ### 5. The prompt/session layer is in, and the session now carries its context
 
 `session-and-prompts` landed the tables, the tools and the hooks. The **recall**
-of a session and the **provenance with git** are done on the branch
-`feat/session-recall` (three slices: the recall, the anchor, the validator) —
-**not in `main` yet**: the PRs are the operator's call. What the branch adds:
+of a session and the **provenance with git** are done and open for review: three
+stacked PRs, one per slice — **#46** (the recall) → **#47** (the working
+context) → **#48** (the state of the anchored branch), each with its issue
+(#43, #44, #45). They are **not in `main` yet**: the merge is the operator's,
+in that order. What the branch adds:
 
 - the recall (`mnexis recall --session <id>` / `--previous`) answers what a
   session was: the session, its prompts in order, and the memories of its
