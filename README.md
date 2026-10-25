@@ -149,15 +149,19 @@ the human:
 
 | Permission | Default in a new profile | What it opens |
 | --- | --- | --- |
-| `allow_read_all` | `true` | Reading memories from any project. |
+| `allow_read_all` | `false` | Reading memories from any project. Off by default: a new profile reads its own namespace, plus the one its workspace is bound to. |
 | `allow_global` | `false` | The reserved `global` namespace, for reads and writes. |
 
 ```sh
+mnexis config allow-read-all             # open the reads across projects
 mnexis config allow-read-all --revoke   # scope the reads to the allowlist
-mnexis config allow-read-all             # open them again
 mnexis config allow-global               # open the reserved 'global' namespace
 mnexis config allow-global --revoke
 ```
+
+Reading another project needs a human-granted permission:
+`mnexis config allow-read-namespace <ns>` opens the reading only, and the
+same namespace can be bound to a workspace with `mnexis project bind`.
 
 A profile that does not mention these keys keeps both permissions closed:
 nothing opens itself silently, and `mnexis init` is what writes them

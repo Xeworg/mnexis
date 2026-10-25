@@ -114,3 +114,29 @@ records why.
 - **L5** (2026-10-26) — the arm A numbers are clean: none of its ten runs
   touched the seed (it could read the other namespace with its own
   profile, so it never went looking).
+- **L6** (2026-10-26) — the clean re-measurement of the closed arm (10
+  runs, 13m44s, zero contamination: the seed is deleted right after it
+  seeds and recreated only for the store dump):
+
+  | | reads open | reads closed |
+  | --- | --- | --- |
+  | found the other project's fact | 10/10 | **0/10** |
+  | invented a value | 0/10 | **0/10** |
+  | duplicated the fact in its own namespace | **10/10** | **0/10** |
+  | asked (or said it did not find it) | 0/10 | **10/10** |
+  | the refusal was visible | 7/10 | **10/10** |
+
+  **The criterion holds on all three bullets**, so the default closes
+  (`allow_read_all = false` in a new profile; existing profiles keep what
+  they have; the switch is `mnexis config allow-read-all`).
+
+  **And the framing was wrong**: the duplication comes from the OPEN
+  default — an agent that reads everything copies another project's fact
+  into its own namespace in ten of ten runs. The isolation does not
+  manufacture duplicates; reading everything does. What the isolation costs
+  is explicit incompleteness: a task that needs another project's facts
+  stops being finishable without the human. That is a privacy decision,
+  priced, and it is the operator's.
+
+  The report: `tmp/bench/closed-default-measurement.md` (backed up outside
+  the repository with the rest of the bench artifacts).

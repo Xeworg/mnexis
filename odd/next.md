@@ -136,57 +136,51 @@ it is what an operator needs when something goes wrong.
 its supersede links in both directions), and `project list --json` as a typed
 contract. Read-only, no TUI needed.
 
-### 3b. The closed default — **measured before it is flipped**
+### 3b. The closed default — **measured, and closing** (branch `feat/closed-default`)
 
 The operator wants the agents not to see other projects' memories by default.
-The granularity is in (#38): reading and writing are two permissions, a bound
-workspace may read its own namespace, and every refusal names the route. What
-is left is the default itself: `allow_read_all` is `true` for new profiles.
+The granularity is in (#38) and the hazard is closed (#40): a read now
+declares whether it was bounded, so "there are no memories" and "you may not
+read them" are different answers.
 
-**It is not flipped yet, and it must not be flipped without the harness.**
-Three things the measurement has to answer (10+ runs per arm — n=3 is a smoke
-test, per the correction this board already made):
+**The measurement** (`odd/tasks/closed-default.md`: the plan and its criterion
+written BEFORE the numbers). Two arms — the reads open (today's default) and
+the reads closed — same image, same model, same prompts, 10 runs each. Four
+metrics: the finding, the mechanism (does the agent ASK instead of guessing),
+the honesty (does it say it did not find it), and the cost (does the shared
+fact end up duplicated in the agent's own namespace).
 
-- **Does the agent lose what it needs?** Cross-project findings when they
-  matter.
-- **Does the isolation create duplicates?** `UNIQUE(namespace, topic_key)`:
-  the same fact in two namespaces is two records, and an agent that cannot
-  read the other project re-saves it.
-- **How many refusals, and does the agent handle them?** The skill is not
-  read in 10 of 24 runs.
+| | reads open | reads closed |
+| --- | --- | --- |
+| found the other project's fact | 10/10 | 0/10 |
+| **invented** a value | 0/10 | **0/10** |
+| **duplicated the fact in its own namespace** | **10/10** | **0/10** |
+| asked (or said it did not find it) | 0/10 | **10/10** |
+| the refusal was visible | 7/10 | **10/10** |
 
-**The hazard is closed** (PR **#40**, open): every read declares the scope
-it was bounded by (`read_scope`: `all` | `except_global` | `restricted`), in
-the JSON, in the text and in the pi extension's tools, so the agent can tell
-"no memories" from "no permission". The value never carries a count and
-never names a namespace the profile cannot read.
+**What it says, and it is not what the framing expected:** the duplication
+comes from the OPEN default, not from the isolation — an agent that reads
+everything copies another project's fact into its own namespace in ten of
+ten runs, and the namespaces fill with copies of the same fact. The closed
+arm invented nothing, saw the refusal every time, and asked (or said it did
+not find it) in ten of ten. The price of closing is explicit incompleteness:
+a task that needs another project's facts stops being finishable without
+the human. That is a privacy decision, priced.
 
-**The measurement is running** (`odd/tasks/closed-default.md`: the plan and
-its criterion written BEFORE the numbers). Two arms — the reads open (today's
-default) and the reads closed — same image, same model, same prompts, 10+ runs
-each. Four metrics: the finding, the mechanism (does the agent ASK instead of
-guessing), the honesty (does it say it did not find it), and the cost (does
-the shared fact end up duplicated in the agent's own namespace).
+**The criterion (written before the runs) holds on all three bullets**, so
+the default is closing: `allow_read_all` is `false` in a new profile.
+Existing profiles keep what they have. The switch is
+`mnexis config allow-read-all`.
 
-**What the smoke run already showed, and what it found:**
-
-- the arms discriminate: the open arm finds the other namespace's fact and
-  **duplicates it** locally; the closed arm does not find it, says it did
-  not find it, does **not** duplicate it, and **asks for the permission**
-  with the exact command
-- **two holes it surfaced, both fixed in #40**: `mnexis stats` counted every
-  namespace in the store (a closed profile could learn that another project
-  exists — a read the PRD forbids), and the pi extension dropped the scope
-  declaration on the way to the agent, which is the channel that matters
-- **one more found while implementing**: `search --explain` filtered by "any
-  namespace", so a term that only matched a namespace the caller cannot read
-  made the whole command fail (NOT_FOUND) where the plain search had
-  answered "nothing" — two answers to the same question
-
-**The criterion (decided before the runs):** the default flips only if no run
-in the closed arm invents a value, the agent asks (or says it did not find
-it) in most runs, and the duplication is not systematic. A single invention
-keeps the default open.
+**The boundary of the isolation, found by the same run.** Six of the first
+ten closed-arm runs found a second profile on the filesystem
+(`/root/.mnexis-seed/mnexis.toml`) and opened it: the agent listed `/root`,
+found a wider allowlist and read the other namespace through it. **The scope
+binds the profile the process was given, not the files on the disk — mnexis
+is not a sandbox.** The harness was fixed (the seed is deleted right after
+it seeds) and the arm was measured again; the limit itself is the
+product's, and the skill now says so: a second profile is not a permission
+either.
 
 ### 4. B3 — the injected protocol block: measured, and **not** adopted
 
