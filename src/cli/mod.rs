@@ -78,7 +78,8 @@ pub enum Command {
 
     /// Retrieve a budgeted context for a task (PRD §9, E3)
     Context {
-        /// Namespace to search within (default: scope's first read namespace)
+        /// Namespace to search within (default: the workspace's namespace,
+        /// else the scope's first read namespace)
         #[arg(long)]
         namespace: Option<String>,
         /// Token budget for the response envelope

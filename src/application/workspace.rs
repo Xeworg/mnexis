@@ -154,6 +154,26 @@ pub fn current_workspace(data_dir: &Path) -> Result<Option<WorkspaceInfo>, Mnexi
     }))
 }
 
+/// The namespace a read without an explicit namespace searches: the
+/// workspace's own namespace — the one a save lands in — when the scope
+/// may read it.
+///
+/// `None` means the caller keeps its own fallback. Two cases lead here:
+/// the workspace names no namespace at all, or it names one this profile
+/// may not read (a marker is a file in the repository, not a permission,
+/// so the namespace it names can be unreadable).
+///
+/// A read never widens itself: the namespace is only used when the scope
+/// already allows reading it.
+pub fn read_namespace(scope: &AccessScope, workspace: Option<&WorkspaceInfo>) -> Option<String> {
+    let namespace = workspace.and_then(|workspace| workspace.namespace.as_deref())?;
+    if scope.can_read(namespace) {
+        Some(namespace.to_string())
+    } else {
+        None
+    }
+}
+
 /// Widen `scope`'s read allowlist with the namespace the workspace is
 /// **bound** to (read-granularity S2).
 ///

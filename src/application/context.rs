@@ -80,6 +80,13 @@ pub struct ContextItem {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextResponse {
     pub items: Vec<ContextItem>,
+    /// The namespace the door searched (#57).
+    ///
+    /// Every item carries its own namespace, but an empty answer has to
+    /// say where it looked: without this the agent cannot tell "this
+    /// project has no memories" from "it looked in another project" —
+    /// and the second one reads exactly like the first.
+    pub searched_namespace: String,
     pub retrieval_mode: &'static str,
     pub budget_enforcement: &'static str,
     pub tokens_used: i64,
@@ -100,6 +107,7 @@ impl ContextResponse {
     pub fn empty(reason: impl Into<String>, budget: &Budget) -> Self {
         Self {
             items: Vec::new(),
+            searched_namespace: String::new(),
             retrieval_mode: RETRIEVAL_MODE,
             budget_enforcement: budget.enforcement_label(),
             tokens_used: 0,
@@ -214,6 +222,7 @@ pub fn select_response(
 
     Ok(ContextResponse {
         items,
+        searched_namespace: String::new(),
         retrieval_mode: RETRIEVAL_MODE,
         budget_enforcement: budget.enforcement_label(),
         tokens_used,
