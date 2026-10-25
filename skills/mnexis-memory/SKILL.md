@@ -123,7 +123,10 @@ the answer. Never widen your own reach to get past a refusal — not with
 allow-read-all`, and never by editing `mnexis.toml`: a permission the agent
 grants itself is not a permission. If no interactive answer is possible,
 report that the access is pending and answer from what the scope already
-holds.
+holds. And never go around the refusal by opening another profile: the
+scope binds the profile you were given, not the files on the disk, so a
+second `mnexis.toml` is not a permission either — it is the same reach with
+a different name.
 
 ## The session and what the user said
 

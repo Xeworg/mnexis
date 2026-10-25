@@ -89,3 +89,28 @@ records why.
   (`config allow-read-all --revoke`) and nothing else changes.
 - **L3** (2026-10-25) — the criterion is written BEFORE the runs, because
   a criterion written after the numbers is a rationalization.
+- **L4** (2026-10-26) — the first full run (10 per arm, 20m17s) and what it
+  found:
+  - **Arm A (the reads open): the agent DUPLICATES the other project's
+    fact in its own namespace — 10 of 10.** It finds the fact (10/10) and
+    copies it into its own namespace every time. That is the cost of
+    reading everything, and it is the opposite of what the isolation
+    would cause: the namespaces fill with copies of the same fact.
+  - **Arm B (the reads closed): zero inventions in 10 runs.** The refusal
+    is visible in 10/10, the agent says it did not find it in 7/7 of the
+    runs where it did not find it, and it asks for the permission with the
+    exact command in 6/10 of the write phases.
+  - **A harness artefact, and a real limit behind it.** Six of the ten
+    closed-arm runs found the seed profile (`/root/.mnexis-seed`) on the
+    filesystem and opened it: the agent listed `/root`, found a second
+    `mnexis.toml` with a wider allowlist and read the other namespace
+    with it. Two of the runs "found" the fact that way, and those are the
+    two that duplicated it. The harness was fixed (the seed is deleted
+    right after it seeds and recreated only for the store dump) and the
+    closed arm was measured again. **The limit behind it is the product's,
+    not the harness's: the scope binds the profile the process was given,
+    not the files on the disk. mnexis is not a sandbox.** The skill now
+    says so, and the board records it as the boundary of the isolation.
+- **L5** (2026-10-26) — the arm A numbers are clean: none of its ten runs
+  touched the seed (it could read the other namespace with its own
+  profile, so it never went looking).
