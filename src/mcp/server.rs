@@ -21,7 +21,8 @@ use crate::domain::memory::MemoryLink;
 use crate::mcp::tools::{
     DeleteArgs, GetArgs, HistoryArgs, ListArgs, McpError, RestoreArgs, SaveArgs, SavePromptArgs,
     SearchArgs, SearchPromptsArgs, SessionEndArgs, SessionStartArgs, SuggestTopicKeyArgs,
-    SupersedeArgs, UpdateArgs, clamp_limit, parse_keywords, parse_state, parse_tags,
+    SupersedeArgs, UpdateArgs, clamp_limit, parse_keywords, parse_memory_types, parse_state,
+    parse_tags,
 };
 use crate::mcp::transport::stdio;
 use crate::storage::memory_repo::SqliteMemoryRepository;
@@ -209,7 +210,9 @@ impl McpServer {
             replace_keywords: args.replace_keywords,
             topic_key: args.topic_key.unwrap_or_default(),
             namespace,
-            memory_type: args.memory_type.unwrap_or_else(|| "fact".to_string()),
+            // None means "not specified": the record keeps the type it
+            // has, or gets the default when it is new.
+            memory_type: args.memory_type,
             content: args.content,
             actor: "mcp".to_string(),
             channel: "mcp".to_string(),
@@ -271,6 +274,7 @@ impl McpServer {
         let filter = ListFilter {
             namespace: args.namespace.clone(),
             state,
+            memory_types: parse_memory_types(args.memory_type.as_deref())?,
             limit: clamp_limit(args.limit),
             offset: args.offset,
         };
@@ -458,6 +462,7 @@ impl McpServer {
             .transpose()?;
         let req = crate::application::UpdateRequest {
             uuid: args.uuid.clone(),
+            memory_type: None,
             expected_revision: args.expected_revision,
             content: args.content,
             state,
@@ -584,7 +589,13 @@ impl McpServer {
             Some(name) => crate::domain::query::MatchMode::parse(name)?,
             None => crate::domain::query::MatchMode::default(),
         };
-        let hits = svc.search(&args.query, args.namespace.as_deref(), limit, mode)?;
+        let hits = svc.search_typed(
+            &args.query,
+            args.namespace.as_deref(),
+            limit,
+            mode,
+            &parse_memory_types(args.memory_type.as_deref())?,
+        )?;
         // The scope this read is bounded by (read-scope-disclosure S4).
         let read_scope = svc.scope().read_scope_mode();
         // Which of the hits replaced which, and what each hit *is*.

@@ -89,6 +89,7 @@ fn search_default_excludes_non_active_states() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -122,6 +123,7 @@ fn search_default_excludes_soft_deleted_rows() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -173,6 +175,7 @@ fn search_namespace_filter_isolates_results() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -218,6 +221,7 @@ fn search_state_filter_any_matches_default_when_index_is_active_only() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -229,6 +233,7 @@ fn search_state_filter_any_matches_default_when_index_is_active_only() {
         StateFilter::Any,
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -266,6 +271,7 @@ fn search_deleted_filter_any_matches_default_when_index_is_not_deleted_only() {
         StateFilter::Any,
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -277,6 +283,7 @@ fn search_deleted_filter_any_matches_default_when_index_is_not_deleted_only() {
         StateFilter::Any,
         DeletedFilter::Any,
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -336,6 +343,7 @@ fn search_valid_window_excludes_out_of_window_records() {
         StateFilter::Any,
         DeletedFilter::Any,
         Some(window),
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -375,6 +383,7 @@ fn search_hit_carries_full_column_set() {
         StateFilter::Any,
         DeletedFilter::Any,
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -414,6 +423,7 @@ fn search_empty_query_returns_empty_vec_not_error() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(empty)");
@@ -452,6 +462,7 @@ fn search_update_of_content_reindexes_after_update_trigger() {
         StateFilter::Any,
         DeletedFilter::Any,
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -477,6 +488,7 @@ fn search_update_of_content_reindexes_after_update_trigger() {
         StateFilter::Any,
         DeletedFilter::Any,
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -493,6 +505,7 @@ fn search_update_of_content_reindexes_after_update_trigger() {
         StateFilter::Any,
         DeletedFilter::Any,
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -534,6 +547,7 @@ fn search_survives_reopen() {
         StateFilter::Any,
         DeletedFilter::Any,
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -572,6 +586,7 @@ fn a_hyphenated_query_finds_the_memory() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("a hyphenated query must not fail");
@@ -604,6 +619,7 @@ fn a_multi_word_query_is_not_a_phrase() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("a natural-language query must not fail");
@@ -639,6 +655,7 @@ fn the_match_mode_decides_what_the_query_means() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("all-mode search must succeed");
@@ -652,6 +669,7 @@ fn the_match_mode_decides_what_the_query_means() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("phrase search must succeed");
@@ -686,6 +704,7 @@ fn fts5_syntax_inside_a_query_is_treated_as_words() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("a query with FTS5 syntax must not fail the parse");
@@ -706,6 +725,7 @@ fn a_query_without_words_is_an_invalid_argument() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect_err("an empty query must fail");
@@ -760,6 +780,7 @@ fn no_query_text_can_reach_fts5_as_syntax() {
                 StateFilter::default(),
                 DeletedFilter::default(),
                 None,
+                &[],
                 10,
             ) {
                 Ok(_) => {}
@@ -780,6 +801,7 @@ fn no_query_text_can_reach_fts5_as_syntax() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("the hyphenated query must run");
@@ -814,6 +836,7 @@ fn search_ids(conn: &Connection, query: &str) -> Vec<String> {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("the query must run")
@@ -955,6 +978,7 @@ fn a_content_match_still_ranks_above_a_title_only_match() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("the query must run");

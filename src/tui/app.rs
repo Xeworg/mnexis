@@ -343,6 +343,7 @@ impl App {
         } else if self.query.is_empty() {
             service
                 .list(ListFilter {
+                    memory_types: Vec::new(),
                     namespace: Some(ns),
                     state: None,
                     limit: MAX_LIMIT,

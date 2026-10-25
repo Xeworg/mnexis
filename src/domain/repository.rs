@@ -70,6 +70,24 @@ pub trait MemoryRepository {
         limit: usize,
         offset: usize,
         deleted: bool,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        self.list_in_typed(namespaces, state, limit, offset, deleted, &[])
+    }
+
+    /// List the memories of a namespace scope, narrowed to the kinds of
+    /// thing the fact is.
+    ///
+    /// The kinds are matched exactly and they filter before the limit, so
+    /// a filtered answer is not a short one. An empty list filters
+    /// nothing.
+    fn list_in_typed(
+        &self,
+        namespaces: &NamespaceScope,
+        state: Option<&str>,
+        limit: usize,
+        offset: usize,
+        deleted: bool,
+        memory_types: &[String],
     ) -> Result<Vec<Memory>, MnexisError>;
 
     /// List the most recent memories, newest first, limited to `limit`
@@ -222,6 +240,23 @@ pub trait MemoryRepository {
         query: &str,
         limit: usize,
         mode: MatchMode,
+    ) -> Result<Vec<SearchHit>, MnexisError> {
+        self.search_in_typed(namespaces, query, limit, mode, &[])
+    }
+
+    /// Full-text search filtered by a namespace scope AND by the kinds of
+    /// thing the fact is.
+    ///
+    /// The kinds are matched exactly, and they filter before the limit: a
+    /// filter nobody can trust is a filter nobody uses, and a filtered
+    /// answer must not be a short one. An empty list filters nothing.
+    fn search_in_typed(
+        &self,
+        namespaces: &NamespaceScope,
+        query: &str,
+        limit: usize,
+        mode: MatchMode,
+        memory_types: &[String],
     ) -> Result<Vec<SearchHit>, MnexisError>;
 
     // --- sessions and prompts ---

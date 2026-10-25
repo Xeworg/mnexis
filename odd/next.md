@@ -430,11 +430,26 @@ bench asks a knowledge-shaped question ("¿en qué puerto
 escucha?"), while the recurring question is steering-shaped ("¿dónde
 quedamos?"), which is exactly what the typed-memory idea is for.
 
-Two debts are still open: the `memory_type` column, which
-is written but never read, erased by the next save, and filtered by
-nothing (**#55**), and the **re-measurement** of the door, which needs
+Two debts are still open: the **re-measurement** of the door, which needs
 the bench environment (docker + the model provider) and cannot run in
-the sandbox that wrote it.
+the sandbox that wrote it, and the **steering-shaped experiment** that
+the re-measurement has to precede (issue #55): whether a typed priority
+earns its place, measured with the criterion written before the numbers.
+
+**The type axis, honest (#55, part one).** `memory_type` was half-built:
+a free-text column that travelled in every read shape and was filtered
+by nothing, erased by the next save with no error and no repair path.
+It is now a **closed set of seven kinds** — `knowledge`, `decision`,
+`preference`, `procedure`, `project_state`, `episode` and the generic
+`fact` — that the **agent writes** (an attribute the agent writes is
+used; one the engine guesses proposes noise), that never enters the
+identity (the topic key stays title-only), that a save which says nothing
+about preserves, and that `--type` filters the reads by, exactly, in the
+SQL and before the limit. The vocabulary was the human's call: the seven
+kinds, `fact` included, so not a single stored row had to be rewritten.
+
+What is NOT settled: whether a typed priority ever earns its place. That
+is the steering experiment, and it needs the bench environment.
 
 **The identity debt, closed (#58).** The records that predate the
 identity work carried no title at all, so every priced answer named

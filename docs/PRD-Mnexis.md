@@ -123,6 +123,15 @@ La procedencia mínima siempre incluye actor, canal de ingesta y fecha. Puede in
 - `revision`: entero creciente, con historial obligatorio.
 - `idempotency_key`: clave opcional por actor y namespace para reintentos de una escritura.
 
+### Tipos
+
+- `memory_type`: qué clase de cosa es el hecho. El conjunto es **cerrado y chico**, y lo escribe el agente (un atributo que el agente escribe se usa; uno que el motor adivina, no): `knowledge` (un dato del mundo), `decision` (una elección tomada, con su motivo), `preference` (un gusto o una restricción), `procedure` (cómo se hace algo acá), `project_state` (dónde está el proyecto ahora), `episode` (qué pasó, una vez) y `fact` (el genérico: un hecho sin clase más fuerte, que es el default de todo registro y el que ya traen los registros anteriores al eje).
+- La certeza **no** es un tipo: ya tiene dos ejes (`assertion_basis` y el estado `disputed`), y un tercero los duplicaría.
+- El tipo nunca entra en la identidad: el `topic_key` sale del título, y el tipo es un atributo del registro.
+- Un guardado que **no nombra** el tipo conserva el que el registro ya tiene: un hecho tipado ya no baja a `fact` con el siguiente guardado.
+- `--type` (en `search`, `list` y `context`) filtra las lecturas por tipo, con coincidencia exacta: nunca heurística, y nunca antes del límite (una respuesta filtrada no es una respuesta corta).
+- Un tipo fuera del conjunto es un argumento inválido, no un tipo nuevo.
+
 Una coincidencia de `topic_key` devuelve el ID existente y exige actualización explícita; nunca sobrescribe silenciosamente. Repetir una clave de idempotencia con contenido diferente devuelve conflicto. Sin `topic_key`, contenidos similares pueden coexistir; la coincidencia textual no autoriza fusionarlos.
 
 ### Estados de conocimiento

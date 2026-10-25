@@ -56,7 +56,10 @@ pub struct SaveRequest {
     pub title: String,
     pub topic_key: String,
     pub namespace: String,
-    pub memory_type: String,
+    /// The kind of thing the fact is. `None` means the caller did not
+    /// say: a new record gets the default, and a record that already
+    /// has a type keeps it.
+    pub memory_type: Option<String>,
     pub content: String,
     pub actor: String,
     pub channel: String,
@@ -79,6 +82,9 @@ pub struct UpdateRequest {
     pub uuid: String,
     pub expected_revision: i32,
     pub content: Option<String>,
+    /// The kind of thing the fact is. `None` keeps the type the record
+    /// already has.
+    pub memory_type: Option<String>,
     pub state: Option<MemoryState>,
     pub tags: Option<Vec<String>>,
     pub assertion_basis: Option<String>,
@@ -98,6 +104,9 @@ pub struct SupersedeRequest {
 pub struct ListFilter {
     pub namespace: Option<String>,
     pub state: Option<MemoryState>,
+    /// The kinds of thing the fact is the answer is narrowed to. Empty
+    /// filters nothing.
+    pub memory_types: Vec<String>,
     pub limit: usize,
     pub offset: usize,
 }
@@ -107,6 +116,7 @@ impl Default for ListFilter {
         Self {
             namespace: None,
             state: None,
+            memory_types: Vec::new(),
             limit: 100,
             offset: 0,
         }
@@ -228,7 +238,10 @@ impl<R: MemoryRepository> MemoryService<R> {
             keywords: requested_keywords,
             topic_key: req.topic_key.clone(),
             namespace: req.namespace.clone(),
-            memory_type: req.memory_type.clone(),
+            memory_type: crate::domain::memory_type::resolve_memory_type(
+                req.memory_type.as_deref(),
+                None,
+            )?,
             content: req.content.clone(),
             state: req.state,
             revision: 1,
@@ -315,21 +328,31 @@ impl<R: MemoryRepository> MemoryService<R> {
     // --- list ---
     pub fn list(&self, filter: ListFilter) -> Result<Vec<Memory>, MnexisError> {
         let state_str = filter.state.as_ref().map(|s| s.as_str());
+        for memory_type in &filter.memory_types {
+            crate::domain::memory_type::validate_memory_type(memory_type)?;
+        }
         match filter.namespace.as_deref() {
             Some(ns) => {
                 self.scope.authorize_read(ns)?;
-                self.repo
-                    .list(Some(ns), state_str, filter.limit, filter.offset)
+                self.repo.list_in_typed(
+                    &crate::domain::scope::NamespaceScope::Only(vec![ns.to_string()]),
+                    state_str,
+                    filter.limit,
+                    filter.offset,
+                    false,
+                    &filter.memory_types,
+                )
             }
             // Without a namespace the read covers every namespace the
             // scope reads: all of them when the reads are open, only its
             // read namespaces when they are scoped.
-            None => self.repo.list_in(
+            None => self.repo.list_in_typed(
                 &self.scope.read_scope(),
                 state_str,
                 filter.limit,
                 filter.offset,
                 false,
+                &filter.memory_types,
             ),
         }
     }
@@ -411,6 +434,12 @@ impl<R: MemoryRepository> MemoryService<R> {
         if let Some(content) = req.content.as_ref() {
             validate_content(content, self.config.max_content_bytes)?;
             updated.content = content.clone();
+        }
+        if let Some(requested) = req.memory_type.as_deref() {
+            updated.memory_type = crate::domain::memory_type::resolve_memory_type(
+                Some(requested),
+                Some(current.memory_type.as_str()),
+            )?;
         }
         if let Some(new_state) = req.state {
             updated.state = new_state;
@@ -637,9 +666,13 @@ impl<R: MemoryRepository> MemoryService<R> {
         // default; the pipeline's eligibility pass re-enforces the
         // same invariant as defence in depth).
         let max_items = req.max_items.unwrap_or(20);
-        let hits = self
-            .repo
-            .search(&req.task, Some(&ns), max_items, req.match_mode)?;
+        let hits = self.repo.search_in_typed(
+            &crate::domain::scope::NamespaceScope::Only(vec![ns.clone()]),
+            &req.task,
+            max_items,
+            req.match_mode,
+            &req.search.memory_types,
+        )?;
 
         // Steps 3+4: revalidate the canonical record and pair the
         // (hit, memory) tuples the pipeline consumes.
@@ -1046,7 +1079,13 @@ impl<R: MemoryRepository> MemoryService<R> {
             keywords,
             topic_key: current.topic_key.clone(),
             namespace: current.namespace.clone(),
-            memory_type: req.memory_type.clone(),
+            // A re-save that says nothing about the type keeps the one the
+            // record has: a typed fact used to be demoted to the default by
+            // the next save, with no error and no repair path.
+            memory_type: crate::domain::memory_type::resolve_memory_type(
+                req.memory_type.as_deref(),
+                Some(current.memory_type.as_str()),
+            )?,
             content: req.content.clone(),
             // An upsert is not a resurrection: the state the record has is
             // the state it keeps.
@@ -1125,17 +1164,46 @@ impl<R: MemoryRepository> MemoryService<R> {
         limit: usize,
         mode: MatchMode,
     ) -> Result<Vec<SearchHit>, MnexisError> {
+        self.search_typed(query, namespace, limit, mode, &[])
+    }
+
+    /// The search, narrowed to the kinds of thing the fact is.
+    ///
+    /// The kinds are the closed set the domain defines, and they are
+    /// matched exactly. An empty list searches every kind: the filter
+    /// narrows an answer, it never hides one.
+    pub fn search_typed(
+        &self,
+        query: &str,
+        namespace: Option<&str>,
+        limit: usize,
+        mode: MatchMode,
+        memory_types: &[String],
+    ) -> Result<Vec<SearchHit>, MnexisError> {
         validate_query(query, self.config.max_query_bytes)?;
+        for memory_type in memory_types {
+            crate::domain::memory_type::validate_memory_type(memory_type)?;
+        }
         match namespace {
             Some(ns) => {
                 self.scope.authorize_read(ns)?;
-                self.repo.search(query, Some(ns), limit, mode)
+                self.repo.search_in_typed(
+                    &crate::domain::scope::NamespaceScope::Only(vec![ns.to_string()]),
+                    query,
+                    limit,
+                    mode,
+                    memory_types,
+                )
             }
             // The cross-namespace recall is bounded by the scope: open
             // reads reach every project, scoped reads only their own.
-            None => self
-                .repo
-                .search_in(&self.scope.read_scope(), query, limit, mode),
+            None => self.repo.search_in_typed(
+                &self.scope.read_scope(),
+                query,
+                limit,
+                mode,
+                memory_types,
+            ),
         }
     }
 }

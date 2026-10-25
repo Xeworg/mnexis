@@ -43,7 +43,8 @@ pub struct SaveArgs {
     /// Namespace (default: "default")
     #[serde(default)]
     pub namespace: Option<String>,
-    /// Memory type (default: "fact")
+    /// Memory type: knowledge, decision, preference, procedure,
+    /// project_state, episode or fact. The default is the generic kind.
     #[serde(default)]
     pub memory_type: Option<String>,
     /// Assertion basis (default: "user_stated")
@@ -94,6 +95,11 @@ pub struct ListArgs {
     /// Namespace filter (default: all authorised namespaces)
     #[serde(default)]
     pub namespace: Option<String>,
+    /// Only the memories of these kinds (comma separated): knowledge,
+    /// decision, preference, procedure, project_state, episode, fact.
+    /// The default is every kind.
+    #[serde(default)]
+    pub memory_type: Option<String>,
     /// State filter (default: all states)
     #[serde(default)]
     pub state: Option<String>,
@@ -236,12 +242,27 @@ pub struct SearchArgs {
     /// Namespace to search within (default: all authorised).
     #[serde(default)]
     pub namespace: Option<String>,
+    /// Only the memories of these kinds (comma separated): knowledge,
+    /// decision, preference, procedure, project_state, episode, fact.
+    /// The default is every kind.
+    #[serde(default)]
+    pub memory_type: Option<String>,
     /// Max results (default 20, clamped to 100).
     #[serde(default = "default_limit")]
     pub limit: usize,
     /// How the query's words are matched: any (default) | all | phrase.
     #[serde(default)]
     pub match_mode: Option<String>,
+}
+
+/// The kinds a read is narrowed to, parsed from the tool's argument.
+///
+/// Nothing named means no filter: the read reaches every kind.
+pub fn parse_memory_types(value: Option<&str>) -> Result<Vec<String>, MnexisError> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => crate::domain::memory_type::parse_memory_types(value),
+        None => Ok(Vec::new()),
+    }
 }
 
 // ---------------------------------------------------------------------------

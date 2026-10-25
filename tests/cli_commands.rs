@@ -134,7 +134,9 @@ fn stdout_json(out: &Output) -> serde_json::Value {
 
 /// Save a memory and return its uuid (from the JSON envelope).
 fn save(profile: &Profile, content: &str, extra: &[&str]) -> String {
-    let mut args = vec!["save", "--type", "fact"];
+    // The type is optional now: the engine decides when the caller does
+    // not say (and the default is the generic kind).
+    let mut args = vec!["save"];
     args.extend_from_slice(extra);
     args.push(content);
     let out = profile.run_silent(&args);
@@ -197,9 +199,7 @@ fn a_title_with_a_line_break_keeps_the_timeline_header_on_one_line() {
         &["--namespace", "proyecto-a", "--title", "titulo\ncon salto"],
     );
 
-    let out = p
-        .run_text(&["timeline", &uuid])
-        .unwrap_status("timeline");
+    let out = p.run_text(&["timeline", &uuid]).unwrap_status("timeline");
     let text = String::from_utf8_lossy(&out.stdout);
     let header = text.lines().next().expect("a header line");
     assert!(
@@ -284,6 +284,189 @@ fn save_show_round_trip() {
     assert_eq!(json["memory_type"], "fact");
     assert_eq!(json["state"], "active");
     assert_eq!(json["revision"], 1);
+}
+
+// --- the type of a memory (the closed set, #55) ---
+
+#[test]
+fn a_re_save_keeps_the_type_the_record_already_has() {
+    let p = Profile::new();
+    // A typed fact.
+    let saved = p
+        .run_silent(&[
+            "save",
+            "--type",
+            "decision",
+            "--title",
+            "el deploy",
+            "el deploy va a staging-eu",
+        ])
+        .unwrap_status("save a typed fact");
+    let saved_uuid = stdout_json(&saved)["uuid"]
+        .as_str()
+        .expect("uuid")
+        .to_string();
+
+    // The same fact, saved again without naming a type.
+    let again = p
+        .run_silent(&["save", "--title", "el deploy", "el deploy va a staging-eu"])
+        .unwrap_status("re-save the same fact");
+    let json = stdout_json(&again);
+    assert_eq!(
+        json["uuid"], saved_uuid,
+        "the re-save updated the same record, it did not create a second: {json}"
+    );
+
+    // The type is still there: a save that says nothing about the type
+    // does not demote a typed fact to the default.
+    let listed = stdout_json(&p.run_silent(&["list"]).unwrap_status("list"));
+    let items = listed["items"].as_array().expect("items array");
+    assert_eq!(
+        items[0]["memory_type"], "decision",
+        "the type survived the re-save: {listed}"
+    );
+}
+
+#[test]
+fn a_type_outside_the_closed_set_is_refused() {
+    let p = Profile::new();
+    let out = p.run_silent(&["save", "--type", "nota", "un hecho"]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a type nobody can filter is an invalid argument: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unknown memory type 'nota'"),
+        "the error names the value: {stderr}"
+    );
+}
+
+#[test]
+fn a_fact_is_the_default_when_nothing_says_otherwise() {
+    let p = Profile::new();
+    save(&p, "un hecho cualquiera", &[]);
+    let listed = stdout_json(&p.run_silent(&["list"]).unwrap_status("list"));
+    let items = listed["items"].as_array().expect("items array");
+    assert_eq!(
+        items[0]["memory_type"], "fact",
+        "a record with no type has the default: {listed}"
+    );
+}
+
+#[test]
+fn a_search_can_be_narrowed_to_the_kinds_of_thing_the_fact_is() {
+    let p = Profile::new();
+    save(
+        &p,
+        "el puerto del servicio es 8081",
+        &["--type", "decision"],
+    );
+    save(&p, "el puerto del cliente es 9090", &["--type", "fact"]);
+
+    let out = p
+        .run_silent(&["search", "--type", "decision", "puerto"])
+        .unwrap_status("search --type");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 1, "only the decision survives: {json}");
+    assert_eq!(
+        json["items"][0]["memory_type"], "decision",
+        "and the answer says what it kept: {json}"
+    );
+}
+
+#[test]
+fn a_list_can_be_narrowed_to_the_kinds_of_thing_the_fact_is() {
+    let p = Profile::new();
+    save(
+        &p,
+        "el puerto del servicio es 8081",
+        &["--type", "decision"],
+    );
+    save(&p, "el puerto del cliente es 9090", &["--type", "fact"]);
+
+    let out = p
+        .run_silent(&["list", "--type", "decision"])
+        .unwrap_status("list --type");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 1, "only the decision survives: {json}");
+    assert_eq!(
+        json["items"][0]["memory_type"], "decision",
+        "and the answer says what it kept: {json}"
+    );
+}
+
+#[test]
+fn a_filter_with_a_kind_outside_the_closed_set_is_refused() {
+    let p = Profile::new();
+    save(&p, "un hecho cualquiera", &[]);
+    for command in [
+        vec!["search", "--type", "nota", "hecho"],
+        vec!["list", "--type", "nota"],
+    ] {
+        let out = p.run_silent(&command);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "a kind nobody can filter is an invalid argument: {command:?}"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("unknown memory type 'nota'"),
+            "the error names the value: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_context_can_be_narrowed_to_the_kinds_of_thing_the_fact_is() {
+    let p = Profile::new();
+    save(
+        &p,
+        "el puerto del servicio es 8081",
+        &["--type", "decision"],
+    );
+    save(&p, "el puerto del cliente es 9090", &["--type", "fact"]);
+
+    let out = p
+        .run_silent(&[
+            "context",
+            "--type",
+            "decision",
+            "--token-budget",
+            "1024",
+            "puerto",
+        ])
+        .unwrap_status("context --type");
+    let json = stdout_json(&out);
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "only the decision survives: {json}");
+    assert_eq!(
+        items[0]["memory_type"], "decision",
+        "and the answer says what it kept: {json}"
+    );
+}
+
+#[test]
+fn a_filter_that_names_nothing_leaves_the_read_where_it_was() {
+    let p = Profile::new();
+    save(
+        &p,
+        "el puerto del servicio es 8081",
+        &["--type", "decision"],
+    );
+    save(&p, "el puerto del cliente es 9090", &["--type", "fact"]);
+
+    let out = p
+        .run_silent(&["search", "puerto"])
+        .unwrap_status("search without a filter");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["count"], 2,
+        "the filter narrows, it never hides: {json}"
+    );
 }
 
 #[test]

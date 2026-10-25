@@ -13,7 +13,7 @@
         "namespace": { "type": "string", "minLength": 1 },
         "token_budget": { "type": "integer", "minimum": 1 },
         "tokenizer_id": { "type": "string", "minLength": 1 },
-        "memory_types": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "memory_types": { "type": "array", "items": { "type": "string", "enum": ["knowledge", "decision", "preference", "procedure", "project_state", "episode", "fact"] }, "uniqueItems": true },
         "max_items": { "type": "integer", "minimum": 1, "maximum": 20 },
         "budget_enforcement": { "enum": ["exact", "estimated"] }
       }

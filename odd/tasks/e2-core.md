@@ -1224,7 +1224,7 @@ The proposal defines 20 fields on `Memory`. Confirm:
   Alternatives: a single `provenance` JSONB column, or a separate `provenance` table.
 - `assertion_basis` uses an enumerated CHECK constraint (`user_stated | observed | inferred |
   imported`). Confirm this covers all cases or suggest additions.
-- `memory_type` is a free-text string with a default of `'fact'`; the T12 contract uses
+- `memory_type` was a free-text string with a default of `'fact'` (it became a closed set of seven kinds in #55); the T12 contract uses
   strings like `"decision"`, `"fact"`, `"preference"`. Confirm this is sufficient or whether
   an enumerated set is preferred.
 

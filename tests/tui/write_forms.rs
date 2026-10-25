@@ -33,7 +33,7 @@ fn save_tagged(profile: &mut Profile, ns: &str, content: &str, tags: Vec<String>
             title: String::new(),
             topic_key: String::new(),
             namespace: ns.to_string(),
-            memory_type: "fact".to_string(),
+            memory_type: Some("fact".to_string()),
             content: content.to_string(),
             actor: "user".to_string(),
             channel: "cli".to_string(),
@@ -55,6 +55,8 @@ fn list(profile: &Profile, ns: &str) -> Vec<mnexis_core::domain::memory::Memory>
     profile
         .service_ref()
         .list(ListFilter {
+            memory_types: Vec::new(),
+
             namespace: Some(ns.to_string()),
             state: None,
             limit: 100,
@@ -284,6 +286,8 @@ fn update_form_surfaces_revision_conflict_with_the_revision_involved() {
     // Another writer moves the memory to revision 2 after the form loaded.
     p.service_mut()
         .update(UpdateRequest {
+            memory_type: None,
+
             uuid: uuid.clone(),
             expected_revision: 1,
             content: Some("elsewhere".to_string()),

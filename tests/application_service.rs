@@ -43,7 +43,7 @@ fn save_req(uuid: &str, content: &str) -> SaveRequest {
         title: String::new(),
         topic_key: format!("topic.{uuid}"),
         namespace: "proyecto-a".into(),
-        memory_type: "fact".into(),
+        memory_type: Some("fact".into()),
         content: content.into(),
         actor: "user".into(),
         channel: "cli".into(),
@@ -158,6 +158,8 @@ fn update_increments_revision_and_writes_history() {
     let (mut svc, _dir) = make_service();
     svc.save(save_req("uuid-1", "original")).unwrap();
     let req = UpdateRequest {
+        memory_type: None,
+
         uuid: "uuid-1".into(),
         expected_revision: 1,
         content: Some("updated".into()),
@@ -180,6 +182,8 @@ fn update_with_wrong_revision_returns_conflict() {
     let (mut svc, _dir) = make_service();
     svc.save(save_req("uuid-1", "original")).unwrap();
     let req = UpdateRequest {
+        memory_type: None,
+
         uuid: "uuid-1".into(),
         expected_revision: 99,
         content: Some("updated".into()),
@@ -289,6 +293,8 @@ fn deleted_reads_expose_soft_deleted_records_for_restore() {
     );
     let live = svc
         .list(ListFilter {
+            memory_types: Vec::new(),
+
             namespace: Some("proyecto-a".into()),
             ..Default::default()
         })
@@ -447,6 +453,8 @@ fn supersede_rejects_a_stale_expected_new_revision_and_writes_nothing() {
     svc.save(save_req("new-1", "newer")).unwrap();
     // A second writer moves the newer side to revision 2.
     svc.update(UpdateRequest {
+        memory_type: None,
+
         uuid: "new-1".into(),
         expected_revision: 1,
         content: Some("newer v2".into()),
@@ -1136,6 +1144,8 @@ fn a_save_with_words_stores_them() {
     );
     let listed = svc
         .list(ListFilter {
+            memory_types: Vec::new(),
+
             namespace: Some("proyecto-a".into()),
             ..ListFilter::default()
         })
@@ -1375,6 +1385,8 @@ fn an_update_keeps_the_words_of_the_record() {
     .unwrap();
     let updated = svc
         .update(UpdateRequest {
+            memory_type: None,
+
             uuid: "uuid-1".into(),
             expected_revision: 1,
             content: Some("port = 9090".into()),

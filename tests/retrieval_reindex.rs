@@ -54,6 +54,7 @@ fn reindex_rebuilds_fts5_from_canonical_data() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(empty)");
@@ -76,6 +77,7 @@ fn reindex_rebuilds_fts5_from_canonical_data() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -110,6 +112,7 @@ fn reindex_handles_dropped_fts5_table() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -152,6 +155,7 @@ fn reindex_is_idempotent() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -181,6 +185,7 @@ fn search_ids(conn: &Connection, query: &str) -> Vec<String> {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("the query must run")

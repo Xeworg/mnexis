@@ -92,6 +92,17 @@ impl WorkspaceGuard {
     }
 }
 
+/// The kinds a filter names, parsed from the `--type` argument.
+///
+/// Nothing named means no filter: the read reaches every kind, exactly as
+/// it did before the axis existed.
+pub fn parse_memory_types(value: Option<&str>) -> Result<Vec<String>, MnexisError> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => crate::domain::memory_type::parse_memory_types(value),
+        None => Ok(Vec::new()),
+    }
+}
+
 pub fn parse_state(value: &str) -> Result<MemoryState, MnexisError> {
     MemoryState::from_db(value)
 }
@@ -144,7 +155,9 @@ pub fn save_request(
         replace_keywords: false,
         topic_key: topic_key.unwrap_or_default(),
         namespace,
-        memory_type: memory_type.unwrap_or_else(|| "fact".to_string()),
+        // None means "not specified": a new record gets the default type
+        // and a record that already has one keeps it.
+        memory_type,
         content,
         actor: "user".to_string(),
         channel: channel.to_string(),
@@ -262,6 +275,7 @@ pub fn suggest_topic_key(
 pub fn update_request(
     uuid: String,
     content: Option<String>,
+    memory_type: Option<String>,
     state: Option<String>,
     tags: Option<String>,
     basis: Option<String>,
@@ -272,6 +286,7 @@ pub fn update_request(
         uuid,
         expected_revision,
         content,
+        memory_type,
         state: state.as_deref().map(parse_state).transpose()?,
         tags: Some(parse_tags(tags.as_ref())),
         assertion_basis: basis,
@@ -285,6 +300,7 @@ pub fn update(
     profile: &mut Profile,
     uuid: String,
     content: Option<String>,
+    memory_type: Option<String>,
     state: Option<String>,
     tags: Option<String>,
     basis: Option<String>,
@@ -292,7 +308,16 @@ pub fn update(
     reason: String,
 ) -> Result<CommandOutcome, MnexisError> {
     WorkspaceGuard::resolve(profile)?.authorize_memory(profile, &uuid)?;
-    let req = update_request(uuid, content, state, tags, basis, expected_revision, reason)?;
+    let req = update_request(
+        uuid,
+        content,
+        memory_type,
+        state,
+        tags,
+        basis,
+        expected_revision,
+        reason,
+    )?;
     let updated = profile.service_mut().update(req)?;
     Ok(CommandOutcome::new(
         json!({
@@ -378,6 +403,7 @@ pub fn search(
     profile: &mut Profile,
     query: String,
     namespace: Option<String>,
+    memory_type: Option<String>,
     limit: usize,
     explain_hits: bool,
     match_mode: &str,
@@ -387,10 +413,16 @@ pub fn search(
     // The scope this read is bounded by: the answer declares it, so a short
     // answer never reads as "there are no memories" (read-scope-disclosure S1).
     let read_scope = profile.service_ref().scope().read_scope_mode();
+    // The kinds the answer is narrowed to, when the caller named any.
+    let memory_types = parse_memory_types(memory_type.as_deref())?;
     // service.search validates the query and authorizes the namespace.
-    let hits = profile
-        .service_ref()
-        .search(&query, namespace.as_deref(), limit, mode)?;
+    let hits = profile.service_ref().search_typed(
+        &query,
+        namespace.as_deref(),
+        limit,
+        mode,
+        &memory_types,
+    )?;
     // Which of the hits replaced which.
     let hit_uuids: Vec<String> = hits.iter().map(|h| h.uuid.clone()).collect();
     let relations = profile.service_ref().relations_between(&hit_uuids)?;
@@ -603,6 +635,7 @@ fn relations_of(profile: &mut Profile, memories: &[Memory]) -> Vec<serde_json::V
 pub fn list(
     profile: &mut Profile,
     namespace: Option<String>,
+    memory_type: Option<String>,
     state: Option<String>,
     limit: usize,
     offset: usize,
@@ -612,6 +645,7 @@ pub fn list(
     let filter = ListFilter {
         namespace,
         state: state.as_deref().map(parse_state).transpose()?,
+        memory_types: parse_memory_types(memory_type.as_deref())?,
         limit: clamp_limit(limit),
         offset,
     };
@@ -1246,6 +1280,7 @@ fn write_output(path: Option<&std::path::Path>, body: &str) -> Result<(), Mnexis
 pub fn context(
     profile: &Profile,
     namespace: Option<String>,
+    memory_type: Option<String>,
     token_budget: i64,
     tokenizer_id: Option<String>,
     max_items: usize,
@@ -1291,7 +1326,10 @@ pub fn context(
         tokenizer_id,
         max_items: Some(max_items),
         budget_mode: mode,
-        search: SearchFilter::default(),
+        search: SearchFilter {
+            memory_types: parse_memory_types(memory_type.as_deref())?,
+            ..SearchFilter::default()
+        },
         now: crate::cli::profile::now_rfc3339(),
     };
     let read_scope = profile.service_ref().scope().read_scope_mode();

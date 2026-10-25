@@ -71,7 +71,7 @@ fn generate_corpus(n: usize) -> Vec<SaveRequest> {
                 replace_keywords: false,
                 topic_key: format!("mnx.topic.{i:06}"),
                 namespace: namespaces[i % namespaces.len()].to_string(),
-                memory_type: "fact".to_string(),
+                memory_type: Some("fact".to_string()),
                 content: format!("graph mnx{i:06} algorithms for distributed systems"),
                 actor: "user".to_string(),
                 channel: "cli".to_string(),
@@ -181,6 +181,7 @@ fn run_evaluation(n_memories: usize, db_path: &Path) -> Result<(), Box<dyn std::
             StateFilter::default(),
             DeletedFilter::default(),
             None,
+            &[],
             5,
         )
         .map_err(|e| map_err("search cold", e))?;
@@ -204,6 +205,7 @@ fn run_evaluation(n_memories: usize, db_path: &Path) -> Result<(), Box<dyn std::
             StateFilter::default(),
             DeletedFilter::default(),
             None,
+            &[],
             5,
         )
         .map_err(|e| map_err("search warm", e))?;
@@ -253,6 +255,7 @@ fn run_evaluation(n_memories: usize, db_path: &Path) -> Result<(), Box<dyn std::
             StateFilter::default(),
             DeletedFilter::default(),
             None,
+            &[],
             5,
         )
         .map_err(|e| map_err("search noans", e))?;

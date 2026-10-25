@@ -35,7 +35,7 @@ fn save_tagged(profile: &mut Profile, ns: &str, content: &str, tags: Vec<String>
             title: String::new(),
             topic_key: String::new(),
             namespace: ns.to_string(),
-            memory_type: "fact".to_string(),
+            memory_type: Some("fact".to_string()),
             content: content.to_string(),
             actor: "user".to_string(),
             channel: "cli".to_string(),
@@ -161,6 +161,8 @@ fn supersede_conflict_names_the_revision_on_disk_and_reload_recovers() {
     // Another writer moves the older memory to revision 2 after the form loaded.
     p.service_mut()
         .update(UpdateRequest {
+            memory_type: None,
+
             uuid: older.clone(),
             expected_revision: 1,
             content: Some("elsewhere".to_string()),
@@ -227,6 +229,8 @@ fn supersede_conflict_on_the_newer_side_is_surfaced_and_reload_recovers() {
     // Another writer moves the newer memory to revision 2 after the pick.
     p.service_mut()
         .update(UpdateRequest {
+            memory_type: None,
+
             uuid: newer.clone(),
             expected_revision: 1,
             content: Some("elsewhere".to_string()),
