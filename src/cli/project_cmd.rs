@@ -9,10 +9,35 @@
 
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 use crate::application::workspace::{canonical_workspace_key, current_workspace};
 use crate::cli::output::CommandOutcome;
 use crate::config::projects::{BindOutcome, ProjectRegistry, registry_path};
 use crate::domain::error::MnexisError;
+
+/// One recorded binding, as the JSON contract shows it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProjectBindingView {
+    /// The canonical workspace key.
+    pub key: String,
+    /// The namespace the workspace writes into.
+    pub namespace: String,
+    /// Where the workspace is, when it was recorded.
+    pub path: Option<String>,
+}
+
+/// `mnexis project list` — the stable JSON contract: the recorded
+/// bindings and the canonical key of the current workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProjectList {
+    pub bindings: Vec<ProjectBindingView>,
+    /// The canonical key of the workspace this command runs in (empty when
+    /// it runs outside one).
+    pub current_key: String,
+}
 
 /// `mnexis project bind <ns> --key <key> [--path <path>]` — record or
 /// update the binding for a workspace key.
@@ -97,17 +122,18 @@ pub fn list(data_dir: PathBuf) -> Result<CommandOutcome, MnexisError> {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let json = serde_json::json!({
-        "bindings": canonical
+    let json = serde_json::to_value(ProjectList {
+        bindings: canonical
             .iter()
-            .map(|b| serde_json::json!({
-                "key": b.key,
-                "namespace": b.namespace,
-                "path": b.path,
-            }))
-            .collect::<Vec<_>>(),
-        "current_key": current_key,
-    });
+            .map(|b| ProjectBindingView {
+                key: b.key.clone(),
+                namespace: b.namespace.clone(),
+                path: b.path.clone(),
+            })
+            .collect(),
+        current_key,
+    })
+    .map_err(|e| MnexisError::busy(format!("serialize project list: {e}")))?;
     Ok(CommandOutcome::new(json, text))
 }
 

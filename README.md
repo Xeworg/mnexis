@@ -191,12 +191,14 @@ prompts           list or search what the user said
 status            where this workspace may write, and what is already there
 show              show a memory (current or specific revision)
 history           show revision history
+timeline          the life of one memory: identity, events, supersede links
 delete            soft-delete a memory
 restore           restore a soft-deleted memory
 purge             hard-delete soft-deleted memories (dry-run by default)
 reindex           rebuild the FTS5 index from canonical data
 doctor            health checks with a stable machine contract
 doctor repair     plan / dry-run / apply — repairs what it can fix
+stats             what every namespace holds, and the totals
 upgrade           check for a newer release and install it
 config show       print effective configuration and scope
 config allow-namespace

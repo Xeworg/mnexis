@@ -127,7 +127,12 @@ machine envelope (`status`, `summary`, `checks[].check_id`, `severity`,
 `doctor repair --plan|--dry-run|--apply` for seven specific codes. Small, and
 it is what an operator needs when something goes wrong.
 
-### 3. C4 — the operational commands
+### 3. C4 — the operational commands — **delivered** (branch `feat/operational-commands`)
+
+`mnexis stats` (what every namespace holds, and the totals), `mnexis timeline
+<uuid>` (one memory's life: identity, the revisions the store records, and
+its supersede links in both directions), and `project list --json` as a typed
+contract. Read-only, no TUI needed. Awaiting PR + merge.
 
 `mnexis stats`, `mnexis timeline <uuid>`, `mnexis projects list`. Inspecting
 a namespace without opening the TUI. Small.

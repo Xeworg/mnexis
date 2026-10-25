@@ -39,8 +39,8 @@ Branch: `feat/operational-commands`.
 
 | ID | Spec | Route | Commit |
 | --- | --- | --- | --- |
-| T1 | S1 | `stats` command (new `src/cli/stats_cmd.rs`, doctor-pattern connection), tests RED→GREEN | |
-| T2 | S2 | `timeline <uuid>` (service wrapper over `history` + `links_for`, NOT_FOUND), tests | |
+| T1 | S1 | `stats` command (new `src/cli/stats_cmd.rs`, doctor-pattern connection), tests RED→GREEN | `70c94ff` |
+| T2 | S2 | `timeline <uuid>` (service wrapper over `history` + `links_for`, NOT_FOUND), tests | `3d1071e` |
 | T3 | S3 + S4 | `project list --json` typed contract + pinned field test; docs, board, issue + PR | |
 
 ## Log
