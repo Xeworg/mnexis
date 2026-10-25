@@ -117,7 +117,7 @@ pub struct SessionStartArgs {
     /// Namespace (default: the profile's default namespace).
     #[serde(default)]
     pub namespace: Option<String>,
-    /// Where the session runs (informational).
+    /// Where the session runs (its working context is recorded from it).
     #[serde(default)]
     pub directory: Option<String>,
 }
