@@ -16,10 +16,14 @@ Branch: `feat/operational-commands`.
   JSON (snake_case, typed struct) + a compact text table. Read-only, its own
   connection (the doctor pattern).
 - **S2** — `mnexis timeline <uuid>`: one memory's whole life in one answer —
-  its identity (title, topic key, namespace, type, current state), its
-  revision events in order (from `memory_history`), and its supersede
-  relations in both directions (from `memory_links`, with reason and date).
-  An unknown uuid is NOT_FOUND (exit 3), not an empty list.
+  its identity (title, topic key, namespace, type, current state, created /
+  updated / deleted timestamps), the revision events the store **records**
+  (`memory_history` — the revisions of `update`, oldest first), and its
+  supersede relations in both directions (from `memory_links`, with reason
+  and date). The store records no history row for a save, a supersede or a
+  soft-delete, so the timeline does not invent one: it reports what is
+  there. An unknown uuid is NOT_FOUND (exit 3), not an empty list. A
+  soft-deleted memory is readable — the deletion is part of its life.
 - **S3** — Comparison report §5 item 9, verbatim: "`mnexis project list
   --json` as a stable contract". The command exists (`project list`, the
   registry bindings); its JSON becomes a typed struct with pinned field
@@ -46,3 +50,12 @@ Branch: `feat/operational-commands`.
 - **L2** (2026-10-24) — scope source: `tmp/bench/report.md` §5 item 9 sizes
   this S; the board condensed it. Delivery follows the repo's new policy:
   one issue per PR, one `type:*` label.
+- **L3** (2026-10-24) — S2 corrected after reading the store: the history
+  table only receives a row on `update` (the save, the supersede and the
+  soft-delete write no `memory_history` row — verified: `events` came back
+  empty for all three). The timeline therefore reports the life the store
+  records and does not invent the rest: identity and timestamps from the
+  record, revisions from `memory_history`, supersedes from `memory_links`
+  (with their date and reason). Writing history rows for save/supersede/
+  delete would change what the store writes — a different feature, with
+  data-write risk, not this one.

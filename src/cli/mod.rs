@@ -12,6 +12,7 @@ pub mod profile;
 pub mod project_cmd;
 pub mod stats_cmd;
 pub mod status_cmd;
+pub mod timeline_cmd;
 pub mod update_cmd;
 
 use clap::{Parser, Subcommand};
@@ -289,6 +290,12 @@ pub enum Command {
         uuid: String,
         #[arg(long)]
         limit: Option<usize>,
+    },
+
+    /// The life of one memory: identity, events, supersede links
+    Timeline {
+        /// The memory's uuid
+        uuid: String,
     },
 
     /// Soft-delete a memory (prompts unless --force)
@@ -723,6 +730,10 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
         Command::History { uuid, limit } => {
             let mut profile = Profile::open(data_dir)?;
             commands::history(&mut profile, uuid.clone(), *limit)
+        }
+        Command::Timeline { uuid } => {
+            let mut profile = Profile::open(data_dir)?;
+            timeline_cmd::timeline(&mut profile, uuid.clone())
         }
         Command::Delete {
             force,

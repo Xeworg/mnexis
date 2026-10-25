@@ -179,6 +179,16 @@ pub struct MemoryHistory {
     pub changed_at: String,
 }
 
+/// The whole life of one memory in one answer: its identity, its revision
+/// events (oldest first), and its supersede links. Built by the service for
+/// `mnexis timeline`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryTimeline {
+    pub memory: Memory,
+    pub events: Vec<MemoryHistory>,
+    pub links: Vec<MemoryLink>,
+}
+
 /// A memory link. Maps to `memory_links`. MVP: supersedes only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryLink {

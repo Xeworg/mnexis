@@ -8,7 +8,9 @@ use std::hash::{Hash, Hasher};
 use crate::application::io::{ConflictPolicy, ImportDecision, LocalIndex};
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::{IdempotencyKey, IdempotencyRecord};
-use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
+use crate::domain::memory::{
+    Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag, MemoryTimeline,
+};
 use crate::domain::query::MatchMode;
 use crate::domain::repository::MemoryRepository;
 use crate::domain::scope::{AccessScope, NamespaceScope, Operation};
@@ -453,6 +455,24 @@ impl<R: MemoryRepository> MemoryService<R> {
             .ok_or_else(|| MnexisError::not_found(format!("memory:{}", uuid)))?;
         self.scope.authorize_read(&mem.namespace)?;
         self.repo.history(uuid)
+    }
+
+    // --- timeline (the life of one memory) ---
+    /// The whole life of one memory in one answer: identity, revision
+    /// events (oldest first), and its supersede links. Unlike `history`, a
+    /// soft-deleted memory is readable here — the deletion is part of its
+    /// life. Scope authorization matches every other read.
+    pub fn timeline(&self, uuid: &str) -> Result<MemoryTimeline, MnexisError> {
+        let memory = self
+            .get_including_deleted(uuid)?
+            .ok_or_else(|| MnexisError::not_found(format!("memory:{uuid}")))?;
+        let events = self.repo.history(uuid)?;
+        let links = self.repo.links_for(uuid)?;
+        Ok(MemoryTimeline {
+            memory,
+            events,
+            links,
+        })
     }
 
     // --- links (supersession chain) ---
