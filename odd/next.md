@@ -49,6 +49,9 @@ what every decision comes from. The artifacts are in `tmp/bench/` (gitignored
   **criterion written before the numbers**, ten runs per arm.
 - `tmp/bench/recheck-report.md` — the re-comparison: the numbers, the verdict
   criterion by criterion, and the two moves that come out of it.
+- `tmp/bench/door-open-measurement.md`, `tmp/bench/door-open-report.md` —
+  the door-open re-measure: the plan and criterion first, then the numbers
+  that falsified the prediction and the cache confound it caught.
 - `tmp/bench/conflict-measurement.md` — C2 measured: a conflicts layer would
   change nothing; the topic key is where the cost is.
 - `tmp/bench/topic-continuity-measurement.md` — the notice and the refusal,
@@ -306,11 +309,7 @@ README name them. The differential also proved `list` / `list --full` /
 `search` / `status` byte-identical, so the shared projection did not
 move.
 
-**What the merge asks for next**: re-measure the recall phase with the door
-open — the re-comparison measured a closed door (the agent rebuilt the
-recall by hand: 8 tool calls, 4 111 input tokens); with `mnexis_recall`
-exposed the prediction is the engram shape (~2 calls). The harness is
-`tmp/bench/run/run-recheck.sh`.
+**The re-measure ran, and it falsified the prediction** (`door-open-report.md`, 10 runs, criterion written before the numbers): the agent **never opened the recall door** (0/10 `mnexis_recall` calls) — its question is project-shaped ("what does this project know"), not session-shaped, and search answers it directly. What it did adopt, first call, is the **other** new door: `mnexis_workspace`, 9/10 runs. The measured wins are real: tool calls halved (8→4), `mnexis_show` down 58% (45→19), quality 10/10, zero invented values, and **total processed context (input+cacheRead) down 26%** (16 858 vs 22 751). And the measurement caught a defect in the metric itself: the re-comparison's input-only token row (4 111 vs 1 851) is **cache-confounded** — a cold provider cache counts the prefix as input, a warm one as cacheRead; every future comparison reports input+cacheRead. The next product question (not decided): the one-call answer the agent wants is project-shaped — whether `mnexis_workspace` should carry the priced identity+preview of everything the project holds, or the skill should teach `mnexis_recall --previous` as the session-resume move, is a separate feature with its own measurement. Artifacts: `tmp/bench/door-open-{measurement,report}.md`, copy in `/home/xeworg/lab/mnexis-bench/door-open/`.
 
 **And the uncomfortable row, measured again**: offered no memory at all, the
 agent found a durable channel **twice in ten** — once by writing the
