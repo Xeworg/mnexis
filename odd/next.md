@@ -1,7 +1,8 @@
 # The board — what is done, what is open, what comes next
 
 **Last updated:** 2026-10-26 (item 6 in main with #50; the install-order trap
-closed with #52). Read this first in a new session, then the
+closed with #52; the trigger measured — the premise was false, and the road
+moved to the door). Read this first in a new session, then the
 feature document of whatever you pick.
 
 ## Where we are
@@ -319,3 +320,57 @@ agent found a durable channel **twice in ten** — once by writing the
 `AGENTS.md` that pi loads for free, once by discovering the mnexis CLI in the
 image and wiring it up by hand. The competitor is real but unreliable (2 of
 10), and a discoverable engine beats an undiscoverable one.
+
+### 7. The trigger — measured, and the premise was false
+
+The door-open re-measure answered a prompt that **asks** for memory. The
+live host opens a session with a **task**, and there the question was
+open: what makes the agent reach for the project's memory before it
+starts? The competitor's engine does it by injecting a protocol through
+pi's `before_agent_start`; mnexis had no such trigger (issue #54).
+
+**The measurement** (`trigger-measurement.md`, criterion written before the
+numbers; `trigger-report.md`, the numbers): three arms, ten runs each,
+the same image, model, fixture and prompts. The measured phase is a
+**task**, the workspace has no files, and the task carries a trap — the
+request asks to point the deploy at production, the stored decision says
+`staging-eu`.
+
+| arm | trigger fires | keeps the default | median tokens | median tool calls | invented |
+| --- | --- | --- | --- | --- | --- |
+| **A** shipped | **10 / 10** | **10 / 10** | 44 478 | 9 | 0 |
+| **B** protocol block | 9 / 10 | 10 / 10 | 41 055 | 8 | 0 |
+| **C** `before_agent_start` hook | 10 / 10 | 10 / 10 | 45 152 | 8 | 0 |
+
+**The premise was false: the trigger already exists, and it is not the
+hook.** The shipped arm — nothing added — read the memory **before any
+other tool in 10 of 10 runs** and kept the stored decision in 10 of 10.
+The reason is in the integration: pi injects a skill's *description* into
+the system prompt (not its body), and the mnexis skill's description says
+to read the project's memory before changing code. The hook adds a pointer
+for a behaviour that already happens (and costs 2 % more context); the
+protocol block adds a protocol for a behaviour that already happens.
+Criterion (2) — *the hook beats nothing* — fails, so **nothing ships**,
+and #54 closed with its numbers. B3's ghost is finally laid down: it was
+killed by a measurement that asked the wrong question; this one asked the
+live-host question and got the same answer for a better reason.
+
+**The gap the numbers expose is the door, not the trigger.** Every run in
+every arm went `mnexis_workspace → bash → list/search → shows`: the
+first answer names the memories, and the agent **rebuilds the answer by
+hand** (median 3 memory calls, 9 tool calls, on six records). The
+budgeted one-call door that would replace the rebuild already exists in
+the CLI — `mnexis context "<task>"` (PRD §9), and the skill tells the
+agent to run it — but it is **not a pi tool** (#59) and it answers from
+*"scope's first read namespace"* instead of the workspace's, without
+declaring which namespace it searched (**#57**). So the road from here is
+#57 → #59 → measure again, and the pointer question only comes after
+those.
+
+Two defects the measurement surfaced along the way: the records that
+predate the identity (#29) still answer with an **empty title**, so the
+priced answer does not say what each fact *is* (**#58**), and the
+honesty check inherited a character-class bug from `score-door.py`
+(`/-a` is the range from "/" to "a", which swallows letters — a commit
+SHA read as an invented value). Artifacts: `tmp/bench/trigger-{measurement,report}.md`,
+copy in `/home/xeworg/lab/mnexis-bench/trigger/`.
