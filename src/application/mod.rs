@@ -5,6 +5,7 @@
 pub mod agents;
 pub mod budget;
 pub mod context;
+pub mod git_state;
 pub mod io;
 pub mod opencode_config;
 pub mod preview;

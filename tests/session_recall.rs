@@ -53,6 +53,17 @@ impl Profile {
             .output()
             .expect("spawn mnexis binary")
     }
+
+    /// The same run without `--json`: the human rendering.
+    fn run_text(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_mnexis"))
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn mnexis binary")
+    }
 }
 
 fn stdout_json(out: &Output) -> serde_json::Value {
@@ -82,7 +93,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// A repository with one commit on `main`, with or without a remote.
 struct Repo {
     #[allow(dead_code)]
-    guard: TempDir,
+    guard: Option<TempDir>,
     path: PathBuf,
 }
 
@@ -100,7 +111,26 @@ impl Repo {
         if let Some(remote) = remote {
             git(&path, &["remote", "add", "origin", remote]);
         }
-        Self { guard, path }
+        Self {
+            guard: Some(guard),
+            path,
+        }
+    }
+
+    /// A repository with a branch on top of `main`, carrying one commit.
+    fn with_branch(remote: &str, branch: &str) -> Self {
+        let repo = Repo::new(Some(remote));
+        git(&repo.path, &["checkout", "-q", "-b", branch]);
+        std::fs::write(repo.path.join("feature.txt"), "work\n").expect("write the work");
+        git(&repo.path, &["add", "."]);
+        git(&repo.path, &["commit", "-q", "-m", "feature"]);
+        repo
+    }
+
+    /// Delete the repository, as if it had never been here (or lived on
+    /// another machine).
+    fn remove(&mut self) {
+        drop(self.guard.take());
     }
 
     fn sha(&self) -> String {
@@ -261,4 +291,211 @@ fn the_anchor_survives_the_store() {
         session["branch_remote"], "git:github.com-xeworg-mnexis",
         "{session}"
     );
+}
+
+// --- the state of the branch, validated when it is read (session-recall S3) ---
+
+// A remote of its own, so the repository of the fixture is never the
+// repository the test binary runs in: the engine looks for the repository the
+// anchor names, and the two must never be confused.
+const REMOTE: &str = "git@github.com:acme/widgets.git";
+
+/// Start a session in the repository and return the answer.
+fn start_session(profile: &Profile, repo: &Repo) -> serde_json::Value {
+    let out = profile.run_silent(&["session", "--id", "01JX", "--directory", repo.dir()]);
+    assert!(
+        out.status.success(),
+        "session failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    stdout_json(&out)
+}
+
+/// The state of the branch, as the recall answers it.
+fn branch_state(profile: &Profile) -> serde_json::Value {
+    let out = profile.run_silent(&["recall", "--session", "01JX"]);
+    assert!(
+        out.status.success(),
+        "recall failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    stdout_json(&out)["branch_state"].clone()
+}
+
+#[test]
+fn a_branch_that_landed_in_the_base_is_merged() {
+    let repo = Repo::with_branch(REMOTE, "feature/x");
+    let profile = Profile::new();
+    start_session(&profile, &repo);
+
+    // The branch lands in the base.
+    git(&repo.path, &["checkout", "-q", "main"]);
+    git(
+        &repo.path,
+        &["merge", "-q", "--no-ff", "-m", "merge", "feature/x"],
+    );
+
+    let state = branch_state(&profile);
+    assert_eq!(state["state"], "merged", "{state}");
+    assert_eq!(state["base"], "main", "the answer names the base: {state}");
+    assert!(
+        state["checked_at"].is_string(),
+        "the answer says when it checked: {state}"
+    );
+    assert_eq!(state["compared"]["kind"], "branch_tip", "{state}");
+}
+
+#[test]
+fn a_branch_that_did_not_land_is_not_merged() {
+    let repo = Repo::with_branch(REMOTE, "feature/x");
+    let profile = Profile::new();
+    start_session(&profile, &repo);
+
+    // The branch stays where it is: the work did not land.
+    let state = branch_state(&profile);
+    assert_eq!(state["state"], "not_merged", "{state}");
+    assert_eq!(state["base"], "main", "{state}");
+    assert_eq!(state["compared"]["kind"], "branch_tip", "{state}");
+}
+
+#[test]
+fn a_branch_that_is_gone_is_compared_by_its_recorded_commit() {
+    let repo = Repo::with_branch(REMOTE, "feature/x");
+    let profile = Profile::new();
+    let session = start_session(&profile, &repo);
+    let recorded = session["branch_sha"].as_str().expect("a recorded commit");
+
+    // The branch is deleted: the recorded commit is the last evidence.
+    git(&repo.path, &["checkout", "-q", "main"]);
+    git(&repo.path, &["branch", "-q", "-D", "feature/x"]);
+
+    let state = branch_state(&profile);
+    assert_eq!(state["compared"]["kind"], "recorded_commit", "{state}");
+    assert_eq!(state["compared"]["commit"], recorded, "{state}");
+    assert_eq!(
+        state["state"], "not_merged",
+        "the recorded commit never reached the base: {state}"
+    );
+}
+
+#[test]
+fn a_repository_that_is_not_here_is_unknown_and_never_not_merged() {
+    let mut repo = Repo::with_branch(REMOTE, "feature/x");
+    let profile = Profile::new();
+    start_session(&profile, &repo);
+    // The repository is gone: nothing can be checked, and the engine must
+    // not turn that into a negative.
+    repo.remove();
+
+    let state = branch_state(&profile);
+    assert_eq!(state["state"], "unknown", "{state}");
+    assert!(
+        state["reason"].is_string(),
+        "the answer says why it could not check: {state}"
+    );
+}
+
+#[test]
+fn a_repository_without_a_base_is_unknown() {
+    let repo = Repo::with_branch(REMOTE, "feature/x");
+    // No `main` and no `master`: there is no base to compare against.
+    git(&repo.path, &["branch", "-q", "-m", "main", "topic"]);
+    let profile = Profile::new();
+    start_session(&profile, &repo);
+
+    let state = branch_state(&profile);
+    assert_eq!(state["state"], "unknown", "{state}");
+    assert!(state["base"].is_null(), "there is no base: {state}");
+}
+
+#[test]
+fn a_session_without_a_repository_has_no_branch_state() {
+    let dir = outside_any_repository();
+    let profile = Profile::new();
+    let out = profile.run_silent(&[
+        "session",
+        "--id",
+        "01JX",
+        "--directory",
+        dir.path().to_str().expect("utf-8 path"),
+    ]);
+    assert!(out.status.success(), "session failed");
+
+    let recall = profile.run_silent(&["recall", "--session", "01JX"]);
+    assert!(recall.status.success(), "recall failed");
+    let json = stdout_json(&recall);
+    assert!(
+        json.as_object()
+            .expect("the recall is an object")
+            .contains_key("branch_state"),
+        "the answer always carries the state: {json}"
+    );
+    assert!(
+        json["branch_state"].is_null(),
+        "there is nothing to validate: {json}"
+    );
+}
+
+/// The one line the human answer spends on the state of the branch.
+fn branch_line(profile: &Profile, session: &str) -> String {
+    let out = profile.run_text(&["recall", "--session", session]);
+    assert!(
+        out.status.success(),
+        "recall failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    text.lines()
+        .find(|line| line.starts_with("branch: "))
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("the answer has no branch line: {text}"))
+}
+
+#[test]
+fn the_human_answer_names_the_state_the_base_and_when_it_checked() {
+    // A branch that landed: the line names the verdict, the base and the
+    // instant of the check, and has nothing else to explain.
+    let repo = Repo::with_branch(REMOTE, "feature/x");
+    let profile = Profile::new();
+    start_session(&profile, &repo);
+    git(&repo.path, &["checkout", "-q", "main"]);
+    git(
+        &repo.path,
+        &["merge", "-q", "--no-ff", "-m", "merge", "feature/x"],
+    );
+    let merged = branch_line(&profile, "01JX");
+    assert!(
+        merged.starts_with("branch: merged (base main, checked "),
+        "the line names the verdict, the base and when it checked: {merged}"
+    );
+    assert!(
+        !merged.contains('—'),
+        "a plain verdict has nothing to explain: {merged}"
+    );
+
+    // A repository that is gone: the line carries the reason, because a
+    // verdict nobody could check has to say why.
+    let mut gone = Repo::with_branch(REMOTE, "feature/x");
+    let other = Profile::new();
+    start_session(&other, &gone);
+    gone.remove();
+    let unknown = branch_line(&other, "01JX");
+    assert!(unknown.starts_with("branch: unknown "), "{unknown}");
+    assert!(
+        unknown.contains(" — the repository is not here"),
+        "the line says what it could not check: {unknown}"
+    );
+
+    // A session that recorded no anchor has nothing to validate, and the line
+    // says that instead of leaving the question open.
+    let dir = outside_any_repository();
+    let none = Profile::new();
+    none.run_silent(&[
+        "session",
+        "--id",
+        "SIN-REPO",
+        "--directory",
+        dir.path().to_str().expect("utf-8 path"),
+    ]);
+    assert_eq!(branch_line(&none, "SIN-REPO"), "branch: none recorded");
 }
