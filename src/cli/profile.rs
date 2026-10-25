@@ -21,7 +21,8 @@ pub struct Profile {
 
 impl Profile {
     /// Resolve the data directory, require an initialised profile, and
-    /// build the service with the scope from `mnexis.toml`.
+    /// build the service with the scope from `mnexis.toml`, widened by the
+    /// namespace the workspace is bound to (read-granularity S2).
     pub fn open(data_dir: PathBuf) -> Result<Self, MnexisError> {
         let db_path = data_dir.join("mnexis.db");
         if !db_path.exists() {
@@ -31,12 +32,11 @@ impl Profile {
             )));
         }
         let (settings, _) = ProfileSettings::load_or_default(&data_dir.join("mnexis.toml"))?;
+        let mut scope = settings.to_access_scope()?;
+        let workspace = crate::application::workspace::current_workspace(&data_dir)?;
+        crate::application::workspace::allow_bound_read_namespace(&mut scope, workspace.as_ref());
         let repo = SqliteMemoryRepository::new(open_sqlite(&db_path)?);
-        let service = MemoryService::new(
-            repo,
-            settings.to_access_scope()?,
-            settings.to_service_config(),
-        );
+        let service = MemoryService::new(repo, scope, settings.to_service_config());
         Ok(Self {
             data_dir,
             settings,

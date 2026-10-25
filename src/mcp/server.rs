@@ -90,8 +90,10 @@ impl McpServer {
     /// Build a McpServer from a data directory.
     ///
     /// Opens the SQLite database, loads the profile settings to construct
-    /// the AccessScope, and builds the MemoryService. Fails fast with
-    /// the service's NotFound error if the database is missing.
+    /// the AccessScope, and builds the MemoryService. The scope is widened
+    /// by the namespace the workspace is bound to (read-granularity S2),
+    /// exactly like the CLI's profile. Fails fast with the service's NotFound
+    /// error if the database is missing.
     pub fn new(data_dir: std::path::PathBuf) -> Result<Self, MnexisError> {
         let db_path = data_dir.join("mnexis.db");
         if !db_path.exists() {
@@ -108,14 +110,14 @@ impl McpServer {
             crate::config::ProfileSettings::load_or_default(&data_dir.join("mnexis.toml"))?;
         let repo = SqliteMemoryRepository::new(conn);
         let default_namespace = settings.default_namespace.clone();
-        let service = crate::application::MemoryService::new(
-            repo,
-            settings.to_access_scope()?,
-            settings.to_service_config(),
-        );
         // The workspace this server runs in: the same rule the CLI uses
-        // for its own writes (project-isolation S5, S9).
+        // for its own writes and reads (project-isolation S5, S9;
+        // read-granularity S2).
         let workspace = crate::application::workspace::current_workspace(&data_dir)?;
+        let mut scope = settings.to_access_scope()?;
+        crate::application::workspace::allow_bound_read_namespace(&mut scope, workspace.as_ref());
+        let service =
+            crate::application::MemoryService::new(repo, scope, settings.to_service_config());
         let (workspace_namespace, workspace_key) = match workspace {
             Some(workspace) => (workspace.namespace, workspace.key),
             None => (None, String::new()),

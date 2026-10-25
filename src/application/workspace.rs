@@ -31,6 +31,7 @@ use std::process::Command;
 
 use crate::config::projects::{ProjectRegistry, registry_path};
 use crate::domain::error::MnexisError;
+use crate::domain::scope::AccessScope;
 
 pub use crate::domain::workspace::{canonical_workspace_key, normalize_remote_url};
 
@@ -104,6 +105,18 @@ pub fn find_marker_namespace(start: &Path) -> Option<String> {
     None
 }
 
+/// The namespace the binding for `key` names, when it names one.
+///
+/// Only the registry is consulted: the `.mnexis-namespace` marker is a
+/// different rule and is never a permission. A binding with a blank
+/// namespace names nothing.
+pub fn bound_namespace(registry: &ProjectRegistry, key: &str) -> Option<String> {
+    registry
+        .find(key)
+        .filter(|binding| !binding.namespace.trim().is_empty())
+        .map(|binding| binding.namespace.clone())
+}
+
 /// Which namespace a workspace works in: the binding for `key`, else the
 /// marker, else none.
 pub fn resolve_namespace(
@@ -111,18 +124,7 @@ pub fn resolve_namespace(
     key: &str,
     marker: Option<String>,
 ) -> Option<String> {
-    let canonical = canonical_workspace_key(key);
-    // The binding is looked up by the canonical key, and a binding that was
-    // recorded before the rule existed is compared in its canonical form
-    // too: both sides have to mean the same workspace.
-    let found = registry
-        .bindings
-        .iter()
-        .find(|b| canonical_workspace_key(&b.key) == canonical);
-    match found {
-        Some(binding) if !binding.namespace.trim().is_empty() => Some(binding.namespace.clone()),
-        _ => marker,
-    }
+    bound_namespace(registry, key).or(marker)
 }
 
 /// The workspace the process runs in.
@@ -133,6 +135,10 @@ pub struct WorkspaceInfo {
     /// The namespace the workspace writes into; `None` when the workspace
     /// resolves to none and the profile allowlist keeps deciding.
     pub namespace: Option<String>,
+    /// The namespace the workspace is **bound** to. `None` when no binding
+    /// exists, even when a marker names one: only a binding is a
+    /// permission, so this is what widens the read scope.
+    pub bound_namespace: Option<String>,
 }
 
 /// Resolve the workspace of the process from its working directory and the
@@ -145,10 +151,45 @@ pub fn current_workspace(data_dir: &Path) -> Result<Option<WorkspaceInfo>, Mnexi
     let Ok(cwd) = std::env::current_dir() else {
         return Ok(None);
     };
-    let registry = ProjectRegistry::load(&registry_path(data_dir))?;
+    // A registry that cannot be read grants NOTHING: it must not widen the
+    // scope. But it must not stop the reads either — a broken
+    // `projects.toml` is a broken file, not a broken engine. The commands
+    // that work WITH the registry (`project list`, `project bind`) still
+    // fail loudly on it.
+    let registry = ProjectRegistry::load(&registry_path(data_dir)).unwrap_or_default();
     let key = current_key(&cwd);
-    let namespace = resolve_namespace(&registry, &key, find_marker_namespace(&cwd));
-    Ok(Some(WorkspaceInfo { key, namespace }))
+    let bound_namespace = bound_namespace(&registry, &key);
+    let namespace = bound_namespace
+        .clone()
+        .or_else(|| find_marker_namespace(&cwd));
+    Ok(Some(WorkspaceInfo {
+        key,
+        namespace,
+        bound_namespace,
+    }))
+}
+
+/// Widen `scope`'s read allowlist with the namespace the workspace is
+/// **bound** to (read-granularity S2).
+///
+/// Only a real binding counts: the `.mnexis-namespace` marker is a file in
+/// the repository, not a permission, so a workspace that only has a marker
+/// changes nothing. Writes are untouched; `can_write` keeps consulting
+/// `write_namespaces`.
+///
+/// The reserved `global` namespace keeps its own permission: a binding must
+/// not open it through the read allowlist.
+pub fn allow_bound_read_namespace(scope: &mut AccessScope, workspace: Option<&WorkspaceInfo>) {
+    let Some(namespace) = workspace.and_then(|workspace| workspace.bound_namespace.as_deref())
+    else {
+        return;
+    };
+    if namespace == "global" {
+        return;
+    }
+    if !scope.read_namespaces.iter().any(|read| read == namespace) {
+        scope.read_namespaces.push(namespace.to_string());
+    }
 }
 
 #[cfg(test)]
