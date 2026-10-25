@@ -112,6 +112,24 @@ if (args[0] === "project" && args[1] === "list") {
 	process.stdout.write(JSON.stringify({ title: args[2], topic_key: "puerto-del-servicio", recorded_by: null }));
 } else if (args[0] === "session" || args[0] === "end" || args[0] === "prompt") {
 	process.stdout.write(JSON.stringify({ id: args[3] || "s1", session_id: args[3] || "s1" }));
+} else if (args[0] === "recall") {
+	// The priced payload the engine answers with: identity and preview,
+	// the whole records only with --full.
+	if (process.env.MNEXIS_FAKE_RECALL_FAIL) {
+		process.stderr.write(process.env.MNEXIS_FAKE_RECALL_FAIL);
+		process.exit(3);
+	}
+	process.stdout.write(
+		JSON.stringify({
+			session: { id: "01JX", namespace: workspace, summary: "el puerto del servicio" },
+			branch_state: null,
+			prompts: [],
+			window: { namespace: workspace, open: false, label: "the memories of the namespace in the session's window" },
+			memories_in_window: [
+				{ uuid: "m1", title: "el puerto del servicio", namespace: workspace, revision: 1, preview: "el puerto es 8081" },
+			],
+		}),
+	);
 } else {
 	process.stdout.write("{}");
 }
@@ -404,6 +422,79 @@ test("the prompt tools reach the engine", async () => {
 	const searchCall = calls(log).find((args) => args[0] === "prompts");
 	assert.ok(searchCall, "the prompts were searched");
 	assert.ok(searchCall.includes("--search"), "it is a search");
+});
+
+test("the recall reaches the engine in one call", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+
+	const recall = tools.get("mnexis_recall");
+	assert.ok(recall, "mnexis_recall is registered");
+
+	const result = await recall.execute("r1", { previous: true }, undefined, undefined, context());
+	assert.notEqual(result.isError, true);
+	const recallCall = calls(log).find((args) => args[0] === "recall");
+	assert.ok(recallCall, "the recall was called");
+	assert.deepEqual(recallCall, ["recall", "--previous", "--json"]);
+
+	// The answer the engine gave is the answer the model reads: the priced
+	// payload, identity and preview, in one call.
+	const text = String(result.content?.[0]?.text ?? "");
+	assert.match(text, /01JX/, `the session is in the answer: ${text}`);
+	assert.match(text, /preview/, `the memories are previews: ${text}`);
+	assert.doesNotMatch(text, /"content"/, `no full content by default: ${text}`);
+});
+
+test("the recall by id and the full flag reach the CLI", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const recall = tools.get("mnexis_recall");
+	assert.ok(recall, "mnexis_recall is registered");
+
+	await recall.execute("r2", { session: "01JX" }, undefined, undefined, context());
+	const byId = calls(log).filter((args) => args[0] === "recall").pop();
+	assert.deepEqual(byId, ["recall", "--session", "01JX", "--json"]);
+
+	await recall.execute("r3", { previous: true, full: true }, undefined, undefined, context());
+	const full = calls(log).filter((args) => args[0] === "recall").pop();
+	assert.deepEqual(full, ["recall", "--previous", "--full", "--json"]);
+});
+
+test("a recall with neither session nor previous refuses to guess", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const recall = tools.get("mnexis_recall");
+	assert.ok(recall, "mnexis_recall is registered");
+
+	const result = await recall.execute("r4", {}, undefined, undefined, context());
+	assert.equal(result.isError, true, "it must refuse");
+	const text = String(result.content?.[0]?.text ?? "");
+	assert.match(text, /session/, `the refusal names what to give: ${text}`);
+	assert.equal(
+		calls(log).some((args) => args[0] === "recall"),
+		false,
+		"nothing reached the engine",
+	);
+});
+
+test("a failed recall surfaces the engine's answer", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_RECALL_FAIL =
+		"NOT_FOUND: no finished session in namespace mnexis: no finished session yet";
+	try {
+		const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+		const recall = tools.get("mnexis_recall");
+		const result = await recall.execute("r5", { previous: true }, undefined, undefined, context());
+		assert.equal(result.isError, true, "it must fail");
+		const text = String(result.content?.[0]?.text ?? "");
+		assert.match(text, /no finished session/, `the reason reaches the model: ${text}`);
+	} finally {
+		delete process.env.MNEXIS_FAKE_RECALL_FAIL;
+	}
 });
 
 test("a session id is never invented", async () => {

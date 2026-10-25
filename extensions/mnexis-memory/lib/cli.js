@@ -187,6 +187,21 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
+		/** The recall of a session: what it was, in one answer. */
+		async recall({ session, previous, full }, cwd) {
+			const args = ["recall"];
+			if (session) {
+				args.push("--session", session);
+			}
+			if (previous) {
+				args.push("--previous");
+			}
+			if (full === true) {
+				args.push("--full");
+			}
+			return run(args, { json: true, cwd });
+		},
+
 		async suggestTopicKey({ title, namespace }, cwd) {
 			const args = ["suggest-topic-key", title];
 			if (namespace) {
