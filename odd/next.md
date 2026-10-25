@@ -1,6 +1,6 @@
 # The board — what is done, what is open, what comes next
 
-**Last updated:** 2026-10-26 (item 6 delivered on `feat/extension-recall`). Read this first in a new session, then the
+**Last updated:** 2026-10-26 (item 6 in main with #50). Read this first in a new session, then the
 feature document of whatever you pick.
 
 ## Where we are
@@ -24,8 +24,10 @@ out of it:
 | #40 | `read-scope-disclosure` | every read declares the scope it was bounded by (`read_scope`: all \| except_global \| restricted), so "no memories" and "no permission" are different answers; `stats` respects the scope and the pi extension carries the declaration to the agent |
 | #42 | `closed-default` | the reads are closed in a new profile (`allow_read_all = false`), measured over ten runs per arm: zero invented values and zero duplicated facts closed, against ten of ten duplicated facts open |
 | #46 + #47 + #48 | `session-recall` | the session answers for itself: the recall of a session (`mnexis recall --session <id>` / `--previous`, the MCP `memory_recall`), the working context of a session (migration 008: the branch, the commit and the canonical remote — never the raw URL), and the state of the anchored branch validated **when it is read** (`merged` / `not_merged` / `unknown`, never stored, never a negative) |
+| #50 | `extension-recall` | the recall is priced (identity + preview by default, `--full` / `full` for the whole records — one projection for the CLI and the MCP) and the pi extension exposes the three doors it was missing: `mnexis_recall`, `mnexis_workspace`, `mnexis_history` |
 
-Everything is merged. `main` is clean (plus the archived branches of the
+Everything is merged, and item 6 landed with **#50**. `main` is clean (plus the
+archived branches of the
 features that were measured and discarded, and `feat/near-duplicate-titles`,
 archived and **not** merged — see item 1c). The `session-recall` slices
 (`feat/session-recall-command`, `feat/session-recall-anchor`,
@@ -293,7 +295,7 @@ Two moves, both small, and they are the next thing to do:
    `memory_search` already has. A recall that answers with 100 full memories
    is not the cheap door the extension would open.
 
-**Both landed on `feat/extension-recall`** (feature doc:
+**Both landed and are in `main`** (PR **#50**, issue #49; feature doc:
 `odd/tasks/extension-recall.md`): the recall is priced
 (`SessionRecall::payload`, one projection for the CLI `--full` and the MCP
 `full`; the old default payload is exactly preserved behind the flag — the
@@ -303,6 +305,12 @@ doors it was missing: `mnexis_recall` (with `full` through),
 README name them. The differential also proved `list` / `list --full` /
 `search` / `status` byte-identical, so the shared projection did not
 move.
+
+**What the merge asks for next**: re-measure the recall phase with the door
+open — the re-comparison measured a closed door (the agent rebuilt the
+recall by hand: 8 tool calls, 4 111 input tokens); with `mnexis_recall`
+exposed the prediction is the engram shape (~2 calls). The harness is
+`tmp/bench/run/run-recheck.sh`.
 
 **And the uncomfortable row, measured again**: offered no memory at all, the
 agent found a durable channel **twice in ten** — once by writing the
