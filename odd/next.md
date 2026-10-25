@@ -155,12 +155,38 @@ test, per the correction this board already made):
 - **How many refusals, and does the agent handle them?** The skill is not
   read in 10 of 24 runs.
 
-**The hazard to solve first.** A read WITHOUT an explicit namespace is
-filtered by the scope and returns fewer rows **with no notice**; a read WITH
-an explicit namespace is denied. Under the closed default an agent searching
-without a namespace would read "no memories" where the truth is "no
-permission" — and then save the fact again. The closed default must say
-which it was: silence is what turns a permission into a duplicate.
+**The hazard is closed** (PR **#40**, open): every read declares the scope
+it was bounded by (`read_scope`: `all` | `except_global` | `restricted`), in
+the JSON, in the text and in the pi extension's tools, so the agent can tell
+"no memories" from "no permission". The value never carries a count and
+never names a namespace the profile cannot read.
+
+**The measurement is running** (`odd/tasks/closed-default.md`: the plan and
+its criterion written BEFORE the numbers). Two arms — the reads open (today's
+default) and the reads closed — same image, same model, same prompts, 10+ runs
+each. Four metrics: the finding, the mechanism (does the agent ASK instead of
+guessing), the honesty (does it say it did not find it), and the cost (does
+the shared fact end up duplicated in the agent's own namespace).
+
+**What the smoke run already showed, and what it found:**
+
+- the arms discriminate: the open arm finds the other namespace's fact and
+  **duplicates it** locally; the closed arm does not find it, says it did
+  not find it, does **not** duplicate it, and **asks for the permission**
+  with the exact command
+- **two holes it surfaced, both fixed in #40**: `mnexis stats` counted every
+  namespace in the store (a closed profile could learn that another project
+  exists — a read the PRD forbids), and the pi extension dropped the scope
+  declaration on the way to the agent, which is the channel that matters
+- **one more found while implementing**: `search --explain` filtered by "any
+  namespace", so a term that only matched a namespace the caller cannot read
+  made the whole command fail (NOT_FOUND) where the plain search had
+  answered "nothing" — two answers to the same question
+
+**The criterion (decided before the runs):** the default flips only if no run
+in the closed arm invents a value, the agent asks (or says it did not find
+it) in most runs, and the duplication is not systematic. A single invention
+keeps the default open.
 
 ### 4. B3 — the injected protocol block: measured, and **not** adopted
 
