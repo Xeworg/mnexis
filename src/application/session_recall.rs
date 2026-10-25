@@ -15,9 +15,16 @@
 //!
 //! The module is declared by `service.rs`, which is where the session reads it
 //! composes live; its path is `crate::application::service::session_recall`.
+//!
+//! **The state of the anchored branch is derived, never stored** (session-recall
+//! S3). The session records where the work happened — branch, commit, canonical
+//! remote — and the answer says whether that work reached the base *now*, with
+//! the base it compared against, the instant of the check, and `unknown` when it
+//! could not be checked (see [`crate::application::git_state`]).
 
 use serde::Serialize;
 
+use crate::application::git_state::{BranchState, GitAnchor};
 use crate::application::service::MemoryService;
 use crate::domain::error::MnexisError;
 use crate::domain::memory::Memory;
@@ -38,11 +45,19 @@ pub const WINDOW_LABEL: &str = "the memories of the namespace in the session's w
 const RECALL_LIMIT: usize = 100;
 
 /// What a session was: the session itself, what the user said in it, and the
-/// memories of its namespace inside its window.
+/// memories of its namespace inside its window, with the state of the branch it
+/// was anchored to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SessionRecall {
     /// The session itself.
     pub session: Session,
+    /// The state of the branch the session was anchored to, validated **now**
+    /// and never stored (session-recall S3).
+    ///
+    /// `None` means the session recorded no branch and no commit: there is
+    /// nothing to validate, and the answer says so instead of inventing a
+    /// verdict.
+    pub branch_state: Option<BranchState>,
     /// What the user said in the session, oldest first.
     pub prompts: Vec<UserPrompt>,
     /// The window the memories were read through, and what they are.
@@ -147,11 +162,39 @@ impl<R: MemoryRepository> MemoryService<R> {
                 open: session.ended_at.is_none(),
                 label: WINDOW_LABEL.to_string(),
             },
+            branch_state: branch_state(&session, now),
             session,
             prompts,
             memories_in_window,
         })
     }
+}
+
+/// The state of the branch the session was anchored to, checked at `now`.
+///
+/// A session that recorded neither a branch nor a commit has nothing to
+/// validate, and the answer carries none: `null` is the honest answer, and it
+/// is not `unknown`, which means "it could not be checked". Everything else is
+/// checked in the repository the anchor names, which may well not be here.
+fn branch_state(session: &Session, now: &str) -> Option<BranchState> {
+    if session.branch.is_none() && session.branch_sha.is_none() {
+        return None;
+    }
+    let anchor = GitAnchor {
+        branch: session.branch.clone(),
+        sha: session.branch_sha.clone(),
+        remote: session.branch_remote.clone(),
+    };
+    // The reader's own directory is only a fallback: the anchor's remote
+    // decides which repository answers, so another repository cannot be
+    // mistaken for the one the session ran in.
+    let reader_directory = std::env::current_dir().unwrap_or_default();
+    Some(crate::application::git_state::validate(
+        &anchor,
+        &session.directory,
+        &reader_directory,
+        now,
+    ))
 }
 
 #[cfg(test)]

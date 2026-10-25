@@ -816,7 +816,7 @@ impl<R: MemoryRepository> MemoryService<R> {
         let ns = self.target_namespace(namespace)?;
         self.scope.authorize_write(&ns)?;
         self.scope.authorize_operation(Operation::Save)?;
-        let anchor = crate::application::workspace::git_anchor(&session_directory(directory));
+        let anchor = crate::application::git_state::git_anchor(&session_directory(directory));
         self.repo.start_session(&Session {
             id: id.to_string(),
             namespace: ns,
