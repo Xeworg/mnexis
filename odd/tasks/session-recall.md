@@ -55,9 +55,9 @@ before. That makes the recall of a session load-bearing, not a convenience.
 
 | ID | Spec | Route | Allowed edit surfaces |
 | --- | --- | --- | --- |
-| T1 | S1 | the recall: a service method, `mnexis recall`, the MCP tool | `src/application/session_recall.rs`, `src/application/service.rs`, `src/domain/repository.rs`, `src/storage/memory_repo.rs`, `src/cli/recall_cmd.rs`, `src/cli/mod.rs`, `src/cli/output.rs`, `src/cli/commands.rs`, `src/mcp/server.rs`, `tests/cli_commands.rs`, `tests/mcp_interop.rs` |
-| T2 | S2 | the provenance: migration 008, the capture at session start | `src/storage/sqlite.rs`, `src/application/workspace.rs`, `src/application/service.rs`, `src/config/settings.rs`, `tests/session_recall.rs` |
-| T3 | S3 + S4 | the validator, and the recall showing it | `src/application/git_state.rs`, `src/application/workspace.rs`, `src/application/session_recall.rs`, `src/cli/recall_cmd.rs`, `tests/session_recall.rs` |
+| T1 | S1 | the recall: a service method, `mnexis recall`, the MCP tool | `d0a7527` |
+| T2 | S2 | the provenance: migration 008, the capture at session start | `src/storage/sqlite.rs`, `src/application/workspace.rs`, `src/application/service.rs`, `src/domain/session.rs`, `src/storage/memory_repo.rs`, `tests/session_recall.rs` |
+| T3 | S3 + S4 | the validator, and the recall showing it | `src/application/git_state.rs`, `src/application/workspace.rs`, `src/application/session_recall.rs`, `src/cli/recall_cmd.rs`, `src/mcp/server.rs`, `tests/session_recall.rs` |
 
 ## Log
 
@@ -94,3 +94,30 @@ before. That makes the recall of a session load-bearing, not a convenience.
   context; the memory is the fact. A per-memory anchor is a separate
   feature, and it belongs to the same measurement the rest of this cycle
   learned to ask for: does the agent use it when it matters?
+
+- **L4** (2026-10-26) — **T1 is done** (`d0a7527`, on `feat/session-recall`,
+  pushed): the recall answers, the CLI and the MCP tool work, the window is
+  labelled as a window, and the read obeys the scope. Checks: 22 cargo test
+  binaries green, fmt clean, clippy at the 36-warning baseline, plus a
+  differential against the base commit over the session commands (byte
+  identical) and a manual smoke of both forms.
+
+  **T2 and T3 are NOT done**, and the operator asked to stop here. Their
+  decisions are already written above (L2), so the next session starts
+  without losing the design:
+
+  - **T2** — migration 008 adds `sessions.branch`, `sessions.branch_sha`,
+    `sessions.branch_remote`; the engine captures them when a session
+    starts in a git repository, using the canonical remote key
+    (`git:<normalized>`) and never the raw URL. No git is not an error: the
+    columns stay empty.
+  - **T3** — the validator re-checks the recorded anchor when it is read and
+    answers `merged` / `not_merged` / `unknown`, with the base it compared
+    against and the instant of the check. `unknown` is a first-class answer
+    and never becomes `not_merged`. There is no "pending": whether the work
+    is pending is the agent's judgment about evidence.
+
+  **Not done either, and deliberately:** the provenance **per memory** (an
+  anchor the agent asks for when it saves) — the session is the context, the
+  memory is the fact, and that one needs the measurement this cycle learned
+  to ask for: does the agent use it when it matters?
