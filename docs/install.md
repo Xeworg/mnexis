@@ -159,7 +159,13 @@ operations are available from the TUI (`mnexis tui` → *Install for agents*),
 which reports what it installed.
 
 This is the only implementation: `install.sh skills|extensions` forwards to
-`mnexis agent install`, so both paths write the same embedded assets.
+`mnexis agent install`, so both paths write the same embedded assets. Those
+assets are a snapshot of the tree the binary was compiled from, so when the
+script runs from a repository and the working tree is newer than the
+installed binary, it rebuilds the binary before forwarding — the order of
+`./install.sh` and `./install.sh skills` never matters. A piped
+(standalone) script never rebuilds: it has no tree, and the binary it
+forwards to is the one it just installed.
 
 ### opencode's MCP entry
 
