@@ -275,7 +275,8 @@ The server exposes 14 tools (`memory_save`, `memory_get`,
 (the comma-separated words of the fact) and `replace_keywords`.
 `memory_workspace` answers "where may I write, and what is already there?"
 with the same payload as `mnexis status`: the bound namespace, the read and
-write allowlists, the memory count and the most recent memories. All errors
+write allowlists, the memory count and the most recent memories — each with
+its identity and a preview, never the whole record (#53). All errors
 map to JSON-RPC code `-32050` with `data.error_code` carrying the stable
 label.
 

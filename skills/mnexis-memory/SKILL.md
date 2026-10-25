@@ -30,7 +30,9 @@ and record what the session produces (see "The loop").
 
 `mnexis status` answers the other half in one call: the namespace this
 workspace writes into, the read and write allowlists, how many memories the
-scope can see, and the most recent ones. Run it before the first save, and
+scope can see, and the most recent ones — each as identity and preview, so
+the call stays cheap; open a record with `mnexis show <uuid>` when it is
+the one you need. Run it before the first save, and
 whenever you are not sure where a write would land.
 
 **Before you change code that already exists**, look for the decisions

@@ -227,8 +227,14 @@ async fn memory_workspace_reports_the_namespace_the_allowlists_and_the_recent_me
         !recent.is_empty(),
         "the payload must carry the recent memories: {parsed}"
     );
+    // The recent list is priced (#53): identity and a preview, never the
+    // whole record — for a short content the preview is the full text.
+    assert!(
+        recent[0].get("content").is_none(),
+        "the recent list must not paste the full record: {parsed}"
+    );
     assert_eq!(
-        recent[0]["content"].as_str(),
+        recent[0]["preview"].as_str(),
         Some("la segunda memoria del proyecto"),
         "the newest memory must come first: {parsed}"
     );
@@ -1597,8 +1603,62 @@ async fn memory_workspace_carries_the_title_of_the_recent_memories()
         "the recent list names what each memory is: {parsed}"
     );
     assert_eq!(
-        recent[0]["content"], "El servicio escucha en el puerto 8081",
-        "additive: the content stays: {parsed}"
+        recent[0]["preview"], "El servicio escucha en el puerto 8081",
+        "the recent list is priced: a short content travels whole as the preview, and the full record is one memory_get away (#53): {parsed}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_workspace_prices_the_recent_memories() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // A content longer than the preview cut, so the pricing is observable:
+    // the first answer must carry the identity and the preview, never the
+    // whole record (#53).
+    let long = format!("la memoria larga empieza acá {} y sigue un buen rato más", "palabra ".repeat(40));
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": long,
+            "title": "la memoria larga del proyecto"
+        }),
+    )
+    .await?;
+
+    let text = call_tool_text(&client, "memory_workspace", serde_json::json!({})).await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    let recent = parsed["recent"]
+        .as_array()
+        .expect("the payload must carry the recent list");
+    assert!(
+        !recent.is_empty(),
+        "the payload must carry the recent memories: {parsed}"
+    );
+    let entry = &recent[0];
+    assert_eq!(
+        entry["title"], "la memoria larga del proyecto",
+        "the recent list names what each memory is: {parsed}"
+    );
+    assert!(
+        entry["preview"].as_str().map_or(false, |p| p.ends_with('…')),
+        "the recent list carries the preview, cut with an ellipsis when it was cut: {parsed}"
+    );
+    assert!(
+        entry.get("content").is_none(),
+        "the recent list is priced: the full record stays one mnexis_show away (#53): {parsed}"
     );
 
     client.cancel().await?;
@@ -1794,7 +1854,7 @@ async fn the_read_payloads_carry_the_words() -> Result<(), Box<dyn std::error::E
         .expect("the payload must carry the recent list");
     let worded = recent
         .iter()
-        .find(|item| item["content"] == "listen on port 8081")
+        .find(|item| item["preview"] == "listen on port 8081")
         .unwrap_or_else(|| panic!("the worded memory is recent: {parsed}"));
     assert_eq!(
         worded["keywords"],
