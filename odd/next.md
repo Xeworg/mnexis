@@ -43,6 +43,10 @@ what every decision comes from. The artifacts are in `tmp/bench/` (gitignored
 — copy them out before the sandbox is wiped):
 
 - `tmp/bench/report.md` — the comparison and the capability matrix.
+- `tmp/bench/recheck-measurement.md` — the re-comparison: the plan and the
+  **criterion written before the numbers**, ten runs per arm.
+- `tmp/bench/recheck-report.md` — the re-comparison: the numbers, the verdict
+  criterion by criterion, and the two moves that come out of it.
 - `tmp/bench/conflict-measurement.md` — C2 measured: a conflicts layer would
   change nothing; the topic key is where the cost is.
 - `tmp/bench/topic-continuity-measurement.md` — the notice and the refusal,
@@ -57,7 +61,9 @@ The harness: `tmp/bench/run/run-conflict.sh` (the conflict experiment),
 `tmp/bench/run/run-all.sh` (the write/recall experiment),
 `tmp/bench/run/run-duplicates.sh` (the duplicate experiments, four
 scenarios), `tmp/bench/run/summarize.py`, `tmp/bench/run/score-conflict.py`,
-`tmp/bench/run/score-duplicates.py`.
+`tmp/bench/run/score-duplicates.py`, `tmp/bench/run/run-recheck.sh` (the
+re-comparison: N runs per arm) and `tmp/bench/run/score-recheck.py` (its
+metrics, with the invented-value check).
 
 ## What comes next, with the evidence behind each
 
@@ -230,8 +236,57 @@ records, and the verdict annotated back into the search results).
 ## The open questions, honestly
 
 - With one model and three runs per arm, the numbers move a lot. A claim
-  about "the agent now does X" needs more runs than we did.
+  about "the agent now does X" needs more runs than we did. (The re-comparison
+  ran **ten** per arm, and the two arms that matter did not waver: 10/10 both.)
 - The recall is still not free: the agent reads the memories it finds. A
-  memory whose content is long costs context every time it is recalled.
+  memory whose content is long costs context every time it is recalled. **The
+  re-comparison measured it**: the agent pays 4 111 input tokens to recover
+  five facts, against engram's 1 851 — it reads six records one by one
+  because the pi extension does not expose the one-call door.
 - mnexis still cannot tell that two different titles mean the same fact.
   That is item 1 above.
+
+### 6. The re-comparison: the recovery is at engram's level, and it costs twice
+
+The first comparison ran when the project was starting. The **re-comparison**
+(`tmp/bench/recheck-report.md`) runs **the same experiment** with the mnexis
+this cycle produced: same image, same model, same prompts, same arms, ten
+runs per arm.
+
+| phase 1 (the recall) | runs at 5/5 | wall ms | input tokens | tool calls |
+|---|---|---|---|---|
+| **mnexis** | **10 / 10** | 11 404 | 4 111 | 8 |
+| **engram** | **10 / 10** | 9 394 | **1 851** | **2** |
+| control | 2 / 10 | 12 077 | 1 947 | 4 |
+
+**Quality: at engram's level.** 5/5 in ten runs out of ten, the retrieval
+check puts the right record first in all five paraphrased queries, and the
+engine invented nothing. The P0 defects of the first comparison (the broken
+query contract, the verbatim binding key) are gone, and the store is clean:
+six records, one per fact, `rev=1`, no duplicates.
+
+**Cost: twice engram's.** The transcripts say why: engram's store holds **one
+consolidated observation** and the agent answers in two calls; mnexis holds
+**six records, one per fact** (the identity work), and the agent reads them
+one by one — 45 `mnexis_show` calls across the ten sessions.
+
+**And the cause is in the integration, not in the engine.** The recall
+answers "what does this project know" in one call, and the MCP server
+exposes it (`memory_recall`) — but **the pi extension does not** (ten tools,
+the recall is not one of them). The agent rebuilds it by hand.
+
+Two moves, both small, and they are the next thing to do:
+
+1. **Expose the recall in the pi extension** (and `memory_workspace` and
+   `memory_history`, which are missing there too). The door is built; the
+   agent cannot see it.
+2. **Price the recall in context**: identity and preview by default, the
+   full content on request — the shape `list` got in #24/#26 and
+   `memory_search` already has. A recall that answers with 100 full memories
+   is not the cheap door the extension would open.
+
+**And the uncomfortable row, measured again**: offered no memory at all, the
+agent found a durable channel **twice in ten** — once by writing the
+`AGENTS.md` that pi loads for free, once by discovering the mnexis CLI in the
+image and wiring it up by hand. The competitor is real but unreliable (2 of
+10), and a discoverable engine beats an undiscoverable one.
