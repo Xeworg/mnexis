@@ -1251,6 +1251,22 @@ pub fn context(
         }
     };
     let max_items = max_items.clamp(1, 100);
+    // The namespace the door searches when the caller names none: the
+    // workspace's own namespace, the one a save lands in (#57). The
+    // allowlist's first entry is the fallback, and it belongs to another
+    // project as often as not.
+    let namespace = match namespace {
+        Some(namespace) => Some(namespace),
+        None => {
+            let workspace = crate::application::workspace::current_workspace(&profile.data_dir)
+                .ok()
+                .flatten();
+            crate::application::workspace::read_namespace(
+                profile.service_ref().scope(),
+                workspace.as_ref(),
+            )
+        }
+    };
     let req = ContextRequest {
         task,
         namespace,
@@ -1273,13 +1289,24 @@ pub fn context(
         );
     }
     let count = response.items.len();
+    // The text says where the door looked, the same way the envelope
+    // does: a human reading "no items selected" has to know whether the
+    // project has no memories or the search looked elsewhere.
+    let searched = if response.searched_namespace.is_empty() {
+        "none".to_string()
+    } else {
+        response.searched_namespace.clone()
+    };
     Ok(CommandOutcome::new(
         json,
         crate::cli::output::with_read_scope(
             if count == 0 {
-                "no items selected".to_string()
+                format!("no items selected (namespace={searched})")
             } else {
-                format!("selected {count} items (tokens={})", response.tokens_used)
+                format!(
+                    "selected {count} items (tokens={}, namespace={searched})",
+                    response.tokens_used
+                )
             },
             read_scope,
         ),

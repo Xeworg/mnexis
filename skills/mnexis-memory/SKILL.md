@@ -25,7 +25,10 @@ mnexis status                                             # where may I write, a
 
 `mnexis context "<the task in one line>"` returns the memories that matter
 for that task, already trimmed to a token budget: use it as the first call of
-a session. If it returns nothing, the project has no memory yet — carry on
+a session. It searches the namespace this workspace writes into — the one a
+save lands in — and the answer names the namespace it searched, so an empty
+answer means this project has nothing, not that the door looked elsewhere. If
+it returns nothing, the project has no memory yet — carry on
 and record what the session produces (see "The loop").
 
 `mnexis status` answers the other half in one call: the namespace this

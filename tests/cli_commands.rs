@@ -64,6 +64,19 @@ impl Profile {
         )
     }
 
+    /// Run with an explicit working directory, without `--json`: the human
+    /// rendering of a command that resolves a workspace.
+    fn run_text_in_dir(&self, dir: &std::path::Path, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_mnexis"))
+            .current_dir(dir)
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn mnexis binary")
+    }
+
     /// Run with stdin not inherited (default: null) so confirmation
     /// prompts never block the test runner.
     fn run_silent(&self, args: &[&str]) -> Output {
@@ -1981,6 +1994,145 @@ fn context_with_no_candidates_returns_empty_with_reason() {
     assert!(json["empty_reason"].is_string());
 }
 
+// --- context: the namespace it searched (#57) ---
+
+/// The remote of a bound workspace: a fixed identity, so the key the engine
+/// computes never depends on the checkout the test runs in.
+const BOUND_REMOTE: &str = "https://github.com/Xeworg/contexto.git";
+/// The key a human may write; the registry records its canonical form.
+const BOUND_KEY_RAW: &str = "git:github.com/Xeworg/contexto";
+/// The namespace the bound workspace writes into.
+const BOUND_NAMESPACE: &str = "mnexis";
+
+/// A profile that reads two projects, with the profile's own default
+/// first: the shape a real multi-project profile has.
+fn two_project_profile() -> Profile {
+    Profile::new().with_config(&Profile::namespaces(&["default", BOUND_NAMESPACE]))
+}
+
+#[test]
+fn context_in_a_bound_workspace_answers_from_the_workspaces_namespace() {
+    let p = two_project_profile();
+    let workspace = Workspace::bound(&p, BOUND_NAMESPACE);
+    save_in(
+        &p,
+        workspace.path(),
+        BOUND_NAMESPACE,
+        "el puerto del servicio es 8081",
+    );
+
+    let out = p
+        .run_in_dir(
+            workspace.path(),
+            &["context", "--token-budget", "1024", "puerto"],
+        )
+        .unwrap_status("context");
+    let json = stdout_json(&out);
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(
+        items.len(),
+        1,
+        "the answer comes from the workspace's namespace: {json}"
+    );
+    assert_eq!(items[0]["namespace"], BOUND_NAMESPACE, "{json}");
+    assert_eq!(
+        json["searched_namespace"], BOUND_NAMESPACE,
+        "the envelope declares the namespace it searched: {json}"
+    );
+}
+
+#[test]
+fn context_in_an_unbound_directory_keeps_the_scopes_first_namespace_and_declares_it() {
+    let p = two_project_profile();
+    let workspace = Workspace::bare();
+    save_in(
+        &p,
+        workspace.path(),
+        "default",
+        "el puerto del servicio es 8081",
+    );
+
+    let out = p
+        .run_in_dir(
+            workspace.path(),
+            &["context", "--token-budget", "1024", "puerto"],
+        )
+        .unwrap_status("context");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["items"].as_array().expect("items array").len(),
+        1,
+        "the behaviour before the workspace was consulted is unchanged: {json}"
+    );
+    assert_eq!(
+        json["searched_namespace"], "default",
+        "and the envelope says where it looked: {json}"
+    );
+}
+
+#[test]
+fn an_explicit_namespace_wins_over_the_workspaces_namespace() {
+    let p = two_project_profile();
+    let workspace = Workspace::bound(&p, BOUND_NAMESPACE);
+    // The other project's record, saved from a directory that is not the
+    // bound workspace: a write there is not the workspace's to refuse.
+    let elsewhere = Workspace::bare();
+    save_in(
+        &p,
+        elsewhere.path(),
+        "default",
+        "el puerto del servicio es 8081",
+    );
+
+    let out = p
+        .run_in_dir(
+            workspace.path(),
+            &[
+                "context",
+                "--namespace",
+                "default",
+                "--token-budget",
+                "1024",
+                "puerto",
+            ],
+        )
+        .unwrap_status("context");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["items"].as_array().expect("items array").len(),
+        1,
+        "the caller asked for a namespace and got it: {json}"
+    );
+    assert_eq!(
+        json["searched_namespace"], "default",
+        "and the envelope names it: {json}"
+    );
+}
+
+#[test]
+fn the_text_of_a_context_names_the_namespace_it_searched() {
+    let p = two_project_profile();
+    let workspace = Workspace::bound(&p, BOUND_NAMESPACE);
+    save_in(
+        &p,
+        workspace.path(),
+        BOUND_NAMESPACE,
+        "el puerto del servicio es 8081",
+    );
+
+    let out = p
+        .run_text_in_dir(
+            workspace.path(),
+            &["context", "--token-budget", "1024", "puerto"],
+        )
+        .unwrap_status("context");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains(BOUND_NAMESPACE),
+        "the human text says where it looked: {text}"
+    );
+}
+
 #[test]
 fn a_bulk_import_cannot_write_into_another_workspace() {
     let source = guard_profile();
@@ -2065,6 +2217,35 @@ impl Workspace {
             format!("  {namespace}\n"),
         )
         .expect("write .mnexis-namespace");
+        workspace
+    }
+
+    /// The same directory, as a git repository with one known remote: the
+    /// identity the engine computes does not depend on the checkout the
+    /// test runs in. The namespace is bound in the profile's registry, so
+    /// the binding is a permission and not a file in the repository.
+    fn bound(profile: &Profile, namespace: &str) -> Self {
+        let workspace = Self::bare();
+        let root = workspace.dir.path();
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q", "."]);
+        git(&["remote", "add", "origin", BOUND_REMOTE]);
+        let out = profile.run_silent(&["project", "bind", namespace, "--key", BOUND_KEY_RAW]);
+        assert!(
+            out.status.success(),
+            "bind failed ({:?}): {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        );
         workspace
     }
 

@@ -651,7 +651,11 @@ impl<R: MemoryRepository> MemoryService<R> {
         }
 
         // Steps 5+6: build the response through the pipeline.
-        let response = build_response(&budget, tokenizer_id, pairs, &req.search, &req.now)?;
+        let mut response = build_response(&budget, tokenizer_id, pairs, &req.search, &req.now)?;
+        // The envelope says where the door looked (#57): an answer that
+        // names no namespace cannot be told apart from an answer that
+        // looked in the wrong one.
+        response.searched_namespace = ns;
 
         // A-07 invariant (debug-only): in exact mode, the
         // response-claimed tokens_used equals the supported tokenizer's

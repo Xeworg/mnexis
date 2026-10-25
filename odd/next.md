@@ -363,10 +363,9 @@ first answer names the memories, and the agent **rebuilds the answer by
 hand** (median 3 memory calls, 9 tool calls, on six records). The
 budgeted one-call door that would replace the rebuild already exists in
 the CLI — `mnexis context "<task>"` (PRD §9), and the skill tells the
-agent to run it — but it is **not a pi tool** (#59) and it answers from
-*"scope's first read namespace"* instead of the workspace's, without
-declaring which namespace it searched (**#57**). So the road from here is
-#57 → #59 → measure again, and the pointer question only comes after
+agent to run it — but it is **not a pi tool** (#59). The namespace it
+searched was the wrong one too (**#57**, closed below). So the road from
+here is #59 → measure again, and the pointer question only comes after
 those.
 
 Two defects the measurement surfaced along the way: the records that
@@ -391,15 +390,26 @@ but the agent still *rebuilds* the answer: the trigger measurement showed
 every run going `workspace → list/search → shows`. The one-call door that
 would replace the rebuild exists in the CLI (`mnexis context "<task>"`,
 PRD §9) and the skill tells the agent to run it — and it is not a pi
-tool (**#59**). Worse, it answers from *"scope's first read namespace"*
-rather than the workspace's, without declaring which namespace it
-searched: in a multi-namespace profile it answers with **another
-project's** memories, in silence (**#57**).
+tool (**#59**).
 
-**The order from here**: #57 (the namespace of the one-call door) → #59
-(expose `mnexis context` as a pi tool) → re-measure against the merged
-binary → and only then the experiment with a **steering-shaped** phase
-(issue #55): the bench asks a knowledge-shaped question ("¿en qué puerto
+**The door's namespace, closed (#57).** It answered from *"scope's first
+read namespace"* — the order of the allowlist, not the namespace the
+agent's workspace writes into — and the envelope did not say which
+namespace it searched. In a multi-namespace profile it answered with
+**another project's** memories, in silence, and the agent could not tell
+that from a good answer. Now the door searches the workspace's own
+namespace — the one a save lands in — when the profile may read it, keeps
+the allowlist's first entry when the workspace names none, and the
+envelope declares the namespace it searched (`searched_namespace`): the
+read_scope precedent (#40) applied to the namespace, because a narrowed
+answer that stays silent reads as "there are no memories" when the truth
+is "it looked in another project". The differential against the base
+commit: every other read surface is byte-identical, and `context` moves
+only by that field.
+
+**The order from here**: #59 (expose `mnexis context` as a pi tool) →
+re-measure against the merged binary → and only then the experiment with a
+**steering-shaped** phase (issue #55): the bench asks a knowledge-shaped question ("¿en qué puerto
 escucha?"), while the recurring question is steering-shaped ("¿dónde
 quedamos?"), which is exactly what the typed-memory idea is for.
 

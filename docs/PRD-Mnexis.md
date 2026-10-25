@@ -213,7 +213,7 @@ Errores estables: `INVALID_ARGUMENT`, `NOT_FOUND`, `FORBIDDEN`, `REVISION_CONFLI
 
 ### Pipeline
 
-1. Validar y resolver autorización, namespace y estado vigente.
+1. Validar y resolver autorización, namespace y estado vigente. Una lectura sin namespace explícito busca el del workspace — el mismo donde cae un guardado — y, cuando el perfil no puede leerlo, cae al primer namespace de la allowlist. El sobre declara siempre el namespace buscado: una respuesta vacía tiene que poder distinguirse de una búsqueda en otro proyecto.
 2. Obtener candidatos mediante FTS5.
 3. Aplicar filtros autorizados al conjunto candidato antes de seleccionar resultados.
 4. Revalidar en SQLite ID, revisión, estado y vigencia.
@@ -241,7 +241,7 @@ El identificador es ilustrativo; el spike debe fijar y publicar los tokenizers r
 
 Sin tokenizer soportado, se permite modo explícito de estimación con `budget_enforcement: estimated` y límite duro en bytes; no se afirma una garantía exacta de tokens. El cliente puede exigir conteo exacto y rechazar dicho modo. No truncar frases ni generar resúmenes automáticamente en MVP.
 
-La salida incluye `items`, `retrieval_mode`, `budget_enforcement`, `tokens_used` o estimación, `tokenizer_id`, `index_status`, `warnings` y `empty_reason` cuando corresponda. Cada item incluye ID, revisión, namespace, contenido, tipo, estado y procedencia. `search --explain` muestra rankings, filtros y motivos de exclusión sin revelar candidatos no autorizados. Toda lectura declara su alcance con `read_scope` (`all`, `except_global` o `restricted`): el agente puede distinguir "no hay nada" de "no podés ver todo", sin que la respuesta revele namespaces ni conteos que el perfil no puede leer.
+La salida incluye `items`, `retrieval_mode`, `budget_enforcement`, `tokens_used` o estimación, `tokenizer_id`, `index_status`, `warnings`, `searched_namespace` (el namespace donde buscó) y `empty_reason` cuando corresponda. Cada item incluye ID, revisión, namespace, contenido, tipo, estado y procedencia. `search --explain` muestra rankings, filtros y motivos de exclusión sin revelar candidatos no autorizados. Toda lectura declara su alcance con `read_scope` (`all`, `except_global` o `restricted`): el agente puede distinguir "no hay nada" de "no podés ver todo", sin que la respuesta revele namespaces ni conteos que el perfil no puede leer.
 
 ### Abstención y degradación
 
