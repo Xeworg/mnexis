@@ -59,6 +59,12 @@ To install the shipped agent skills (`skills/`, starting with
 ./install.sh uninstall --skills --env pi   # remove them again
 ```
 
+The skills ship inside the binary, and the binary is a snapshot of the tree
+it was compiled from: from a repository checkout the script rebuilds the
+binary first when the working tree is newer than it, so the order of
+`./install.sh` and `./install.sh skills` never matters. A piped
+(standalone) script never rebuilds — it has no tree to compare with.
+
 The `mnexis-memory` skill tells the agent to load the project's memory at the
 start of a session (`mnexis context "<task>"`) and before it changes code
 that already exists, so the decisions behind the code are never lost. One
@@ -111,7 +117,8 @@ asked to, and without choosing a namespace itself:
 ./install.sh uninstall --extensions --env pi
 ```
 
-An installed `mnexis` can do it too — the assets travel inside the binary —
+An installed `mnexis` can do it too — the assets travel inside the binary
+(same rebuild rule as skills) —
 and the TUI offers the same operation (`mnexis tui` → *Install for agents*):
 
 ```sh

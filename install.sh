@@ -6,10 +6,13 @@
 #                                $HOME/.local/bin/mnexis.
 #   ./install.sh skills [--env <name>]
 #                                Install the shipped agent skills (skills/) to
-#                                the selected AI environment (pi first).
+#                                the selected AI environment (pi first). From
+#                                a repository, a binary older than the tree
+#                                is rebuilt first.
 #   ./install.sh extensions [--env <name>]
 #                                Install the shipped agent extensions
-#                                (extensions/) to the selected environment.
+#                                (extensions/) to the selected environment
+#                                (same rebuild rule as skills).
 #   ./install.sh uninstall       Remove the installed binary; profile data
 #                                is kept.
 #   ./install.sh uninstall --skills [--env <name>]
@@ -64,14 +67,19 @@ usage() {
     '  skills             Install the agent skills shipped in ./skills to an' \
     '                     AI environment. Interactive selection when run from' \
     '                     a terminal; pass --env <name> to run unattended.' \
-    '                     Re-running overwrites the installed skills.' \
+    '                     Re-running overwrites the installed skills. The' \
+    '                     skills ship inside the binary, so from a repository' \
+    '                     the binary is rebuilt first when the working tree' \
+    '                     is newer than it.' \
     '  uninstall          Remove $HOME/.local/bin/mnexis; profile data stays.' \
     '  uninstall --skills Remove the mnexis-installed agent skills from an' \
     '                     environment (interactive selection or --env <name>);' \
     '                     skill directories mnexis does not ship are kept.' \
     '                     Cannot be combined with --extensions or --purge.' \
     '  extensions         Install the agent extensions shipped in ./extensions' \
-    '                     into an AI environment (default: pi).' \
+    '                     into an AI environment (default: pi). The' \
+    '                     extensions ship inside the binary too; the skills' \
+    '                     rebuild rule applies.' \
     '  uninstall --extensions' \
     '                     Remove the mnexis-installed agent extensions;' \
     '                     extension directories mnexis does not ship are kept.' \
@@ -526,8 +534,44 @@ confirm_purge() {
 #
 #   ./install.sh skills --env pi  ->  mnexis agent install --env pi --only skill
 #   ./install.sh extensions --env pi -> mnexis agent install --env pi --only extension
+#
+# The embedded assets are a snapshot of the tree the binary was compiled
+# from. In repository mode a binary older than the tree would silently
+# reinstall that stale snapshot as if it were fresh (#51), so it is rebuilt
+# first; a piped (standalone) script has no tree to compare with and
+# delegates to the binary it just installed.
+#
+# True when any input the binary is built from (or embeds) is newer than
+# the installed binary. Directories are compared too: a file that was only
+# added, removed or renamed updates its directory while no file mtime
+# changes. The comparison errs towards rebuilding — a rebuild is one
+# cached cargo call — because a missed staleness would install old assets
+# as if they were current.
+stale_installed_binary() {
+  local binary="$1" inputs=() name
+  for name in src skills extensions Cargo.toml Cargo.lock; do
+    if [[ -e "$SCRIPT_DIR/$name" ]]; then
+      inputs+=("$SCRIPT_DIR/$name")
+    fi
+  done
+  if ((${#inputs[@]} == 0)); then
+    return 1
+  fi
+  local newer
+  newer="$(find "${inputs[@]}" -newer "$binary" -print -quit 2>/dev/null)" || true
+  [[ -n "$newer" ]]
+}
+
 ensure_mnexis_binary() {
-  if [[ -x "$INSTALL_DIR/mnexis" ]]; then
+  local binary="$INSTALL_DIR/mnexis"
+  if [[ -x "$binary" ]]; then
+    # The mode follows the script itself, like cmd_install: only a script
+    # with a file of its own can be in repository mode.
+    if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_DIR/Cargo.toml" ]] &&
+      stale_installed_binary "$binary"; then
+      printf 'The installed mnexis binary is older than the working tree; rebuilding it so the agent assets match the tree.\n'
+      cmd_install
+    fi
     return 0
   fi
   printf 'The mnexis binary is required to install the agent assets; building it now.\n'
