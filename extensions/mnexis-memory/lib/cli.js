@@ -97,8 +97,11 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(["config", "show"], { json: true, cwd });
 		},
 
-		async save({ namespace, content, title, tags, keywords, topicKey, idempotencyKey }, cwd) {
+		async save({ namespace, content, title, tags, keywords, topicKey, idempotencyKey, type }, cwd) {
 			const args = ["save", "--namespace", namespace];
+			if (typeof type === "string" && type !== "") {
+				args.push("--type", type);
+			}
 			if (title) {
 				args.push("--title", title);
 			}
@@ -118,7 +121,7 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
-		async search({ query, namespace, limit, match }, cwd) {
+		async search({ query, namespace, limit, match, type }, cwd) {
 			const args = ["search", query];
 			if (namespace) {
 				args.push("--namespace", namespace);
@@ -128,6 +131,9 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			}
 			if (typeof match === "string" && match !== "") {
 				args.push("--match", match);
+			}
+			if (typeof type === "string" && type !== "") {
+				args.push("--type", type);
 			}
 			return run(args, { json: true, cwd });
 		},
@@ -154,7 +160,7 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
-		async list({ namespace, limit, full }, cwd) {
+		async list({ namespace, limit, full, type }, cwd) {
 			const args = ["list"];
 			if (namespace) {
 				args.push("--namespace", namespace);
@@ -164,6 +170,9 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			}
 			if (full === true) {
 				args.push("--full");
+			}
+			if (typeof type === "string" && type !== "") {
+				args.push("--type", type);
 			}
 			return run(args, { json: true, cwd });
 		},
