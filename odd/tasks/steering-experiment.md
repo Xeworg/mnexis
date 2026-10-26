@@ -54,3 +54,10 @@ retrieval input is decided by this experiment, not by argument.
   Tier ordering behind `MNEXIS_BENCH_STEERING_TIER=1`, default ranking
   unchanged; arm B bakes that env var; arm C adds the pointer as a file
   appended to the installed skill at setup, so the repo skill is B == C.
+- L5 (2026-10-26): correction 2 — the bench switch is injected into the
+  pipeline instead of mutated through the process environment, so tests
+  never touch global state (review finding R3-001 on lineage
+  review-d72a00e7b8c98455). `build_response` reads the variable once and
+  delegates to `build_response_with_tier(..., bench_tier)`; the tier
+  tests pass the flag directly, with no lock, no `set_var`/`remove_var`
+  and no serialization.

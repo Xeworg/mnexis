@@ -262,12 +262,34 @@ pub fn serialise_envelope(items: &[ContextItem], budget: &Budget) -> String {
 
 /// Run the full pipeline: FTS5 candidates + canonical revalidation +
 /// eligibility + dedup + budget selection.
+///
+/// The ranking is `created_at` ASC, production's order. The steering
+/// tier (arm B of the steering experiment) is injected through
+/// `build_response_with_tier`, never mutated in the process
+/// environment by tests.
 pub fn build_response(
     budget: &Budget,
     tokenizer_id: &str,
     candidates: Vec<(SearchHit, Memory)>,
     filter: &SearchFilter,
     now: &str,
+) -> Result<ContextResponse, MnexisError> {
+    let bench_tier = std::env::var("MNEXIS_BENCH_STEERING_TIER").as_deref() == Ok("1");
+    build_response_with_tier(budget, tokenizer_id, candidates, filter, now, bench_tier)
+}
+
+/// `build_response` with the bench switch injected by the caller.
+///
+/// `bench_tier` selects the ranking: false is the production order
+/// (`created_at` ASC), true puts the steering tier first and breaks ties
+/// with `created_at` ASC (same type keeps recency order).
+fn build_response_with_tier(
+    budget: &Budget,
+    tokenizer_id: &str,
+    candidates: Vec<(SearchHit, Memory)>,
+    filter: &SearchFilter,
+    now: &str,
+    bench_tier: bool,
 ) -> Result<ContextResponse, MnexisError> {
     let mut eligible_pairs: Vec<Memory> = Vec::new();
     for (_hit, mem) in candidates {
@@ -295,8 +317,8 @@ pub fn build_response(
         eligible_pairs.push(mem);
     }
     let deduped = dedup(eligible_pairs);
-    // Production ranking: created_at ASC. Arm B sits behind a bench switch.
-    let bench_tier = std::env::var("MNEXIS_BENCH_STEERING_TIER").as_deref() == Ok("1");
+    // Production ranking: created_at ASC. Arm B sits behind a bench
+    // switch that the caller injects.
     let mut selected = deduped;
     if bench_tier {
         selected.sort_by(|a, b| {
@@ -453,23 +475,14 @@ mod tests {
         assert!(out.empty_reason.is_some());
     }
 
-    /// Env-dependent tests serialize; the switch gates arm B (R3-001).
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn bench_switch(v: Option<&str>) {
-        // SAFETY: every caller holds ENV_LOCK.
-        let key = "MNEXIS_BENCH_STEERING_TIER";
-        unsafe { v.map_or_else(|| std::env::remove_var(key), |s| std::env::set_var(key, s)) }
-    }
-
     #[test]
     fn build_response_ranks_the_steering_tier_before_recency() {
         // Arm B of the steering experiment (tmp/bench/
         // steering-measurement.md): the door answers "where are we"
         // first — a project_state record created LATER outranks a
-        // knowledge record created EARLIER, deterministically, with no
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        bench_switch(Some("1"));
+        // knowledge record created EARLIER, deterministically. The
+        // switch is injected as an argument, so no test touches the
+        // process environment (R3-001).
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let mut older_knowledge = memory(
             "u-know",
@@ -490,7 +503,7 @@ mod tests {
             valid_window: None,
             active_only: true,
         };
-        let out = build_response(
+        let out = build_response_with_tier(
             &budget,
             SUPPORTED_TOKENIZER_V1,
             vec![
@@ -499,9 +512,9 @@ mod tests {
             ],
             &filter,
             "2026-03-03T00:00:00Z",
+            true,
         )
         .unwrap();
-        bench_switch(None);
         assert_eq!(
             out.items[0].uuid, "u-state",
             "the steering tier outranks recency"
@@ -511,9 +524,8 @@ mod tests {
 
     #[test]
     fn build_response_keeps_created_at_order_without_the_bench_switch() {
-        // R3-001: with the switch absent the door ranks as main does.
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        bench_switch(None);
+        // R3-001: with the switch off the door ranks as production
+        // does: created_at ASC, oldest first.
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let mut older = memory(
             "u-know",
@@ -534,31 +546,26 @@ mod tests {
             valid_window: None,
             active_only: true,
         };
-        for switch in [None, Some("0")] {
-            bench_switch(switch);
-            let out = build_response(
-                &budget,
-                SUPPORTED_TOKENIZER_V1,
-                vec![
-                    (hit("u-know", 1.0), older.clone()),
-                    (hit("u-state", 2.0), state.clone()),
-                ],
-                &filter,
-                "2026-03-03T00:00:00Z",
-            )
-            .unwrap();
-            assert_eq!(out.items[0].uuid, "u-know", "default: oldest first");
-            assert_eq!(out.items[1].uuid, "u-state");
-        }
-        bench_switch(None);
+        let out = build_response_with_tier(
+            &budget,
+            SUPPORTED_TOKENIZER_V1,
+            vec![
+                (hit("u-know", 1.0), older.clone()),
+                (hit("u-state", 2.0), state.clone()),
+            ],
+            &filter,
+            "2026-03-03T00:00:00Z",
+            false,
+        )
+        .unwrap();
+        assert_eq!(out.items[0].uuid, "u-know", "default: oldest first");
+        assert_eq!(out.items[1].uuid, "u-state");
     }
 
     #[test]
     fn build_response_keeps_recency_order_within_one_type() {
         // The pinned behavior the tier may not move: records of the
         // same type keep the created_at ASC order the door has today.
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        bench_switch(Some("1"));
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let mut older = memory("u-old", "alpha", "fact", MemoryState::Active);
         older.created_at = "2026-01-01T00:00:00Z".into();
@@ -569,15 +576,15 @@ mod tests {
             valid_window: None,
             active_only: true,
         };
-        let out = build_response(
+        let out = build_response_with_tier(
             &budget,
             SUPPORTED_TOKENIZER_V1,
             vec![(hit("u-new", 1.0), newer), (hit("u-old", 2.0), older)],
             &filter,
             "2026-03-03T00:00:00Z",
+            true,
         )
         .unwrap();
-        bench_switch(None);
         assert_eq!(
             out.items[0].uuid, "u-old",
             "same type: older first, as today"
