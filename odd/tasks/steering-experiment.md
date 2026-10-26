@@ -61,3 +61,15 @@ retrieval input is decided by this experiment, not by argument.
   delegates to `build_response_with_tier(..., bench_tier)`; the tier
   tests pass the flag directly, with no lock, no `set_var`/`remove_var`
   and no serialization.
+- L6 (2026-10-26, user, verbatim): "el review suele fallar dejalo asi" — the
+  native review is left as it stands. Lineage `review-d72a00e7b8c98455`
+  stopped at `targeted_validation_required`: its validator slot is
+  reoffered but the Pi host relay refuses to launch it because no model is
+  assigned to the `review-validator` role, so the slot produced no verdict
+  and nothing was submitted. The correction rounds it did complete found
+  two real defects (the experimental ranking as the only production
+  ordering; tests mutating the process environment), both fixed in
+  `813be79` and `45aa480`. This candidate's verification therefore rests
+  on the suites (676/0) and the differential against the base binary. The
+  review is documented, not closed — a later session may resume it if the
+  role gets a model.
