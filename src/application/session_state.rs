@@ -165,14 +165,19 @@ impl<R: MemoryRepository> MemoryService<R> {
     ///
     /// `namespace` is one the calling command already authorized: the door
     /// passes the namespace it searched, `status` the workspace's own (or the
-    /// namespace a write without one would land in). The session is the one
-    /// `mnexis recall --previous` answers with
+    /// namespace a write without one would land in). A namespace the scope
+    /// cannot read yields the empty block: the read allowlist is a boundary,
+    /// and a write-only namespace never exposes its content here. The session
+    /// is the one `mnexis recall --previous` answers with
     /// ([`MemoryRepository::previous_finished_session`]), so the block and the
     /// recall cannot disagree about where the project left off.
     ///
     /// A store that cannot answer leaves the block empty: it is additive, and
     /// it must never fail the command that carries it.
     pub fn session_state(&self, namespace: &str) -> SessionState {
+        if !self.scope().can_read(namespace) {
+            return SessionState::empty();
+        }
         let types: Vec<String> = STATE_TYPES
             .iter()
             .map(|memory_type| (*memory_type).to_string())
@@ -204,6 +209,93 @@ impl<R: MemoryRepository> MemoryService<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::service::{SaveRequest, ServiceConfig};
+    use crate::domain::memory::MemoryState;
+    use crate::domain::scope::{AccessScope, Operation};
+    use crate::storage::memory_repo::SqliteMemoryRepository;
+    use crate::storage::sqlite::open_sqlite;
+    use tempfile::tempdir_in;
+
+    const NS: &str = "payments";
+
+    type Service = MemoryService<SqliteMemoryRepository>;
+
+    /// A service whose read list is `read`, whose write list and default
+    /// namespace are [`NS`]: the write-only default of a profile that may
+    /// write the namespace but not read it.
+    fn service_reading(read: Vec<String>) -> (Service, tempfile::TempDir) {
+        let dir = tempdir_in("target").expect("tempdir under target/");
+        let conn = open_sqlite(&dir.path().join("session-state.db")).expect("open sqlite");
+        let scope = AccessScope::new(
+            read,
+            vec![NS.to_string()],
+            NS.to_string(),
+            false,
+            vec![Operation::Save],
+        );
+        (
+            MemoryService::new(
+                SqliteMemoryRepository::new(conn),
+                scope,
+                ServiceConfig::default(),
+            ),
+            dir,
+        )
+    }
+
+    fn save_state(service: &mut Service) {
+        let req = SaveRequest {
+            uuid: "state-1".to_string(),
+            title: "where we are".to_string(),
+            topic_key: "state.where".to_string(),
+            namespace: NS.to_string(),
+            memory_type: Some("project_state".to_string()),
+            content: "la puerta esta abierta".to_string(),
+            actor: "user".to_string(),
+            channel: "cli".to_string(),
+            assertion_basis: "user_stated".to_string(),
+            valid_from: None,
+            valid_until: None,
+            tags: Vec::new(),
+            keywords: Vec::new(),
+            replace_keywords: false,
+            idempotency_key: None,
+            state: MemoryState::Active,
+            now: "2026-10-26T10:00:00Z".to_string(),
+        };
+        service.save(req).expect("save a project_state record");
+    }
+
+    #[test]
+    fn a_write_only_namespace_never_yields_a_block() {
+        // A profile can write a namespace it cannot read (a write-only
+        // default). The block carries whole content, so it must answer for a
+        // readable namespace only: the read allowlist is a boundary, not a
+        // hint.
+        let (mut service, _dir) = service_reading(Vec::new());
+        save_state(&mut service);
+        let block = service.session_state(NS);
+        assert!(
+            block.records.is_empty(),
+            "a write-only namespace yielded {} record(s)",
+            block.records.len()
+        );
+        assert!(
+            block.session.is_none(),
+            "a write-only namespace yielded a session"
+        );
+    }
+
+    #[test]
+    fn a_readable_namespace_still_yields_the_block() {
+        let (mut service, _dir) = service_reading(vec![NS.to_string()]);
+        save_state(&mut service);
+        let block = service.session_state(NS);
+        assert_eq!(block.records.len(), 1, "the saved record must be there");
+        assert_eq!(block.records[0].uuid, "state-1");
+        assert_eq!(block.records[0].memory_type, "project_state");
+        assert_eq!(block.records[0].content, "la puerta esta abierta");
+    }
 
     #[test]
     fn the_two_states_are_the_two_named_values() {
