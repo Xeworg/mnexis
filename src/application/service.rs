@@ -23,6 +23,11 @@ use crate::retrieval::SearchHit;
 #[path = "session_recall.rs"]
 pub mod session_recall;
 
+// The bench arms' additive state block lives beside the payloads that carry
+// it, in its own file (call-budget S4).
+#[path = "session_state.rs"]
+pub mod session_state;
+
 pub struct ServiceConfig {
     pub max_content_bytes: usize,
     pub max_query_bytes: usize,

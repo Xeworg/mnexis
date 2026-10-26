@@ -574,6 +574,9 @@ pub async fn run(cli: Cli) -> i32 {
 
 async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
     let data_dir = profile::resolve_data_dir(cli.data_dir.clone())?;
+    // The bench switch is read once per process and injected downward
+    // (call-budget S4): with it unset every shipped answer is unchanged.
+    let session_state = crate::application::resolve_session_state_mode(None);
     match &cli.command {
         Command::Version => Ok(commands::version()),
         Command::Init => commands::init(data_dir),
@@ -605,6 +608,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 budget_mode,
                 match_mode,
                 task.clone(),
+                session_state,
             )
         }
         Command::Save {
@@ -781,7 +785,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             let mut profile = Profile::open(data_dir)?;
             commands::suggest_topic_key(&mut profile, title.clone(), namespace.clone())
         }
-        Command::Status => status_cmd::status(data_dir),
+        Command::Status => status_cmd::status(data_dir, session_state),
         Command::Show { uuid, revision } => {
             let mut profile = Profile::open(data_dir)?;
             commands::show(&mut profile, uuid.clone(), *revision)

@@ -18,6 +18,7 @@ use serde::Serialize;
 
 use crate::application::MemoryService;
 use crate::application::preview::MemoryPreview;
+use crate::application::service::session_state::SessionState;
 use crate::application::workspace::current_workspace;
 use crate::domain::error::MnexisError;
 use crate::domain::repository::MemoryRepository;
@@ -36,6 +37,11 @@ pub struct WorkspaceStatus {
     /// priced projection (`MemoryPreview`): identity and a preview, the same
     /// shape `list` answers with. The full record is one `mnexis show` away.
     pub recent: Vec<MemoryPreview>,
+    /// The session-state block, when a bench arm asks for it (call-budget
+    /// S4, arm C). Absent by default, and absent from the JSON when absent:
+    /// the shipped payload has no such key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_state: Option<SessionState>,
 }
 
 /// The workspace the process runs in.
@@ -99,5 +105,6 @@ pub fn workspace_status<R: MemoryRepository>(
         },
         memory_count: service.count()?,
         recent: crate::application::previews(&recent),
+        session_state: None,
     })
 }

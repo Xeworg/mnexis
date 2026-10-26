@@ -95,6 +95,15 @@ pub struct ContextResponse {
     pub index_status: &'static str,
     pub warnings: Vec<&'static str>,
     pub empty_reason: Option<String>,
+    /// The session-state block, when a bench arm asks for it (call-budget
+    /// S4, arm B).
+    ///
+    /// Absent by default, and absent from the JSON when absent: the shipped
+    /// answer has no such key. The block is outside the budget — the counted
+    /// envelope is [`serialise_envelope`] (label, tokenizer, items) — so
+    /// turning it on never changes `items`, their order or `tokens_used`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_state: Option<crate::application::service::session_state::SessionState>,
 }
 
 const RETRIEVAL_MODE: &str = "textual";
@@ -116,6 +125,7 @@ impl ContextResponse {
             index_status: INDEX_STATUS_OK,
             warnings: warnings_for(budget),
             empty_reason: Some(reason.into()),
+            session_state: None,
         }
     }
 }
@@ -231,6 +241,7 @@ pub fn select_response(
         index_status: INDEX_STATUS_OK,
         warnings: warnings_for(budget),
         empty_reason: None,
+        session_state: None,
     })
 }
 

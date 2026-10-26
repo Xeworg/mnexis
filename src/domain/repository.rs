@@ -101,6 +101,20 @@ pub trait MemoryRepository {
         limit: usize,
     ) -> Result<Vec<Memory>, MnexisError>;
 
+    /// The most recent memories of a namespace scope, narrowed to the kinds of
+    /// thing the fact is, newest first.
+    ///
+    /// The kinds filter before the limit, so a filtered answer is not a short
+    /// one, and the newest row is the head of the list (the type block of the
+    /// bench arms reads where the project is, not where it started). Same
+    /// namespace filtering as [`MemoryRepository::list_in`].
+    fn list_typed_recent(
+        &self,
+        namespaces: &NamespaceScope,
+        memory_types: &[String],
+        limit: usize,
+    ) -> Result<Vec<Memory>, MnexisError>;
+
     /// Count the non-deleted memories in a namespace scope. Same filtering
     /// as [`MemoryRepository::list_in`], without the order or pagination.
     fn count_in(&self, namespaces: &NamespaceScope) -> Result<i64, MnexisError>;
