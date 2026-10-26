@@ -31,6 +31,17 @@ answer means this project has nothing, not that the door looked elsewhere. If
 it returns nothing, the project has no memory yet — carry on
 and record what the session produces (see "The loop").
 
+When the question is **where we left off** — "¿por dónde quedamos?", "what
+is the state of this project", resuming a session that stopped mid-task —
+the door is the answer to reach for first, pointed at the kinds that hold
+that state: `mnexis context "<the question>" --type project_state,decision`
+(or `mnexis_context` with the same type filter). The state of a project is
+recorded as `project_state` and the choices as `decision`; asking the door
+for those two kinds is what turns "where are we" from a search you have to
+sift into an answer you can read. Without the filter the door also returns
+knowledge and episodes, which is right for a task question and noise for
+a resume one.
+
 `mnexis status` answers the other half in one call: the namespace this
 workspace writes into, the read and write allowlists, how many memories the
 scope can see, and the most recent ones — each as identity and preview, so
