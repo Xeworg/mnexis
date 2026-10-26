@@ -234,7 +234,47 @@ export function sessionIdOf(ctx) {
 	}
 }
 
-export default function mnexisMemoryExtension(pi) {
+/**
+ * The five tools the bench's lean arm registers.
+ *
+ * The prefix experiment (`odd/tasks/prefix-cost.md`, S4) prices the fixed
+ * per-call prefix: every registered tool schema is billed on every model
+ * call. The lean surface keeps the door, the reads that answer a question
+ * and the write; the rest of the capability stays reachable through the CLI.
+ */
+export const LEAN_TOOL_NAMES = new Set([
+	"mnexis_workspace",
+	"mnexis_context",
+	"mnexis_search",
+	"mnexis_save",
+	"mnexis_show",
+]);
+
+/**
+ * Decide the surface: an injected flag wins, otherwise the bench's
+ * environment switch, otherwise the full shipped surface.
+ *
+ * The environment is read here and nowhere else, so a test passes the flag
+ * instead of mutating process state, and one binary can run either surface.
+ */
+export function resolveLeanTools(options = {}, env = process.env) {
+	if (typeof options.leanTools === "boolean") {
+		return options.leanTools;
+	}
+	return env.MNEXIS_BENCH_LEAN_TOOLS === "1";
+}
+
+export default function mnexisMemoryExtension(pi, options = {}) {
+	// The lean surface is a bench arm, never the shipped default: with no
+	// switch present every tool is registered.
+	const leanTools = resolveLeanTools(options);
+	const registerTool = leanTools
+		? (tool) => {
+				if (LEAN_TOOL_NAMES.has(tool.name)) {
+					pi.registerTool(tool);
+				}
+			}
+		: (tool) => pi.registerTool(tool);
 	// One client and one resolution cache per extension instance (per session).
 	const client = createClient({
 		exec: defaultExec,
@@ -481,7 +521,7 @@ export default function mnexisMemoryExtension(pi) {
 		return undefined;
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_save",
 		label: "Save a project memory",
 		promptSnippet: "Store a durable memory of this project in the local mnexis engine.",
@@ -583,7 +623,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_search",
 		label: "Search memories",
 		promptSnippet: "Recall what was recorded, across projects.",
@@ -650,7 +690,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_suggest_topic_key",
 		label: "Suggest the topic key",
 		promptSnippet: "Ask which topic key a fact is already recorded under.",
@@ -701,7 +741,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_list",
 		label: "List memories",
 		promptSnippet: "List the memories recorded, across projects.",
@@ -761,7 +801,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_show",
 		label: "Show a memory",
 		promptSnippet: "Read one stored memory by UUID.",
@@ -783,7 +823,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_history",
 		label: "The history of a memory",
 		promptSnippet: "Every revision of one memory, and why each happened.",
@@ -819,7 +859,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_session_start",
 		label: "Start the session",
 		promptSnippet: "Register the session you are running in.",
@@ -858,7 +898,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_session_end",
 		label: "End the session",
 		promptSnippet: "End the session with a summary of what it did.",
@@ -896,7 +936,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_save_prompt",
 		label: "Save what the user said",
 		promptSnippet: "Store what the user said, so it survives the session.",
@@ -927,7 +967,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_search_prompts",
 		label: "Search what the user said",
 		promptSnippet: "Find what the user asked before, across sessions.",
@@ -969,7 +1009,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_recall",
 		label: "Recall a session",
 		promptSnippet: "What a session was, in one answer.",
@@ -1029,7 +1069,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_workspace",
 		label: "This workspace, in one answer",
 		promptSnippet: "Where this session may write, and what is already there.",
@@ -1056,7 +1096,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_context",
 		label: "The context of this task",
 		promptSnippet: "Ask the project what it knows about this task, in one call.",
@@ -1159,7 +1199,7 @@ export default function mnexisMemoryExtension(pi) {
 		},
 	});
 
-	pi.registerTool({
+	registerTool({
 		name: "mnexis_supersede",
 		label: "Supersede a memory",
 		promptSnippet: "Replace an outdated memory with a newer one, keeping the history.",
