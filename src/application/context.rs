@@ -161,8 +161,8 @@ pub fn select_response(
     }
 
     // Greedy fill: take memories in deterministic order until the
-    // serialised envelope does not fit. Determinism is bm25 ASC then
-    // created_at ASC.
+    // serialised envelope does not fit. Determinism is the caller's
+    // order (the steering tier, then created_at ASC).
     let mut items: Vec<ContextItem> = Vec::with_capacity(selected.len().min(20));
     let mut accepted: Vec<Memory> = Vec::new();
     for mem in selected {
@@ -294,9 +294,15 @@ pub fn build_response(
         eligible_pairs.push(mem);
     }
     let deduped = dedup(eligible_pairs);
-    // Determinism: created_at ASC.
+    // Determinism (arm B of the steering experiment): the steering tier
+    // of the type first, then created_at ASC — the door answers "where
+    // are we" before "what is true", over what the text search matched.
     let mut selected = deduped;
-    selected.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    selected.sort_by(|a, b| {
+        crate::domain::memory_type::steering_tier(&a.memory_type)
+            .cmp(&crate::domain::memory_type::steering_tier(&b.memory_type))
+            .then_with(|| a.created_at.cmp(&b.created_at))
+    });
     select_response(budget, tokenizer_id, selected)
 }
 
@@ -440,5 +446,80 @@ mod tests {
         let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m1]).unwrap();
         assert!(out.items.is_empty());
         assert!(out.empty_reason.is_some());
+    }
+
+    #[test]
+    fn build_response_ranks_the_steering_tier_before_recency() {
+        // Arm B of the steering experiment (tmp/bench/
+        // steering-measurement.md): the door answers "where are we"
+        // first — a project_state record created LATER outranks a
+        // knowledge record created EARLIER, deterministically, with no
+        // heuristic on the task's words.
+        let budget = Budget::new(10_000, BudgetMode::Exact);
+        let mut older_knowledge = memory(
+            "u-know",
+            "the service listens on 8081",
+            "knowledge",
+            MemoryState::Active,
+        );
+        older_knowledge.created_at = "2026-01-01T00:00:00Z".into();
+        let mut newer_state = memory(
+            "u-state",
+            "the bench runs with podman",
+            "project_state",
+            MemoryState::Active,
+        );
+        newer_state.created_at = "2026-02-02T00:00:00Z".into();
+        let candidates = vec![
+            (hit("u-know", 1.0), older_knowledge),
+            (hit("u-state", 2.0), newer_state),
+        ];
+        let filter = SearchFilter {
+            memory_types: vec![],
+            valid_window: None,
+            active_only: true,
+        };
+        let out = build_response(
+            &budget,
+            SUPPORTED_TOKENIZER_V1,
+            candidates,
+            &filter,
+            "2026-03-03T00:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(
+            out.items[0].uuid, "u-state",
+            "the steering tier outranks recency"
+        );
+        assert_eq!(out.items[1].uuid, "u-know");
+    }
+
+    #[test]
+    fn build_response_keeps_recency_order_within_one_type() {
+        // The pinned behavior the tier may not move: records of the
+        // same type keep the created_at ASC order the door has today.
+        let budget = Budget::new(10_000, BudgetMode::Exact);
+        let mut older = memory("u-old", "alpha", "fact", MemoryState::Active);
+        older.created_at = "2026-01-01T00:00:00Z".into();
+        let mut newer = memory("u-new", "beta", "fact", MemoryState::Active);
+        newer.created_at = "2026-02-02T00:00:00Z".into();
+        let filter = SearchFilter {
+            memory_types: vec![],
+            valid_window: None,
+            active_only: true,
+        };
+        let out = build_response(
+            &budget,
+            SUPPORTED_TOKENIZER_V1,
+            vec![(hit("u-new", 1.0), newer), (hit("u-old", 2.0), older)],
+            &filter,
+            "2026-03-03T00:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(
+            out.items[0].uuid, "u-old",
+            "same type: older first, as today"
+        );
+        assert_eq!(out.items[1].uuid, "u-new");
     }
 }

@@ -48,6 +48,26 @@ pub const MEMORY_TYPES: [&str; 7] = [
 /// single stored row.
 pub const DEFAULT_MEMORY_TYPE: &str = "fact";
 
+/// The steering tier of a type: the order the door's ranking consults
+/// before anything else (arm B of the steering experiment — see
+/// `tmp/bench/steering-measurement.md`). Lower sorts first: the state
+/// of the project answers "where are we", the decision says what was
+/// chosen, and the episode is history. The tier is a fixed order over
+/// the closed set — never a guess about the question's words. Unknown
+/// values rank with the generic `fact`.
+pub fn steering_tier(value: &str) -> u8 {
+    match value {
+        "project_state" => 0,
+        "decision" => 1,
+        "preference" => 2,
+        "procedure" => 3,
+        "knowledge" => 4,
+        "episode" => 6,
+        // `fact`, and anything a validated write can never produce.
+        _ => 5,
+    }
+}
+
 /// True when the value is one of the types.
 pub fn is_memory_type(value: &str) -> bool {
     MEMORY_TYPES.contains(&value)

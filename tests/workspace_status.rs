@@ -398,7 +398,8 @@ fn a_title_with_a_line_break_stays_on_one_line() {
     assert!(
         lines[3].contains("el contenido con un salto"),
         "the preview's break became a space too: {text:?}"
-    );    assert!(
+    );
+    assert!(
         !text.contains('\r'),
         "no carriage return survives into the line: {text:?}"
     );
