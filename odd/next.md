@@ -430,11 +430,20 @@ bench asks a knowledge-shaped question ("¿en qué puerto
 escucha?"), while the recurring question is steering-shaped ("¿dónde
 quedamos?"), which is exactly what the typed-memory idea is for.
 
-Two debts are still open: the **re-measurement** of the door, which needs
-the bench environment (docker + the model provider) and cannot run in
-the sandbox that wrote it, and the **steering-shaped experiment** that
-the re-measurement has to precede (issue #55): whether a typed priority
-earns its place, measured with the criterion written before the numbers.
+Two debts — one closed, one next. **The re-measurement ran**
+(2026-10-26, `door-tool-report.md`, N=10 against `main`@`68ee9fd`):
+2 of its 5 criteria hold. The hand-rebuild is gone (median `mnexis_show`
+0, was 3) and quality held (10/10, zero invented) — but **the priced
+pair displaced it, not the door**: only 5/10 runs called `mnexis_context`,
+the rest answered with `workspace → list`, and the cost did not move
+(44 237 tokens vs 44 478, 7 calls vs 9). The next cost lever is the
+fixed prefix, not the door's budget. **The steering-shaped experiment is
+next** (issue #55, the user's call): whether a typed priority earns its
+place, with the criterion written before the numbers — and a design
+constraint its plan now carries: typed priority that lives only in
+`mnexis_context` reaches half the runs; the arms must cover the surfaces
+the agent actually opens (`list`/`workspace` order, or the skill pointing
+at the door).
 
 **The type axis, honest (#55, part one).** `memory_type` was half-built:
 a free-text column that travelled in every read shape and was filtered
