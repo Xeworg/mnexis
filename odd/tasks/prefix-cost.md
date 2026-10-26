@@ -96,3 +96,38 @@ is.
   criterion lives here, in the repository, instead of only in `tmp/bench`
   — the steering criterion was written in `tmp/`, which is ignored, so
   the pre-registration was not durable.
+- L5 (2026-10-26): T2 shipped in commit `94aa7b0` — the surface
+  resolution in `extensions/mnexis-memory/index.js`
+  (`resolveLeanTools(options, env)`: injected flag, then
+  `MNEXIS_BENCH_LEAN_TOOLS=1`, then the shipped fourteen) with
+  `extensions/mnexis-memory/test/surface.test.js`; extension suite
+  77/77, Rust suite 673 passed 0 failed. The native review of that
+  candidate (lineage `review-ee26900120ba335e`, tier medium, 246
+  lines, lenses risk + reliability) is APPROVED and its authority
+  burned; it left three informational WARNING findings, non-blocking
+  and not corrected here: `R3-001` index.js:260-262, `R3-002`
+  surface.test.js:56-78, `R3-003` surface.test.js:62-66 — follow-ups,
+  not a reason to re-review this candidate.
+- L6 (2026-10-26): T3 and T4 — the short skill body
+  (`tmp/bench/build-context/short-skill.md`, 4 027 bytes = 27 % of the
+  shipped 14 819), the arms verified inside their images (A registers
+  14 with and without the switch; B and C register 5 with it and 14
+  without), the images `bench-mem:prefix-a|b|c` and both binary shas —
+  A `b7c1347072fd312095661da325ddfe9265ba03ee522c05ebd63d5f0190f18623`
+  (main@68ee9fd), B and C
+  `7dcfbdf16e42b2f6096ccf283ced68cea0b0592ba8984c4e3e5d004cd41b59c0` —
+  and the batch: 60 transcripts, 40m49s, zero failed steps, 20 runs per
+  arm, every lean run valid (no run called one of the nine dropped
+  tools).
+- L7 (2026-10-26): **the experiment ran and the answer is no.** The
+  verdict and the deciding numbers (`odd/reports/prefix-cost-report.md`):
+  prefix per call A 5 046 / B 3 359 / C 3 359; phase S median A 41 964
+  at 5 model calls, B 48 739 at 7, C 44 615 at 7; quality 10/10 with
+  3/3 facts and 0 invented in every arm; phase K kept 9/10 (A), 10/10
+  (B), 10/10 (C); write path 20/20 everywhere. Rules 1, 2 and 4 hold
+  for both lean arms; rule 3 fails for both, so no arm ascends (S6).
+- L8 (2026-10-26): the disposition and the next question — the surface
+  stays the shipped fourteen; the lever is the number of model calls
+  and the accumulated transcript, not the schema block; the short skill
+  is safe and is a separate later simplification, never merged as part
+  of this result.
