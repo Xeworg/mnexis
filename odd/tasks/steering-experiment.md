@@ -50,3 +50,7 @@ retrieval input is decided by this experiment, not by argument.
   development version (`main@68ee9fd`, post-v0.3.0 by eight merges); the
   version string still says 0.3.0 — the sha is the identity until a bump
   is decided.
+- L4 (2026-10-26): correction after native review R2-001/R3-001/R3-002.
+  Tier ordering behind `MNEXIS_BENCH_STEERING_TIER=1`, default ranking
+  unchanged; arm B bakes that env var; arm C adds the pointer as a file
+  appended to the installed skill at setup, so the repo skill is B == C.

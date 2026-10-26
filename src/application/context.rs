@@ -162,7 +162,8 @@ pub fn select_response(
 
     // Greedy fill: take memories in deterministic order until the
     // serialised envelope does not fit. Determinism is the caller's
-    // order (the steering tier, then created_at ASC).
+    // order (created_at ASC, or the steering tier under the bench
+    // switch).
     let mut items: Vec<ContextItem> = Vec::with_capacity(selected.len().min(20));
     let mut accepted: Vec<Memory> = Vec::new();
     for mem in selected {
@@ -294,15 +295,18 @@ pub fn build_response(
         eligible_pairs.push(mem);
     }
     let deduped = dedup(eligible_pairs);
-    // Determinism (arm B of the steering experiment): the steering tier
-    // of the type first, then created_at ASC — the door answers "where
-    // are we" before "what is true", over what the text search matched.
+    // Production ranking: created_at ASC. Arm B sits behind a bench switch.
+    let bench_tier = std::env::var("MNEXIS_BENCH_STEERING_TIER").as_deref() == Ok("1");
     let mut selected = deduped;
-    selected.sort_by(|a, b| {
-        crate::domain::memory_type::steering_tier(&a.memory_type)
-            .cmp(&crate::domain::memory_type::steering_tier(&b.memory_type))
-            .then_with(|| a.created_at.cmp(&b.created_at))
-    });
+    if bench_tier {
+        selected.sort_by(|a, b| {
+            crate::domain::memory_type::steering_tier(&a.memory_type)
+                .cmp(&crate::domain::memory_type::steering_tier(&b.memory_type))
+                .then_with(|| a.created_at.cmp(&b.created_at))
+        });
+    } else {
+        selected.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    }
     select_response(budget, tokenizer_id, selected)
 }
 
@@ -327,6 +331,7 @@ fn dedup(mems: Vec<Memory>) -> Vec<Memory> {
 mod tests {
     use super::*;
     use crate::domain::memory::MemoryState;
+    use crate::domain::memory::MemoryState::Active;
     use crate::retrieval::fts5::SearchHit;
 
     fn memory(uuid: &str, content: &str, kind: &str, state: MemoryState) -> Memory {
@@ -448,13 +453,23 @@ mod tests {
         assert!(out.empty_reason.is_some());
     }
 
+    /// Env-dependent tests serialize; the switch gates arm B (R3-001).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn bench_switch(v: Option<&str>) {
+        // SAFETY: every caller holds ENV_LOCK.
+        let key = "MNEXIS_BENCH_STEERING_TIER";
+        unsafe { v.map_or_else(|| std::env::remove_var(key), |s| std::env::set_var(key, s)) }
+    }
+
     #[test]
     fn build_response_ranks_the_steering_tier_before_recency() {
         // Arm B of the steering experiment (tmp/bench/
         // steering-measurement.md): the door answers "where are we"
         // first — a project_state record created LATER outranks a
         // knowledge record created EARLIER, deterministically, with no
-        // heuristic on the task's words.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        bench_switch(Some("1"));
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let mut older_knowledge = memory(
             "u-know",
@@ -470,10 +485,6 @@ mod tests {
             MemoryState::Active,
         );
         newer_state.created_at = "2026-02-02T00:00:00Z".into();
-        let candidates = vec![
-            (hit("u-know", 1.0), older_knowledge),
-            (hit("u-state", 2.0), newer_state),
-        ];
         let filter = SearchFilter {
             memory_types: vec![],
             valid_window: None,
@@ -482,11 +493,15 @@ mod tests {
         let out = build_response(
             &budget,
             SUPPORTED_TOKENIZER_V1,
-            candidates,
+            vec![
+                (hit("u-know", 1.0), older_knowledge),
+                (hit("u-state", 2.0), newer_state),
+            ],
             &filter,
             "2026-03-03T00:00:00Z",
         )
         .unwrap();
+        bench_switch(None);
         assert_eq!(
             out.items[0].uuid, "u-state",
             "the steering tier outranks recency"
@@ -495,9 +510,55 @@ mod tests {
     }
 
     #[test]
+    fn build_response_keeps_created_at_order_without_the_bench_switch() {
+        // R3-001: with the switch absent the door ranks as main does.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        bench_switch(None);
+        let budget = Budget::new(10_000, BudgetMode::Exact);
+        let mut older = memory(
+            "u-know",
+            "the service listens on 8081",
+            "knowledge",
+            MemoryState::Active,
+        );
+        older.created_at = "2026-01-01T00:00:00Z".into();
+        let mut state = memory(
+            "u-state",
+            "the bench runs with podman",
+            "project_state",
+            MemoryState::Active,
+        );
+        state.created_at = "2026-02-02T00:00:00Z".into();
+        let filter = SearchFilter {
+            memory_types: vec![],
+            valid_window: None,
+            active_only: true,
+        };
+        for switch in [None, Some("0")] {
+            bench_switch(switch);
+            let out = build_response(
+                &budget,
+                SUPPORTED_TOKENIZER_V1,
+                vec![
+                    (hit("u-know", 1.0), older.clone()),
+                    (hit("u-state", 2.0), state.clone()),
+                ],
+                &filter,
+                "2026-03-03T00:00:00Z",
+            )
+            .unwrap();
+            assert_eq!(out.items[0].uuid, "u-know", "default: oldest first");
+            assert_eq!(out.items[1].uuid, "u-state");
+        }
+        bench_switch(None);
+    }
+
+    #[test]
     fn build_response_keeps_recency_order_within_one_type() {
         // The pinned behavior the tier may not move: records of the
         // same type keep the created_at ASC order the door has today.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        bench_switch(Some("1"));
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let mut older = memory("u-old", "alpha", "fact", MemoryState::Active);
         older.created_at = "2026-01-01T00:00:00Z".into();
@@ -516,6 +577,7 @@ mod tests {
             "2026-03-03T00:00:00Z",
         )
         .unwrap();
+        bench_switch(None);
         assert_eq!(
             out.items[0].uuid, "u-old",
             "same type: older first, as today"
