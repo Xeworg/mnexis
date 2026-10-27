@@ -153,3 +153,13 @@ the user decides when they open.
   a project before `git init` gets the same one question; the CLI's refusal
   stays inside repositories, where the silent fall-through was measured, and
   the profile's default namespace keeps deciding outside one.
+- L8 (2026-10-27, the delivery, recorded because the record has to match the
+  repository). PR #79 (engine) merged into `main`, and PR #80 merged next —
+  into its own base, `feat/auto-namespace-engine`, not into `main`, so the
+  extension slice and the docs were left on a branch while the engine reached
+  `main`. The repair is `feat/auto-namespace-delivery` off `main` carrying the
+  two extension commits and the folder-candidate commit (this one), with the
+  conflict in this document resolved by keeping both logs. The lesson is
+  mechanical: in a stack, the child PR has to be retargeted to the default
+  branch before it is merged, because merging it into its parent delivers it
+  to the parent and not to the repository.

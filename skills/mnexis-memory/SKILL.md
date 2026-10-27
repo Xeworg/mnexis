@@ -114,8 +114,9 @@ recorded in the profile (`projects.toml`). Resolve it before saving:
    prints the same binding together with the allowlists, in one call.
 3. **First visit (no binding):** read the candidate the engine offers —
    `mnexis status --json` publishes `workspace.candidate_namespace` (the
-   last segment of the git remote, lowercased, or the repository
-   directory's own name) and `workspace.candidate_refusal` when it will not
+   last segment of the git remote, lowercased, or the name of the
+   directory that names the workspace — the repository root, or the working
+   directory itself) and `workspace.candidate_refusal` when it will not
    offer one. Ask the human **once per workspace**, naming the namespace,
    the key, the path and the two permissions a yes grants (the binding
    widens the read scope, the allowlist adds the write one), then record it:

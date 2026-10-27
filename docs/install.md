@@ -237,8 +237,9 @@ Behaviour:
 
 The extension resolves the workspace key canonically
 (`git:github.com-xeworg-mnexis`), derives the namespace the workspace would
-take — the last segment of the git remote, lowercased, or the repository
-directory's own name — and asks you **once per workspace**: the question names
+take — the last segment of the git remote, lowercased, or the name of the
+directory that names the workspace (the repository root, or the working
+directory itself) — and asks you **once per workspace**: the question names
 the namespace, the key, the path, and the two permissions a yes grants (the
 binding widens the read scope, the profile allowlist adds the write one).
 After that grant the agent stores memories on its own. In a headless session

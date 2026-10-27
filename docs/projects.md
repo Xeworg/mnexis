@@ -119,8 +119,10 @@ The `mnexis-memory` skill implements this for AI agents:
 2. `mnexis project list` — if the key is bound, use that namespace.
 3. Otherwise ask the engine what the workspace would be called:
    `mnexis status --json` publishes `workspace.candidate_namespace` (the
-   last segment of the git remote, lowercased, or the repository
-   directory's own name) and, when it refuses to offer one, the reason in
+   last segment of the git remote, lowercased, or the name of the
+   directory that names the workspace — the repository root, or the working
+   directory itself, because a new project before `git init` still has a
+   name) and, when it refuses to offer one, the reason in
    `workspace.candidate_refusal`. The pi extension puts that candidate to
    the human as **one question per workspace**, naming the namespace, the
    key, the path and the two permissions a yes grants, and runs

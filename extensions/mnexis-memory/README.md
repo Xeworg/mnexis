@@ -106,8 +106,9 @@ workspace:
 3. A workspace with no binding and no `.mnexis-namespace` marker has **no**
    namespace yet, and the engine offers the one it would take
    (`mnexis status --json` → `workspace.candidate_namespace`: the last
-   segment of the git remote, lowercased, or the repository directory's own
-   name; `workspace.candidate_refusal` when it will not offer one). The
+   segment of the git remote, lowercased, or the name of the directory that
+   names the workspace (the repository root, or the working directory
+   itself); `workspace.candidate_refusal` when it will not offer one). The
    extension never names a workspace itself: it puts that candidate to the
    human as one question, and a declined question writes nothing. A marker
    names the candidate too — the human wrote it down, so it wins over the
