@@ -308,7 +308,8 @@ pub enum Command {
     SuggestTopicKey {
         /// The title you are about to record (positional)
         title: String,
-        /// Namespace (default: the profile's default_namespace)
+        /// Namespace to ask about (default: the namespace this workspace
+        /// writes into; the profile's default_namespace outside one)
         #[arg(long)]
         namespace: Option<String>,
     },
