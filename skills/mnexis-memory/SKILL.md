@@ -106,16 +106,28 @@ recorded in the profile (`projects.toml`). Resolve it before saving:
    - Without git: the key is `path:<absolute working directory>`. A
      `.mnexis-namespace` marker at or above the working directory names the
      namespace of the workspace (both the CLI and this extension read
-     it); it does not change the key, and a binding always wins over it.
+     it); it does not change the key, a binding always wins over it, and it
+     **grants nothing**: it only names the candidate a human is asked
+     about.
 2. **Look it up:** `mnexis project list` prints `key -> namespace`. If the
    key is listed, use that namespace — never rename it. `mnexis status`
    prints the same binding together with the allowlists, in one call.
-3. **First visit (no binding):** choose a short, lowercase, hyphenated
-   name from the workspace (usually the repository or directory name) and
-   record it: `mnexis project bind <name> --key <key> --path <root>`.
-   A key that is already bound to another namespace is refused; that
-   refusal means the memories live under the old name — keep it, or ask
-   the human before using `--force`.
+3. **First visit (no binding):** read the candidate the engine offers —
+   `mnexis status --json` publishes `workspace.candidate_namespace` (the
+   last segment of the git remote, lowercased, or the name of the
+   directory that names the workspace — the repository root, or the working
+   directory itself) and `workspace.candidate_refusal` when it will not
+   offer one. Ask the human **once per workspace**, naming the namespace,
+   the key, the path and the two permissions a yes grants (the binding
+   widens the read scope, the allowlist adds the write one), then record it:
+   `mnexis project bind <candidate> --key <key> --path <root>`. A key that
+   is already bound to another namespace is refused; that refusal means the
+   memories live under the old name — keep it, or ask the human before
+   using `--force`. The pi extension does this step for you: it puts the
+   candidate to the human as one question and runs the same command. A save
+   without `--namespace` inside an unbound repository is refused with the
+   candidate and the two commands — it never falls into the profile's
+   default namespace, so do not work around it.
 4. **Authorize it:** a namespace only accepts writes when it is in the
    profile allowlist. `mnexis save --namespace <name>` fails with
    `NOT_FOUND namespace:<name>` until it is allowed. Permissions belong to

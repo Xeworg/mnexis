@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+	deriveWorkspaceCandidate,
 	findMarkerNamespace,
 	normalizeRemoteUrl,
 	selectNamespace,
@@ -102,4 +103,52 @@ test("findMarkerNamespace answers null when there is no marker", () => {
 		throw new Error("ENOENT");
 	};
 	assert.equal(findMarkerNamespace("/w/project", { readFile }), null);
+});
+
+// --- the candidate namespace, the one fallback the engine cannot answer ---
+//
+// `resolveWorkspace` reads the candidate from `mnexis status --json`; this
+// derivation runs only when the engine cannot be asked, and it has to follow
+// the same rules so the two answers never disagree.
+
+test("deriveWorkspaceCandidate takes the last segment of the remote", () => {
+	assert.deepEqual(deriveWorkspaceCandidate({ remote: "https://github.com/Xeworg/Nodexar.git" }), {
+		namespace: "nodexar",
+		refusal: null,
+	});
+	// A dashed repository name keeps its dashes: the name is the remote's
+	// last segment, not a piece of the normalized key.
+	assert.equal(
+		deriveWorkspaceCandidate({ remote: "git@github.com:Xeworg/my-project.git" }).namespace,
+		"my-project",
+	);
+});
+
+test("deriveWorkspaceCandidate names the folder when there is no remote", () => {
+	// A repository without a remote is named by its root.
+	assert.equal(
+		deriveWorkspaceCandidate({ remote: null, repoRoot: "/w/MyProject" }).namespace,
+		"myproject",
+	);
+	// A directory that is not a repository is named by its own folder: a new
+	// project before `git init` still has a name.
+	assert.equal(
+		deriveWorkspaceCandidate({ remote: null, cwd: "/w/Nuevo-Proyecto" }).namespace,
+		"nuevo-proyecto",
+	);
+	// The repository root wins over the working directory inside it.
+	assert.equal(
+		deriveWorkspaceCandidate({ remote: null, repoRoot: "/w/Proyecto", cwd: "/w/Proyecto/sub" })
+			.namespace,
+		"proyecto",
+	);
+});
+
+test("deriveWorkspaceCandidate refuses the reserved name and offers nothing with no folder", () => {
+	assert.match(
+		deriveWorkspaceCandidate({ remote: null, cwd: "/w/GLOBAL" }).refusal,
+		/global/,
+		"`global` is reserved and never offered",
+	);
+	assert.deepEqual(deriveWorkspaceCandidate({}), { namespace: null, refusal: null });
 });

@@ -614,20 +614,31 @@ fn status_offers_the_candidate_namespace_of_an_unbound_repository() {
 }
 
 #[test]
-fn status_offers_no_candidate_outside_a_repository() {
+fn status_offers_the_folders_own_name_outside_a_repository() {
     let p = Profile::new();
-    // A directory outside every repository: the candidate belongs to a
-    // project, and this is not one.
-    let outside = tempfile::Builder::new()
-        .prefix("mnexis-outside-")
+    // A new project before `git init`: no repository, and still a name a
+    // human can be asked about — the directory's own.
+    let folder = tempfile::Builder::new()
+        .prefix("mnexis-nuevo-")
         .tempdir_in("/tmp")
         .expect("a directory outside any repository");
+    let name = folder
+        .path()
+        .file_name()
+        .expect("the folder has a name")
+        .to_string_lossy()
+        .to_lowercase();
 
-    let status = status_json(&p, outside.path());
+    let status = status_json(&p, folder.path());
 
+    assert_eq!(
+        status["workspace"]["candidate_namespace"].as_str(),
+        Some(name.as_str()),
+        "the folder names the workspace it would become: {status}"
+    );
     assert!(
-        status["workspace"]["candidate_namespace"].is_null(),
-        "no repository, no candidate: {status}"
+        status["workspace"]["namespace"].is_null(),
+        "offering the name is not binding it: {status}"
     );
 }
 

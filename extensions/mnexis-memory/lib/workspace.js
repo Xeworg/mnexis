@@ -59,6 +59,10 @@ export function workspaceKey({ remote, repoRoot, cwd }) {
  * name of a directory is never a namespace — inventing one leaves the
  * workspace bound to a namespace the allowlist does not know, and the
  * write is refused with a dead end the agent cannot get out of.
+ *
+ * A marker names, it never grants: the namespace it returns here with
+ * `bound: false` is a candidate the human is asked about, and only the
+ * human's confirmation binds it (auto-namespace S6).
  */
 export function selectNamespace({ bindings, key, fallbackName }) {
 	const list = Array.isArray(bindings) ? bindings : [];
@@ -112,4 +116,117 @@ export function findMarkerNamespace(startPath, options = {}) {
 /** Read a file as UTF-8. Injected in the tests. */
 function defaultReadFile(file) {
 	return readFileSync(file, "utf8");
+}
+
+/** The reserved namespace no workspace may be bound to (S2, S4). */
+const RESERVED_GLOBAL = "global";
+
+/** Why a workspace with no usable name offers no candidate. */
+export const NO_NAME_REFUSAL =
+	"this workspace has no name to offer: name its namespace yourself with " +
+	"`mnexis project bind <namespace> --key <key>`";
+
+/** Why the reserved namespace is never offered as a candidate. */
+export const RESERVED_GLOBAL_REFUSAL =
+	"`global` is reserved and a workspace cannot be bound to it: pick another " +
+	"namespace with `mnexis project bind <namespace> --key <key>`";
+
+/**
+ * The candidate namespace the engine published for this workspace, read
+ * from `mnexis status --json` (auto-namespace S2).
+ *
+ * `answered` tells "the engine says there is no candidate" (outside a
+ * repository, which is not a project) apart from "the engine could not be
+ * asked"; only the second case leaves the extension to derive the name
+ * itself.
+ *
+ * @param {unknown} statusData
+ * @returns {{ answered: boolean, namespace: string | null, refusal: string | null }}
+ */
+export function readWorkspaceCandidate(statusData) {
+	const workspace =
+		statusData && typeof statusData === "object" ? statusData.workspace : null;
+	if (!workspace || typeof workspace !== "object") {
+		return { answered: false, namespace: null, refusal: null };
+	}
+	// Only the reserved name and an empty name are vetted here: whatever
+	// else the engine derived is the engine's answer. `global` never reaches
+	// the human through this path, even when an engine publishes it as a
+	// candidate instead of refusing it (auto-namespace S4).
+	const published =
+		typeof workspace.candidate_namespace === "string" && workspace.candidate_namespace !== ""
+			? candidateName(workspace.candidate_namespace)
+			: { namespace: null, refusal: null };
+	const refusal =
+		typeof workspace.candidate_refusal === "string" && workspace.candidate_refusal !== ""
+			? workspace.candidate_refusal
+			: published.refusal;
+	return { answered: true, namespace: refusal ? null : published.namespace, refusal };
+}
+
+/**
+ * The candidate the marker names, which is still only a candidate (S6).
+ *
+ * @param {string | null} marker
+ * @returns {{ namespace: string | null, refusal: string | null }}
+ */
+export function candidateFromMarker(marker) {
+	return candidateName(marker);
+}
+
+/**
+ * Derive the candidate namespace with the S2 rules, for the one case the
+ * engine cannot answer: the last segment of the normalized remote,
+ * lowercased, or the name of the directory that names the workspace — the
+ * repository root, or the working directory itself, because a new project
+ * before `git init` still has a name.
+ *
+ * This is the extension's copy of the engine's rule, never a second source
+ * of truth: `resolveWorkspace` reads the engine's answer first and falls
+ * back here only when `mnexis status` cannot be asked.
+ *
+ * @param {{ remote?: string | null, repoRoot?: string | null, cwd?: string | null }} input
+ * @returns {{ namespace: string | null, refusal: string | null }}
+ */
+export function deriveWorkspaceCandidate({ remote, repoRoot, cwd } = {}) {
+	const tail = remoteTail(remote);
+	if (tail !== null) {
+		return candidateName(tail);
+	}
+	// The directory that names the workspace: the repository root when there
+	// is one, the working directory otherwise. The engine lowercases it the
+	// same way.
+	const dir = repoRoot || cwd;
+	if (!dir) {
+		// The working directory could not be read: nothing to name.
+		return { namespace: null, refusal: null };
+	}
+	return candidateName(path.basename(String(dir)).toLowerCase());
+}
+
+/** The last path segment of a remote, without `.git` and lowercased. */
+function remoteTail(remote) {
+	if (typeof remote !== "string") {
+		return null;
+	}
+	const trimmed = remote.trim().replace(/\/+$/, "");
+	if (trimmed === "") {
+		return null;
+	}
+	const parts = trimmed.split(/[/:]/).filter((part) => part !== "");
+	const last = parts.length > 0 ? parts[parts.length - 1] : "";
+	const tail = last.replace(/\.git$/i, "").trim().toLowerCase();
+	return tail === "" || tail === "." || tail === ".." ? null : tail;
+}
+
+/** Normalize and vet one candidate name: the engine's refusal rules. */
+function candidateName(name) {
+	const trimmed = typeof name === "string" ? name.trim() : "";
+	if (trimmed === "") {
+		return { namespace: null, refusal: NO_NAME_REFUSAL };
+	}
+	if (trimmed === RESERVED_GLOBAL) {
+		return { namespace: null, refusal: RESERVED_GLOBAL_REFUSAL };
+	}
+	return { namespace: trimmed, refusal: null };
 }
