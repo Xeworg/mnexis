@@ -347,6 +347,15 @@ impl MemoryRepository for SqliteMemoryRepository {
         self.list_filtered(namespaces, None, limit, 0, false, true, &[])
     }
 
+    fn list_typed_recent(
+        &self,
+        namespaces: &NamespaceScope,
+        memory_types: &[String],
+        limit: usize,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        self.list_filtered(namespaces, None, limit, 0, false, true, memory_types)
+    }
+
     fn count_in(&self, namespaces: &NamespaceScope) -> Result<i64, MnexisError> {
         let Some((filter, param_refs)) = filter_sql(namespaces, None, false, &[]) else {
             return Ok(0);
@@ -819,21 +828,21 @@ impl MemoryRepository for SqliteMemoryRepository {
                 ],
             )
             .map_err(sql_to_domain)?;
-            if let Some(tags) = tags {
-                if !tags.is_empty() {
+            if let Some(tags) = tags
+                && !tags.is_empty()
+            {
+                tx.execute(
+                    "DELETE FROM memory_tags WHERE memory_uuid = ?1",
+                    [history.memory_uuid.as_str()],
+                )
+                .map_err(sql_to_domain)?;
+                for tag in tags {
                     tx.execute(
-                        "DELETE FROM memory_tags WHERE memory_uuid = ?1",
-                        [history.memory_uuid.as_str()],
+                        "INSERT INTO memory_tags (memory_uuid, tag, created_at) \
+                             VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+                        params![history.memory_uuid, tag],
                     )
                     .map_err(sql_to_domain)?;
-                    for tag in tags {
-                        tx.execute(
-                            "INSERT INTO memory_tags (memory_uuid, tag, created_at) \
-                             VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
-                            params![history.memory_uuid, tag],
-                        )
-                        .map_err(sql_to_domain)?;
-                    }
                 }
             }
             let mut stmt = tx

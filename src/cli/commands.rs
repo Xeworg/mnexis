@@ -1276,6 +1276,10 @@ fn write_output(path: Option<&std::path::Path>, body: &str) -> Result<(), Mnexis
 }
 
 /// `mnexis context TASK` — the PRD §9 budgeted context pipeline.
+///
+/// `session_state` is the bench switch, read once at the CLI edge and injected
+/// (call-budget S4): `door` adds the state block to the answer, and every other
+/// value leaves the shipped answer exactly as it was.
 #[allow(clippy::too_many_arguments)]
 pub fn context(
     profile: &Profile,
@@ -1287,6 +1291,7 @@ pub fn context(
     budget_mode: &str,
     match_mode: &str,
     task: String,
+    session_state: crate::application::SessionStateMode,
 ) -> Result<CommandOutcome, MnexisError> {
     use crate::application::budget::BudgetMode;
     use crate::application::{ContextRequest, SearchFilter};
@@ -1333,7 +1338,16 @@ pub fn context(
         now: crate::cli::profile::now_rfc3339(),
     };
     let read_scope = profile.service_ref().scope().read_scope_mode();
-    let response = profile.service_ref().context(&req)?;
+    let mut response = profile.service_ref().context(&req)?;
+    // The block rides the answer, outside the envelope the budget counts: the
+    // budgeted items keep their selection and their order (call-budget S4).
+    if session_state.is_door() {
+        response.session_state = Some(
+            profile
+                .service_ref()
+                .session_state(&response.searched_namespace),
+        );
+    }
     let mut json = serde_json::to_value(&response)
         .map_err(|e| MnexisError::invalid_argument("context", format!("serialise: {e}")))?;
     if let Some(object) = json.as_object_mut() {
@@ -1406,7 +1420,7 @@ pub fn import(
     policy: &str,
     input: Option<std::path::PathBuf>,
 ) -> Result<CommandOutcome, MnexisError> {
-    let policy = ConflictPolicy::from_str(policy)?;
+    let policy: ConflictPolicy = policy.parse()?;
     let body = read_input(input.as_deref())?;
     // The workspace boundary applies to a bulk import as well: a record
     // that belongs to another project is not written here. The records

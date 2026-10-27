@@ -95,6 +95,15 @@ pub struct ContextResponse {
     pub index_status: &'static str,
     pub warnings: Vec<&'static str>,
     pub empty_reason: Option<String>,
+    /// The session-state block, when a bench arm asks for it (call-budget
+    /// S4, arm B).
+    ///
+    /// Absent by default, and absent from the JSON when absent: the shipped
+    /// answer has no such key. The block is outside the budget — the counted
+    /// envelope is [`serialise_envelope`] (label, tokenizer, items) — so
+    /// turning it on never changes `items`, their order or `tokens_used`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_state: Option<crate::application::service::session_state::SessionState>,
 }
 
 const RETRIEVAL_MODE: &str = "textual";
@@ -116,6 +125,7 @@ impl ContextResponse {
             index_status: INDEX_STATUS_OK,
             warnings: warnings_for(budget),
             empty_reason: Some(reason.into()),
+            session_state: None,
         }
     }
 }
@@ -213,7 +223,7 @@ pub fn select_response(
                 // A non-supported id in exact mode is a contract
                 // violation: surface as BudgetTooSmall. Tests pin
                 // this with `check_with_tokenizer`.
-                let _ = budget.check_with_tokenizer(tokenizer_id, tokens_used)?;
+                budget.check_with_tokenizer(tokenizer_id, tokens_used)?;
                 SUPPORTED_TOKENIZER_V1
             }
         }
@@ -231,6 +241,7 @@ pub fn select_response(
         index_status: INDEX_STATUS_OK,
         warnings: warnings_for(budget),
         empty_reason: None,
+        session_state: None,
     })
 }
 
@@ -281,14 +292,12 @@ pub fn build_response(
         {
             continue;
         }
-        if let Some((vf, _vu)) = &filter.valid_window {
-            if let Some(vf) = vf {
-                if let Some(actual) = mem.valid_from.as_deref() {
-                    if actual > vf.as_str() {
-                        continue;
-                    }
-                }
-            }
+        if let Some((vf, _vu)) = &filter.valid_window
+            && let Some(vf) = vf
+            && let Some(actual) = mem.valid_from.as_deref()
+            && actual > vf.as_str()
+        {
+            continue;
         }
         let _ = now;
         eligible_pairs.push(mem);
@@ -321,7 +330,6 @@ fn dedup(mems: Vec<Memory>) -> Vec<Memory> {
 mod tests {
     use super::*;
     use crate::domain::memory::MemoryState;
-    use crate::retrieval::fts5::SearchHit;
 
     fn memory(uuid: &str, content: &str, kind: &str, state: MemoryState) -> Memory {
         Memory {
@@ -345,20 +353,6 @@ mod tests {
             actor: "user".into(),
             channel: "cli".into(),
             assertion_basis: "user_stated".into(),
-        }
-    }
-
-    fn hit(uuid: &str, rank: f64) -> SearchHit {
-        SearchHit {
-            uuid: uuid.into(),
-            rank,
-            namespace: "default".into(),
-            memory_type: "fact".into(),
-            state: "active".into(),
-            revision: 1,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            valid_from: None,
-            valid_until: None,
         }
     }
 

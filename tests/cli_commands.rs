@@ -2190,9 +2190,7 @@ fn import_rejects_topic_key_already_occupied_by_another_record() {
 #[test]
 fn import_validation_rejects_oversized_input() {
     let b = namespaced_profile(&["ns-a"]);
-    let big = std::iter::repeat("x")
-        .take(51 * 1024 * 1024)
-        .collect::<String>();
+    let big = std::iter::repeat_n("x", 51 * 1024 * 1024).collect::<String>();
     let path = write_tmp("big.jsonl", &big);
     let out = b.run_silent(&["import", "--input", path.to_str().expect("utf8")]);
     assert_eq!(out.status.code(), Some(2));
@@ -2254,7 +2252,7 @@ fn context_exact_mode_returns_items_and_pins_a_07_invariant() {
     assert_eq!(json["budget_enforcement"], "exact");
     assert_eq!(json["tokenizer_id"], "supported-tokenizer-v1");
     assert_eq!(json["retrieval_mode"], "textual");
-    assert!(json["items"].as_array().expect("items").len() >= 1);
+    assert!(!json["items"].as_array().expect("items").is_empty());
     let tokens_used = json["tokens_used"].as_i64().expect("tokens_used");
     assert!(tokens_used > 0, "tokens_used must be > 0");
     assert!(tokens_used <= 1024, "A-07: tokens_used <= token_budget");

@@ -60,19 +60,15 @@ impl Operation {
 /// How the service reports an out-of-scope access.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ExistenceDisclosure {
     /// Return `NotFound` to avoid disclosing the existence of records the
     /// caller cannot see. This is the default.
+    #[default]
     NotFound,
     /// Return `Forbidden` when the operator explicitly wants the caller to
     /// know they were denied.
     Forbid,
-}
-
-impl Default for ExistenceDisclosure {
-    fn default() -> Self {
-        ExistenceDisclosure::NotFound
-    }
 }
 
 /// The mode a read without an explicit namespace is bounded by.

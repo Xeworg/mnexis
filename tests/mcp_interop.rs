@@ -1668,7 +1668,10 @@ async fn memory_workspace_prices_the_recent_memories() -> Result<(), Box<dyn std
     // A content longer than the preview cut, so the pricing is observable:
     // the first answer must carry the identity and the preview, never the
     // whole record (#53).
-    let long = format!("la memoria larga empieza acá {} y sigue un buen rato más", "palabra ".repeat(40));
+    let long = format!(
+        "la memoria larga empieza acá {} y sigue un buen rato más",
+        "palabra ".repeat(40)
+    );
     call_tool_text(
         &client,
         "memory_save",
@@ -1694,7 +1697,7 @@ async fn memory_workspace_prices_the_recent_memories() -> Result<(), Box<dyn std
         "the recent list names what each memory is: {parsed}"
     );
     assert!(
-        entry["preview"].as_str().map_or(false, |p| p.ends_with('…')),
+        entry["preview"].as_str().is_some_and(|p| p.ends_with('…')),
         "the recent list carries the preview, cut with an ellipsis when it was cut: {parsed}"
     );
     assert!(

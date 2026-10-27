@@ -1,8 +1,9 @@
 # The board — what is done, what is open, what comes next
 
-**Last updated:** 2026-10-26 (item 6 in main with #50; the install-order trap
-closed with #52; the trigger measured — the premise was false, and the road
-moved to the door). Read this first in a new session, then the
+**Last updated:** 2026-10-26 (item 9: the call budget measured — one
+complete answer buys the round back, and the block ascends on the door;
+before that: the identity work through #66, the door and its re-measures,
+the trigger, the prefix). Read this first in a new session, then the
 feature document of whatever you pick.
 
 ## Where we are
@@ -472,3 +473,62 @@ is reported, not invented, and a key another record already holds is not
 written: merging two facts is the agent's decision, not the doctor's.
 The fact does not change, so the revision does not move and the history
 keeps what it says: only the missing identity is filled.
+
+### 9. The call budget — one complete answer buys the round back
+
+The prefix experiment (`tmp/bench/prefix-cost-report.md`) priced the tool
+schema and lost: the saving per call was real and the bill still went **up**,
+because the lean arms needed two extra calls — each model call bills the
+fixed prefix (~5 046 tokens) **plus the whole accumulated transcript**. The
+lever is the number of calls, so the next experiment put a **session-state
+block** (the namespace's `project_state`/`decision` records with full
+content, plus the last session summary) on a surface the agent already
+opens, and asked whether one complete answer stops the fan-out
+(`odd/tasks/call-budget.md`, criterion committed before any arm,
+`84eb092` on `bench/call-budget`).
+
+Three arms × two phases × N=10, same model, same fixture: A the shipped
+surfaces, B the block on the door (`mnexis context`), C the block on
+`status`/workspace — the block behind `MNEXIS_BENCH_SESSION_STATE`, read
+once and injected, the shipped behavior untouched with the variable
+absent. The batch survived its own interruption (the memory guard killed
+it mid-run; the arm resumed with the same image and seeds, nothing
+re-rolled) and the protocol is recorded pre-numbers
+(`tmp/bench/calls-measurement.md`).
+
+| phase S ("¿por dónde quedamos?") | A | B door | C workspace |
+| --- | --- | --- | --- |
+| median model calls | 6.0 | **5.0** | **5.0** |
+| median input+cacheRead | 48 771 | **37 121** (−24 %) | 41 752 (−14 %) |
+| 3/3 state facts stated | 9/10 | **10/10** | **10/10** |
+| invented / trap broken | 0 / 0 | 0 / 0 | 0 / 0 |
+
+And in phase K (the trap) only B also saved (−0.5 calls, −20 % tokens);
+C's K did not move. The prefix was 5 046 in every arm: the block is
+payload, not schema — every token saved came from **fewer calls**.
+
+**Which round disappeared** (rule 6, `calls-rounds-dump.txt`): the rebuild
+rounds. A's tail is `(workspace,context) | (list,recall) |
+(show,show,show,search_prompts) | (search,list) | (history,show) | answer`;
+B's floor is `(workspace,context) | (list,recall) | answer`. The agent
+cross-checks one answer before trusting it — the `list+recall` round
+survives in every run of every arm — so the fan-out was a payload problem,
+not a trust problem.
+
+**The verdict, honestly:** rules 1–5 hold for both arms, with rule 3 (the
+prize is a round) **exactly at the boundary** — the ceiling is this batch's
+A − 1 = 5.0 and both arms sit on it; the doc's "≤ 4.0" parenthetical was a
+stale projection (A re-measured 6.0 with the same image). The direction is
+consistent everywhere (calls, rounds, tokens, B's K too) but the margin is
+one median call at N=10.
+
+**The decision (S6, pre-registered): the block ascends on the door, only
+there.** B dominates C on every measured axis, and the agent's own runs
+pick the surface: it opens `(workspace,context)` in round 1 every time and
+answers from the door 9/10 — C's block on workspace never made workspace
+the answer surface (8/10 still door), so workspace keeps its priced shape
+(#56). The ascent itself — ship the `session_state` block as the behavior
+of `mnexis context`/`mnexis_context`, outside the budgeted envelope, with
+the read-scope guard from `feb579a` — is the next product step, with its
+own review. Artifacts: `tmp/bench/calls-{measurement,report}.md`, copy in
+`/home/xeworg/lab/mnexis-bench/call-budget/`.

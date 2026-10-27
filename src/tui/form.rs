@@ -29,6 +29,13 @@ pub struct WriteOutcome {
     pub namespace: String,
 }
 
+/// `Form::submit` rejected the write: nothing was stored, the form stays
+/// open, and the human-readable reason is in `Form::error` (also shown in
+/// the status line). A unit type, on purpose: the payload is the form state
+/// the caller already holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubmitRejected;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormKind {
     Save,
@@ -239,10 +246,10 @@ impl Form {
     }
 
     pub fn newline(&mut self) {
-        if let Some(field) = self.fields.get_mut(self.index) {
-            if field.multiline {
-                field.value.push('\n');
-            }
+        if let Some(field) = self.fields.get_mut(self.index)
+            && field.multiline
+        {
+            field.value.push('\n');
         }
     }
 
@@ -297,9 +304,10 @@ impl Form {
         }
     }
 
-    /// Validate and write. On failure the form stays open, `error` explains
-    /// why, and `reload_offered` marks the revision-conflict recovery path.
-    pub fn submit(&mut self, service: &mut AppService) -> Result<WriteOutcome, ()> {
+    /// Validate and write. On failure the form stays open and `error`
+    /// explains why — `SubmitRejected` carries no payload because the
+    /// reason already lives in the form state the caller re-renders.
+    pub fn submit(&mut self, service: &mut AppService) -> Result<WriteOutcome, SubmitRejected> {
         self.error = None;
         self.reload_offered = false;
         let result = match self.kind {
@@ -328,7 +336,7 @@ impl Form {
                     }
                     SubmitFailure::Service(e) => self.error = Some(e.to_string()),
                 }
-                Err(())
+                Err(SubmitRejected)
             }
         }
     }

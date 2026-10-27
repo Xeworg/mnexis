@@ -160,7 +160,7 @@ mod tests {
             "{uuid}"
         );
         assert!(uuid.starts_with(|c: char| c.is_ascii_hexdigit()));
-        assert_eq!(parts[2].starts_with('4'), true, "version nibble: {uuid}");
+        assert!(parts[2].starts_with('4'), "version nibble: {uuid}");
         assert!(
             parts[3].starts_with('8')
                 || parts[3].starts_with('9')
