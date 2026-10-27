@@ -121,7 +121,10 @@ fn a_malformed_registry_does_not_break_the_read_commands() {
     // The namespace is explicit on purpose: a namespace-less save inside a
     // repository that no binding names is refused (auto-namespace S5), and
     // this test is about the registry, not about the workspace.
-    let saved = run(dir, &["--json", "save", "--namespace", "default", "una memoria"]);
+    let saved = run(
+        dir,
+        &["--json", "save", "--namespace", "default", "una memoria"],
+    );
     assert!(saved.status.success(), "save failed: {}", stderr_of(&saved));
 
     std::fs::write(

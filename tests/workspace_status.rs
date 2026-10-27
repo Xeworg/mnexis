@@ -709,7 +709,10 @@ fn a_save_without_namespace_outside_a_repository_keeps_the_profiles_default() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let listed = p.run_in_dir(outside.path(), &["list", "--namespace", "default", "--full"]);
+    let listed = p.run_in_dir(
+        outside.path(),
+        &["list", "--namespace", "default", "--full"],
+    );
     let listed = stdout_json(&listed);
     assert_eq!(
         listed["items"].as_array().map(Vec::len),

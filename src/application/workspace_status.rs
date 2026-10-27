@@ -82,17 +82,18 @@ pub fn workspace_status<R: MemoryRepository>(
     data_dir: &Path,
     recent_limit: usize,
 ) -> Result<WorkspaceStatus, MnexisError> {
-    let (key, namespace, candidate_namespace, candidate_refusal) = match current_workspace(data_dir)? {
-        Some(workspace) => (
-            workspace.key,
-            workspace.namespace,
-            workspace.candidate_namespace,
-            workspace.candidate_refusal,
-        ),
-        // A working directory the process cannot read leaves the key empty:
-        // the payload keeps its shape and the allowlists keep deciding.
-        None => (String::new(), None, None, None),
-    };
+    let (key, namespace, candidate_namespace, candidate_refusal) =
+        match current_workspace(data_dir)? {
+            Some(workspace) => (
+                workspace.key,
+                workspace.namespace,
+                workspace.candidate_namespace,
+                workspace.candidate_refusal,
+            ),
+            // A working directory the process cannot read leaves the key empty:
+            // the payload keeps its shape and the allowlists keep deciding.
+            None => (String::new(), None, None, None),
+        };
     let scope = service.scope();
     // The workspace namespace is the agent's home when it can read it.
     // Otherwise the recent list falls back to the readable scope while the
