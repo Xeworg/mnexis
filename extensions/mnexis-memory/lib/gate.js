@@ -75,3 +75,39 @@ export function decideAuthorization({ namespace, writeNamespaces, hasUI, mode })
 export function allowNamespaceCommand(namespace) {
 	return `mnexis config allow-namespace ${namespace}`;
 }
+
+/** The exact command a human must run to bind a workspace. */
+export function bindCommand(namespace, key, path) {
+	return `mnexis project bind ${namespace} --key ${key} --path ${path}`;
+}
+
+/**
+ * Decide what to do about an unbound workspace that offers a candidate
+ * namespace (auto-namespace S3).
+ *
+ * A candidate is a question, never a grant: the reserved `global` and every
+ * name the engine refused are reported with their reason instead of being
+ * offered (S4), and only an interactive session may ask the human (one
+ * confirmation per workspace). A headless session gets the two commands to
+ * hand over instead.
+ *
+ * @param {{ candidate?: string | null, refusal?: string | null, hasUI: boolean, mode: string }} input
+ * @returns {{ action: "refuse", reason: string } | { action: "none" } | { action: "confirm" } | { action: "pending", reason: string }}
+ */
+export function decideBinding({ candidate, refusal, hasUI, mode }) {
+	if (typeof refusal === "string" && refusal !== "") {
+		return { action: "refuse", reason: refusal };
+	}
+	if (typeof candidate !== "string" || candidate === "") {
+		return { action: "none" };
+	}
+	const interactive = Boolean(hasUI) && mode === "tui";
+	if (!interactive) {
+		return {
+			action: "pending",
+			reason:
+				"this session has no interactive UI to ask for the workspace's namespace",
+		};
+	}
+	return { action: "confirm" };
+}
