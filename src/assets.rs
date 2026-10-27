@@ -47,6 +47,10 @@ pub const EXTENSION_MNEXIS_MEMORY: EmbeddedAsset = EmbeddedAsset {
             contents: include_str!("../extensions/mnexis-memory/lib/cli.js"),
         },
         EmbeddedFile {
+            path: "lib/door.js",
+            contents: include_str!("../extensions/mnexis-memory/lib/door.js"),
+        },
+        EmbeddedFile {
             path: "lib/chrome.js",
             contents: include_str!("../extensions/mnexis-memory/lib/chrome.js"),
         },

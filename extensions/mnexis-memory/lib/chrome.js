@@ -193,9 +193,11 @@ export function resultLines(toolName, result, options = {}) {
 		case "mnexis_history":
 			lines.push(...revisionLines(details.items ?? []));
 			break;
+		case "mnexis_context":
+			lines.push(...shapeRecords(details.memories ?? []));
+			break;
 		case "mnexis_list":
 		case "mnexis_search":
-		case "mnexis_context":
 			lines.push(...itemLines(details.memories ?? details.hits ?? []));
 			break;
 		case "mnexis_recall":
@@ -403,6 +405,32 @@ function memoryLines(memory) {
 		lines.push(String(memory.content));
 	}
 	return lines;
+}
+
+/**
+ * The shape of a record the door answers with: the kind of the fact next
+ * to its name, the identity of the record before its text, the text
+ * indented under it.
+ *
+ * Exported because it is the portable contract, not a decoration: the human
+ * reads it in the chrome's panel, and the model reads it when the door
+ * answers in shape (odd/tasks/chrome-shape.md, S3). The lists keep their
+ * own, shorter shape — one line per memory — and only the door's records,
+ * which carry their whole content, are drawn this way.
+ */
+export function shapeRecords(records) {
+	if (!Array.isArray(records) || records.length === 0) return ["(nothing)"];
+	return records.flatMap((record) => {
+		const type = record.memory_type ?? record.type ?? "fact";
+		const uuid = shortUuid(record.uuid);
+		const title = String(record.title ?? "").trim();
+		const head = `${typeIcon(type)} ${type}${title ? ` · ${title}` : ""}${uuid ? ` · ${uuid}` : ""}`;
+		const text =
+			typeof record.content === "string" && record.content !== ""
+				? record.content
+				: String(record.preview ?? "");
+		return text === "" ? [head] : [head, ...indentLines(text)];
+	});
 }
 
 /**

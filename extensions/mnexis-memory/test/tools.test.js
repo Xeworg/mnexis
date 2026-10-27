@@ -182,6 +182,25 @@ if (args[0] === "project" && args[1] === "list") {
 		index_status: "ok",
 		warnings: ["lexical_estimation"],
 		empty_reason: null,
+		// The session state the engine attaches to the door's answer, with
+		// the records' whole content (the block is outside the budget).
+		session_state: {
+			records: [
+				{
+					uuid: "s1",
+					memory_type: "project_state",
+					title: "where the project is",
+					content: "el proyecto esta en la puerta",
+					created_at: "2026-01-02T00:00:00Z",
+				},
+			],
+			session: {
+				id: "sess-1",
+				namespace: workspace,
+				ended_at: "2026-01-02T01:00:00Z",
+				summary: "la puerta quedo abierta",
+			},
+		},
 	};
 	if (scope) {
 		payload.read_scope = scope;
@@ -1176,4 +1195,79 @@ test("the context tool binds nothing: a read does not write", async () => {
 		0,
 		`asking a question does not bind a namespace: ${JSON.stringify(binds)}`,
 	);
+});
+
+// --- the door's renderings (odd/tasks/chrome-shape.md, S3) ---
+
+test("the shipped answer carries no session state", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const contextTool = tools.get("mnexis_context");
+
+	const result = await contextTool.execute(
+		"t-door-shipped",
+		{ task: "el puerto" },
+		undefined,
+		undefined,
+		context(),
+	);
+	const text = String(result.content?.[0]?.text ?? "");
+	assert.doesNotMatch(
+		text,
+		/Session state/,
+		`the shipped answer does not carry the block: ${text}`,
+	);
+});
+
+test("the bench switch puts the session state in the answer", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_BENCH_DOOR = "block";
+	const { default: extension } = await import("../index.js?door=block");
+	delete process.env.MNEXIS_BENCH_DOOR;
+	const { tools, pi } = fakeHost();
+	extension(pi);
+	const contextTool = tools.get("mnexis_context");
+
+	const result = await contextTool.execute(
+		"t-door-block",
+		{ task: "el puerto" },
+		undefined,
+		undefined,
+		context(),
+	);
+	const text = String(result.content?.[0]?.text ?? "");
+	assert.match(text, /Session state: \{/, `the block rides the answer: ${text}`);
+	assert.match(
+		text,
+		/el proyecto esta en la puerta/,
+		`with the record's whole content: ${text}`,
+	);
+	assert.match(text, /la puerta quedo abierta/, `and the previous session: ${text}`);
+});
+
+test("the bench switch answers the door in shape", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_BENCH_DOOR = "shape";
+	const { default: extension } = await import("../index.js?door=shape");
+	delete process.env.MNEXIS_BENCH_DOOR;
+	const { tools, pi } = fakeHost();
+	extension(pi);
+	const contextTool = tools.get("mnexis_context");
+
+	const result = await contextTool.execute(
+		"t-door-shape",
+		{ task: "el puerto" },
+		undefined,
+		undefined,
+		context(),
+	);
+	const text = String(result.content?.[0]?.text ?? "");
+	assert.match(
+		text,
+		/🧠 fact · puerto del servicio · #m1/,
+		`the kind, the name and the identity: ${text}`,
+	);
+	assert.match(text, /Session state:/, `the block rides the answer: ${text}`);
+	assert.ok(!text.includes('"'), `the shape is not JSON: ${text}`);
 });

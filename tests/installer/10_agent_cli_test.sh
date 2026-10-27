@@ -81,6 +81,8 @@ done <<EOF
 $PI_SKILLS/SKILL.md|skills/mnexis-memory/SKILL.md
 $PI_EXTENSIONS/index.js|extensions/mnexis-memory/index.js
 $PI_EXTENSIONS/lib/cli.js|extensions/mnexis-memory/lib/cli.js
+$PI_EXTENSIONS/lib/chrome.js|extensions/mnexis-memory/lib/chrome.js
+$PI_EXTENSIONS/lib/door.js|extensions/mnexis-memory/lib/door.js
 $PI_EXTENSIONS/lib/gate.js|extensions/mnexis-memory/lib/gate.js
 $PI_EXTENSIONS/lib/workspace.js|extensions/mnexis-memory/lib/workspace.js
 $PI_EXTENSIONS/package.json|extensions/mnexis-memory/package.json

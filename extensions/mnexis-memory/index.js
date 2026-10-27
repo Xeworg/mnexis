@@ -15,6 +15,17 @@ import { createClient, defaultExec } from "./lib/cli.js";
 import { decideAuthorization, describeFailure, allowNamespaceCommand } from "./lib/gate.js";
 import { findMarkerNamespace, selectNamespace, workspaceKey } from "./lib/workspace.js";
 import { renderers, withStatus } from "./lib/chrome.js";
+import { doorAnswer, readBlock, resolveDoorMode } from "./lib/door.js";
+
+/**
+ * The rendering the door answers in, read once from the environment.
+ *
+ * Absent in the shipped product, where the door answers exactly as it
+ * always did: the items as JSON, with the declaration line. The bench's
+ * arms ask for another rendering (odd/tasks/chrome-shape.md, S3); a value
+ * that is not one of them is the shipped answer.
+ */
+const DOOR_MODE = resolveDoorMode(process.env.MNEXIS_BENCH_DOOR);
 
 /**
  * Register a memory tool with the chrome pi draws: the call line, the panel
@@ -1160,9 +1171,6 @@ export default function mnexisMemoryExtension(pi) {
 				result.data && typeof result.data.tokens_used === "number"
 					? result.data.tokens_used
 					: null;
-			const text = items.length
-				? items.map((item, index) => `${index + 1}. ${JSON.stringify(item)}`).join("\n")
-				: `No memories answered the task '${params.task ?? ""}'.`;
 			const declaration = [
 				`Namespace searched: ${searched ?? "unknown"}.`,
 				tokens === null ? "" : `Tokens: ${tokens}.`,
@@ -1170,7 +1178,17 @@ export default function mnexisMemoryExtension(pi) {
 			]
 				.filter(Boolean)
 				.join(" ");
-			return ok(text + `\n${declaration}`, {
+			// The session state the engine attached to the answer, and that
+			// the tool's own description promises the model.
+			const block = readBlock(result.data);
+			const text = doorAnswer({
+				items,
+				block,
+				declaration,
+				mode: DOOR_MODE,
+				task: params.task,
+			});
+			return ok(text, {
 				namespace: namespace ?? null,
 				searched_namespace: searched,
 				count: items.length,
