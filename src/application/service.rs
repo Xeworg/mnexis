@@ -693,7 +693,13 @@ impl<R: MemoryRepository> MemoryService<R> {
         // The envelope says where the door looked (#57): an answer that
         // names no namespace cannot be told apart from an answer that
         // looked in the wrong one.
-        response.searched_namespace = ns;
+        response.searched_namespace = ns.clone();
+        // One complete answer (call-budget S6): the project's own state rides
+        // the door — the records with their content and the previous session's
+        // summary — so the agent does not spend three rounds rebuilding it by
+        // hand. Outside the budgeted envelope, so `items` and `tokens_used`
+        // are exactly what the budget counted.
+        response.session_state = Some(self.session_state(&ns));
 
         // A-07 invariant (debug-only): in exact mode, the
         // response-claimed tokens_used equals the supported tokenizer's

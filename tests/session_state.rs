@@ -1,33 +1,33 @@
-//! call-budget S4 (C2, C3) — the session-state block, behind the bench switch.
+//! The session-state block on the door (call-budget ascension, S6).
 //!
-//! The block is one additive payload field carried by one surface at a time:
-//! `mnexis context` with `MNEXIS_BENCH_SESSION_STATE=door`, `mnexis status`
-//! with `MNEXIS_BENCH_SESSION_STATE=workspace`. With the switch unset the
-//! shipped answers are unchanged — no field at all.
+//! The block is one additive field of the `mnexis context` answer — and only
+//! that answer: `mnexis status` does not carry it. It is project state with its
+//! whole content: the `project_state` and `decision` records of the namespace,
+//! newest first, plus the most recent session summary — the path
+//! `mnexis recall --previous` takes. It is additive and outside the token
+//! budget, so the budgeted items keep their selection, their order and their
+//! count.
 //!
-//! The block is project state with its whole content: the `project_state` and
-//! `decision` records of the namespace, newest first, plus the most recent
-//! session summary — the path `mnexis recall --previous` takes. It is additive
-//! and outside the token budget, so the budgeted items keep their selection
-//! and their order.
+//! The experiment selected it with a bench switch (`MNEXIS_BENCH_SESSION_STATE`)
+//! and measured it against the shipped surfaces; the block won on the door and
+//! the switch retired with it. These tests pin the shipped contract: the block
+//! is there with no variable set, and setting the old variable changes nothing.
 //!
 //! Every test drives the real binary against a fresh profile under a tempdir
-//! inside `target/`, like the other integration suites. The switch is set on
-//! the **child** process only: the test process environment is never mutated,
-//! and `env_remove` keeps the suite hermetic.
+//! inside `target/`, like the other integration suites.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use tempfile::tempdir_in;
 
-/// The bench switch the arms select the surface with (S4).
-const SWITCH: &str = "MNEXIS_BENCH_SESSION_STATE";
+/// The retired bench switch: it must not change any answer any more.
+const RETIRED_SWITCH: &str = "MNEXIS_BENCH_SESSION_STATE";
 
-/// Where the project is, long enough that the priced preview the other
-/// surfaces return would have cut it: the block carries the whole content.
-const STATE_CONTENT: &str = "la puerta esta abierta y el bench necesita docker; las capturas \
-corrieron con la version release del binario; queda pendiente medir el coste del prefijo antes de \
-decidir si el bloque viaja en la puerta o en el workspace";
+/// Where the project is, long enough that a priced preview would have cut it:
+/// the block carries the whole content.
+const STATE_CONTENT: &str = "la puerta esta abierta y el bench necesita podman; las capturas \
+corrieron con la version release del binario; el bloque viaja en la puerta porque la medicion lo \
+puso ahi y el workspace conserva su forma preciada";
 
 /// The decision the trap phase keeps: a chosen value, with its reason.
 const DECISION_CONTENT: &str = "desplegamos a staging-eu; produccion no se toca en esta fase";
@@ -51,18 +51,17 @@ impl Profile {
         profile
     }
 
-    /// Run the binary with the bench switch unset for the child.
     fn run(&self, args: &[&str]) -> Output {
         self.run_as(None, None, args)
     }
 
-    /// Run with the bench switch set for the child process only.
-    fn run_with_switch(&self, switch: Option<&str>, args: &[&str]) -> Output {
-        self.run_as(None, switch, args)
+    fn run_in_dir(&self, dir: &Path, args: &[&str]) -> Output {
+        self.run_as(Some(dir), None, args)
     }
 
-    fn run_with_switch_in_dir(&self, dir: &Path, switch: Option<&str>, args: &[&str]) -> Output {
-        self.run_as(Some(dir), switch, args)
+    /// Run with the retired switch set for the child process only.
+    fn run_with_retired_switch(&self, value: &str, args: &[&str]) -> Output {
+        self.run_as(None, Some(value), args)
     }
 
     fn run_as(&self, dir: Option<&Path>, switch: Option<&str>, args: &[&str]) -> Output {
@@ -77,9 +76,9 @@ impl Profile {
             .stdin(Stdio::null());
         // Hermetic: the test process may carry the variable; the child sees
         // only what this test sets.
-        cmd.env_remove(SWITCH);
+        cmd.env_remove(RETIRED_SWITCH);
         if let Some(value) = switch {
-            cmd.env(SWITCH, value);
+            cmd.env(RETIRED_SWITCH, value);
         }
         cmd.output().expect("spawn mnexis binary")
     }
@@ -175,34 +174,25 @@ fn stdout_json(out: &Output) -> serde_json::Value {
     })
 }
 
-/// A deterministic context answer: the same task and budget every time, so a
-/// run with the block and a run without it compare directly.
-fn context_json(
-    profile: &Profile,
-    switch: Option<&str>,
-    namespace: &str,
-    task: &str,
-) -> serde_json::Value {
-    let out = profile.run_with_switch(
-        switch,
-        &[
-            "context",
-            "--namespace",
-            namespace,
-            "--token-budget",
-            "1024",
-            "--budget-mode",
-            "exact",
-            task,
-        ],
-    );
+/// A deterministic context answer: the same task and budget every time.
+fn context_json(profile: &Profile, namespace: &str, task: &str) -> serde_json::Value {
+    let out = profile.run(&[
+        "context",
+        "--namespace",
+        namespace,
+        "--token-budget",
+        "1024",
+        "--budget-mode",
+        "exact",
+        task,
+    ]);
     let out = out.unwrap_status("context");
     stdout_json(&out)
 }
 
 /// The status payload for a working directory.
-fn status_json(profile: &Profile, dir: &Path, switch: Option<&str>) -> serde_json::Value {
-    let out = profile.run_with_switch_in_dir(dir, switch, &["status"]);
+fn status_json(profile: &Profile, dir: &Path) -> serde_json::Value {
+    let out = profile.run_in_dir(dir, &["status"]);
     let out = out.unwrap_status("status");
     stdout_json(&out)
 }
@@ -234,41 +224,17 @@ fn uuids(records: &[serde_json::Value]) -> Vec<String> {
         .collect()
 }
 
-// --- rule 1: the shipped answers are unchanged with the switch absent ---
+// --- rule 1: the door carries the block with nothing set ---
 
 #[test]
-fn with_the_switch_off_neither_answer_carries_the_block() {
+fn the_door_carries_the_full_state_records_with_nothing_set() {
     let p = Profile::new(&["proyecto", "otro"]);
     seed(&p, "proyecto");
-    let ws = Workspace::bare();
 
-    let context = context_json(&p, None, "proyecto", "alpha");
-    let status = status_json(&p, ws.path(), None);
-
-    assert!(
-        context.get("session_state").is_none(),
-        "the shipped door answer carries no block: {context}"
-    );
-    assert!(
-        status.get("session_state").is_none(),
-        "the shipped status payload carries no block: {status}"
-    );
-}
-
-// --- rule 2: door mode puts the block in the context answer, not in status ---
-
-#[test]
-fn door_mode_carries_the_full_state_records_in_context_and_leaves_status_alone() {
-    let p = Profile::new(&["proyecto", "otro"]);
-    seed(&p, "proyecto");
-    let ws = Workspace::bare();
-
-    let shipped = context_json(&p, None, "proyecto", "alpha");
-    let door = context_json(&p, Some("door"), "proyecto", "alpha");
-
+    let door = context_json(&p, "proyecto", "alpha");
     let block = door
         .get("session_state")
-        .unwrap_or_else(|| panic!("door mode carries the block: {door}"));
+        .unwrap_or_else(|| panic!("the shipped door carries the block: {door}"));
     let records = block["records"].as_array().expect("records is a list");
 
     // Newest first, and only the kinds that are project state.
@@ -331,82 +297,53 @@ fn door_mode_carries_the_full_state_records_in_context_and_leaves_status_alone()
         Some("cerramos la fase de captura; sigue el bench"),
         "{block}"
     );
+}
 
-    // The block is additive and outside the budget: the budgeted hits keep
-    // their selection, their order and their count.
-    assert_eq!(
-        door["items"], shipped["items"],
-        "the block must not change the selection or the order of the items"
-    );
-    assert_eq!(
-        door["tokens_used"], shipped["tokens_used"],
-        "the block is outside the token budget"
-    );
+// --- rule 2: the block is outside the budget ---
 
-    // The other surface stays shipped in door mode.
-    let status = status_json(&p, ws.path(), Some("door"));
+#[test]
+fn the_block_never_moves_the_budgeted_items() {
+    let p = Profile::new(&["proyecto"]);
+    seed(&p, "proyecto");
+
+    let answer = context_json(&p, "proyecto", "alpha");
+    let block = answer
+        .get("session_state")
+        .expect("the door carries the block");
     assert!(
-        status.get("session_state").is_none(),
-        "door mode does not touch status: {status}"
+        !block["records"].as_array().expect("records").is_empty(),
+        "the fixture must exercise a non-empty block: {block}"
+    );
+
+    // The items are the searchable fact only: the state records ride the
+    // block, and the budgeted envelope never counts them as items.
+    let items = answer["items"].as_array().expect("items is a list");
+    let titles: Vec<&str> = items
+        .iter()
+        .map(|item| item["title"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        !titles.contains(&"donde estamos") && !titles.contains(&"el destino"),
+        "the state records ride the block, not the budgeted items: {titles:?}"
     );
 }
 
-// --- rule 3: workspace mode puts the block in status, not in the door ---
+// --- rule 3: the status payload does not carry the block ---
 
 #[test]
-fn workspace_mode_carries_the_block_in_status_and_leaves_the_door_alone() {
+fn status_does_not_carry_the_block() {
     let p = Profile::new(&["proyecto", "otro"]);
     seed(&p, "proyecto");
     let ws = Workspace::bare();
 
-    // Bind the workspace to the project's namespace, so the status payload
-    // resolves it the way the bench's first call does.
-    let key = status_json(&p, ws.path(), None)["workspace"]["key"]
-        .as_str()
-        .expect("workspace key")
-        .to_string();
-    p.run(&["project", "bind", "proyecto", "--key", &key])
-        .unwrap_status("project bind");
-
-    let status = status_json(&p, ws.path(), Some("workspace"));
-    let block = status
-        .get("session_state")
-        .unwrap_or_else(|| panic!("workspace mode carries the block: {status}"));
-    let records = block["records"].as_array().expect("records is a list");
-    let kinds: Vec<&str> = records
-        .iter()
-        .map(|record| record["memory_type"].as_str().expect("a type"))
-        .collect();
-    assert_eq!(kinds, vec!["decision", "project_state"], "{block}");
-    assert_eq!(
-        records
-            .iter()
-            .find(|record| record["memory_type"] == "project_state")
-            .expect("the project_state record")["content"]
-            .as_str(),
-        Some(STATE_CONTENT),
-        "the whole content, like the door"
-    );
-    assert_eq!(
-        block["session"]["summary"].as_str(),
-        Some("cerramos la fase de captura; sigue el bench"),
-        "{block}"
-    );
-
-    // The shipped status fields are untouched.
-    assert_eq!(status["workspace"]["namespace"].as_str(), Some("proyecto"));
-    assert!(status["recent"].is_array(), "{status}");
-    assert_eq!(status["memory_count"], 3, "{status}");
-
-    // The door stays shipped in workspace mode.
-    let context = context_json(&p, Some("workspace"), "proyecto", "alpha");
+    let status = status_json(&p, ws.path());
     assert!(
-        context.get("session_state").is_none(),
-        "workspace mode does not touch the door: {context}"
+        status.get("session_state").is_none(),
+        "the workspace surface keeps its priced shape (#56): {status}"
     );
 }
 
-// --- rule 4: the block is the project's namespace, never another one ---
+// --- rule 4: the block is the searched namespace, never another one ---
 
 #[test]
 fn the_block_never_leaks_another_namespaces_records() {
@@ -426,38 +363,32 @@ fn the_block_never_leaks_another_namespaces_records() {
     );
     p.start_session("OTRA", "otro");
     p.end_session("OTRA", "lo que hizo el otro proyecto");
-    let ws = Workspace::bare();
-    let key = status_json(&p, ws.path(), None)["workspace"]["key"]
-        .as_str()
-        .expect("workspace key")
-        .to_string();
-    p.run(&["project", "bind", "proyecto", "--key", &key])
-        .unwrap_status("project bind");
 
-    let door = context_json(&p, Some("door"), "proyecto", "alpha");
-    let workspace = status_json(&p, ws.path(), Some("workspace"));
-
-    for (surface, payload) in [("context", &door), ("status", &workspace)] {
-        let block = payload
-            .get("session_state")
-            .unwrap_or_else(|| panic!("{surface} carries the block: {payload}"));
-        let records = block["records"].as_array().expect("records");
-        let listed = uuids(records);
-        assert!(
-            !listed.contains(&other_state) && !listed.contains(&other_decision),
-            "{surface} must not carry another namespace's records: {block}"
-        );
-        assert_eq!(
-            records.len(),
-            2,
-            "{surface}: only the two records of this project: {block}"
-        );
-        assert_eq!(
-            block["session"]["id"].as_str(),
-            Some("S1"),
-            "{surface}: the summary is the project's own session, not the other one: {block}"
-        );
-    }
+    let door = context_json(&p, "proyecto", "alpha");
+    let block = door
+        .get("session_state")
+        .unwrap_or_else(|| panic!("the door carries the block: {door}"));
+    let records = block["records"].as_array().expect("records");
+    let listed = uuids(records);
+    assert!(
+        !listed.contains(&other_state) && !listed.contains(&other_decision),
+        "the door must not carry another namespace's records: {block}"
+    );
+    assert_eq!(
+        records.len(),
+        2,
+        "only the two records of the searched namespace: {block}"
+    );
+    assert_eq!(
+        block["session"]["id"].as_str(),
+        Some("S1"),
+        "the summary is the searched namespace's own session: {block}"
+    );
+    assert_eq!(
+        door["searched_namespace"].as_str(),
+        Some("proyecto"),
+        "the envelope still declares where it looked: {door}"
+    );
 }
 
 // --- rule 5: an empty store still answers, with an empty block ---
@@ -465,54 +396,68 @@ fn the_block_never_leaks_another_namespaces_records() {
 #[test]
 fn an_empty_store_still_answers_with_an_empty_block() {
     let p = Profile::new(&["proyecto"]);
-    let ws = Workspace::bare();
 
-    let context = context_json(&p, Some("door"), "proyecto", "alpha");
-    let status = status_json(&p, ws.path(), Some("workspace"));
-
-    for (surface, payload) in [("context", &context), ("status", &status)] {
-        let block = payload
-            .get("session_state")
-            .unwrap_or_else(|| panic!("{surface} carries the block even when empty: {payload}"));
-        assert_eq!(
-            block["records"],
-            serde_json::json!([]),
-            "{surface}: no state record is the empty list, never null: {block}"
-        );
-        assert_eq!(
-            block["session"],
-            serde_json::Value::Null,
-            "{surface}: no session is null, and the command still answered: {block}"
-        );
-    }
+    let context = context_json(&p, "proyecto", "alpha");
+    let block = context
+        .get("session_state")
+        .unwrap_or_else(|| panic!("the door carries the block even when empty: {context}"));
+    assert_eq!(
+        block["records"],
+        serde_json::json!([]),
+        "no state record is the empty list, never null: {block}"
+    );
+    assert_eq!(
+        block["session"],
+        serde_json::Value::Null,
+        "no session is null, and the command still answered: {block}"
+    );
 }
 
-// --- rule 6: an unknown switch value behaves exactly like off ---
+// --- rule 6: the retired switch changes nothing any more ---
 
 #[test]
-fn an_unknown_switch_value_behaves_exactly_like_off() {
+fn the_retired_switch_changes_no_answer() {
     let p = Profile::new(&["proyecto", "otro"]);
     seed(&p, "proyecto");
     let ws = Workspace::bare();
 
-    for value in ["turbo", "off", ""] {
-        let shipped = context_json(&p, None, "proyecto", "alpha");
-        let unknown = context_json(&p, Some(value), "proyecto", "alpha");
-        assert_eq!(
-            unknown, shipped,
-            "`{value}` must read as unset, not as a mode"
-        );
-        assert!(unknown.get("session_state").is_none(), "{unknown}");
+    let shipped = context_json(&p, "proyecto", "alpha");
+    let shipped_status = status_json(&p, ws.path());
 
-        let shipped_status = status_json(&p, ws.path(), None);
-        let unknown_status = status_json(&p, ws.path(), Some(value));
+    for value in ["door", "workspace", "off", "turbo", ""] {
+        let with_value = {
+            let out = p.run_with_retired_switch(
+                value,
+                &[
+                    "context",
+                    "--namespace",
+                    "proyecto",
+                    "--token-budget",
+                    "1024",
+                    "--budget-mode",
+                    "exact",
+                    "alpha",
+                ],
+            );
+            stdout_json(&out.unwrap_status("context"))
+        };
         assert_eq!(
-            unknown_status, shipped_status,
-            "`{value}` must leave the status payload identical"
+            with_value, shipped,
+            "`{value}` must not change the door any more: the switch retired with the experiment"
         );
-        assert!(
-            unknown_status.get("session_state").is_none(),
-            "{unknown_status}"
+
+        let status_with_value = {
+            let out = p.run_with_retired_switch(value, &["status"]);
+            let mut cmd_status = out;
+            if !cmd_status.status.success() {
+                // `status` needs the workspace cwd; rerun it there.
+                cmd_status = p.run_in_dir(ws.path(), &["status"]);
+            }
+            stdout_json(&cmd_status)
+        };
+        assert_eq!(
+            status_with_value, shipped_status,
+            "`{value}` must not change the status payload any more"
         );
     }
 }

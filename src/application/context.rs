@@ -95,13 +95,17 @@ pub struct ContextResponse {
     pub index_status: &'static str,
     pub warnings: Vec<&'static str>,
     pub empty_reason: Option<String>,
-    /// The session-state block, when a bench arm asks for it (call-budget
-    /// S4, arm B).
+    /// The session-state block: this project's state, with its whole content.
     ///
-    /// Absent by default, and absent from the JSON when absent: the shipped
-    /// answer has no such key. The block is outside the budget — the counted
-    /// envelope is [`serialise_envelope`] (label, tokenizer, items) — so
-    /// turning it on never changes `items`, their order or `tokens_used`.
+    /// One answer, not a fan-out: the `project_state` and `decision` records
+    /// of the namespace the door searched, plus the most recent session
+    /// summary — the call-budget experiment measured the agent spending three
+    /// extra rounds rebuilding this by hand, and the block bought a round back
+    /// (S6: it ascends on the door, and only there).
+    ///
+    /// The block is outside the budget — the counted envelope is
+    /// [`serialise_envelope`] (label, tokenizer, items) — so it never changes
+    /// `items`, their order or `tokens_used`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_state: Option<crate::application::service::session_state::SessionState>,
 }
