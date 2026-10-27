@@ -324,7 +324,7 @@ export default function mnexisMemoryExtension(pi) {
 				// older or unreachable engine.
 				candidate = published.answered
 					? published
-					: deriveWorkspaceCandidate({ remote: remoteUrl, repoRoot });
+					: deriveWorkspaceCandidate({ remote: remoteUrl, repoRoot, cwd });
 			}
 		}
 

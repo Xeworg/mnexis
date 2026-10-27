@@ -177,27 +177,31 @@ export function candidateFromMarker(marker) {
 /**
  * Derive the candidate namespace with the S2 rules, for the one case the
  * engine cannot answer: the last segment of the normalized remote,
- * lowercased, or the repository directory's own name when there is no
- * remote.
+ * lowercased, or the name of the directory that names the workspace — the
+ * repository root, or the working directory itself, because a new project
+ * before `git init` still has a name.
  *
  * This is the extension's copy of the engine's rule, never a second source
  * of truth: `resolveWorkspace` reads the engine's answer first and falls
  * back here only when `mnexis status` cannot be asked.
  *
- * @param {{ remote?: string | null, repoRoot?: string | null }} input
+ * @param {{ remote?: string | null, repoRoot?: string | null, cwd?: string | null }} input
  * @returns {{ namespace: string | null, refusal: string | null }}
  */
-export function deriveWorkspaceCandidate({ remote, repoRoot } = {}) {
+export function deriveWorkspaceCandidate({ remote, repoRoot, cwd } = {}) {
 	const tail = remoteTail(remote);
 	if (tail !== null) {
 		return candidateName(tail);
 	}
-	if (!repoRoot) {
-		// Outside a repository there is no project to name.
+	// The directory that names the workspace: the repository root when there
+	// is one, the working directory otherwise. The engine lowercases it the
+	// same way.
+	const dir = repoRoot || cwd;
+	if (!dir) {
+		// The working directory could not be read: nothing to name.
 		return { namespace: null, refusal: null };
 	}
-	// The engine lowercases the repository's own name the same way.
-	return candidateName(path.basename(String(repoRoot)).toLowerCase());
+	return candidateName(path.basename(String(dir)).toLowerCase());
 }
 
 /** The last path segment of a remote, without `.git` and lowercased. */
