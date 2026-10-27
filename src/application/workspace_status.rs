@@ -48,6 +48,14 @@ pub struct StatusWorkspace {
     /// `None` when the workspace resolves to none and the profile allowlist
     /// keeps deciding.
     pub namespace: Option<String>,
+    /// The namespace a human would be asked to grant for this workspace
+    /// (auto-namespace S2). `None` outside a repository, or when the derived
+    /// name was refused — `candidate_refusal` says which.
+    pub candidate_namespace: Option<String>,
+    /// Why no candidate is offered although the process is inside a
+    /// repository: the reserved `global`, a name with a line break, or a
+    /// repository with no usable name.
+    pub candidate_refusal: Option<String>,
 }
 
 /// The read and write allowlists the process runs under.
@@ -74,12 +82,18 @@ pub fn workspace_status<R: MemoryRepository>(
     data_dir: &Path,
     recent_limit: usize,
 ) -> Result<WorkspaceStatus, MnexisError> {
-    let (key, namespace) = match current_workspace(data_dir)? {
-        Some(workspace) => (workspace.key, workspace.namespace),
-        // A working directory the process cannot read leaves the key empty:
-        // the payload keeps its shape and the allowlists keep deciding.
-        None => (String::new(), None),
-    };
+    let (key, namespace, candidate_namespace, candidate_refusal) =
+        match current_workspace(data_dir)? {
+            Some(workspace) => (
+                workspace.key,
+                workspace.namespace,
+                workspace.candidate_namespace,
+                workspace.candidate_refusal,
+            ),
+            // A working directory the process cannot read leaves the key empty:
+            // the payload keeps its shape and the allowlists keep deciding.
+            None => (String::new(), None, None, None),
+        };
     let scope = service.scope();
     // The workspace namespace is the agent's home when it can read it.
     // Otherwise the recent list falls back to the readable scope while the
@@ -89,7 +103,12 @@ pub fn workspace_status<R: MemoryRepository>(
         _ => service.recent(None, recent_limit)?,
     };
     Ok(WorkspaceStatus {
-        workspace: StatusWorkspace { key, namespace },
+        workspace: StatusWorkspace {
+            key,
+            namespace,
+            candidate_namespace,
+            candidate_refusal,
+        },
         scope: StatusScope {
             default_namespace: scope.default_namespace.clone(),
             read_namespaces: scope.read_namespaces.clone(),

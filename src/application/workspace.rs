@@ -29,7 +29,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::application::git_state::git_output;
-use crate::config::projects::{ProjectRegistry, registry_path};
+use crate::config::projects::{ProjectRegistry, registry_path, validate_namespace};
 use crate::domain::error::MnexisError;
 use crate::domain::scope::AccessScope;
 
@@ -55,19 +55,98 @@ pub fn workspace_key(remote: Option<&str>, repo_root: Option<&Path>, cwd: &Path)
     }
 }
 
+/// What git says about a directory: the repository root (when there is
+/// one), the remote of that root, and the key the two produce together.
+struct Probe {
+    key: String,
+    repo_root: Option<PathBuf>,
+    remote: Option<String>,
+}
+
 /// The workspace key of `cwd`, probed from git exactly like the extension:
 /// `git rev-parse --show-toplevel` for the root and
 /// `git config --get remote.origin.url` for the remote of that root.
 ///
 /// A missing or failing `git` is not an error: the key falls back to
 /// `path:<cwd>`, and the marker (if any) still decides the namespace.
-fn current_key(cwd: &Path) -> String {
+fn probe(cwd: &Path) -> Probe {
     let repo_root = git_output(cwd, &["rev-parse", "--show-toplevel"]).map(PathBuf::from);
     let remote = git_output(
         repo_root.as_deref().unwrap_or(cwd),
         &["config", "--get", "remote.origin.url"],
     );
-    workspace_key(remote.as_deref(), repo_root.as_deref(), cwd)
+    Probe {
+        key: workspace_key(remote.as_deref(), repo_root.as_deref(), cwd),
+        repo_root,
+        remote,
+    }
+}
+
+/// The last segment of a remote URL, lowercased: the name a workspace would
+/// offer as its own namespace (`https://github.com/Xeworg/Nodexar.git` ->
+/// `nodexar`, `git@github.com:Xeworg/my-project.git` -> `my-project`).
+///
+/// The raw remote is split, never the normalized key: the key has already
+/// turned every separator into a dash, so its last dash-segment of
+/// `github.com-xeworg-my-project` would be `project`.
+fn remote_tail(remote: &str) -> Option<String> {
+    let trimmed = remote.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let tail = trimmed.rsplit(['/', ':']).find(|part| !part.is_empty())?;
+    let tail = tail
+        .strip_suffix(".git")
+        .or_else(|| tail.strip_suffix(".GIT"))
+        .unwrap_or(tail)
+        .trim()
+        .to_lowercase();
+    if tail.is_empty() || tail == "." || tail == ".." {
+        None
+    } else {
+        Some(tail)
+    }
+}
+
+/// The namespace a human would be asked to grant for this workspace
+/// (auto-namespace S2): the last segment of the remote, or the repository
+/// directory's own name when the repository has no remote.
+///
+/// `Ok(None)` means the process is not inside a repository: there is no
+/// project to name. The reserved `global` namespace, a name the workspace
+/// validator refuses, and a repository with no usable name are errors, so
+/// the caller can name the reason instead of quietly offering nothing.
+/// Nothing here writes: deriving a candidate is not binding it.
+pub fn candidate_namespace(
+    remote: Option<&str>,
+    repo_root: Option<&Path>,
+) -> Result<Option<String>, MnexisError> {
+    let Some(root) = repo_root else {
+        return Ok(None);
+    };
+    let derived = match remote.and_then(remote_tail) {
+        Some(tail) => tail,
+        None => root
+            .file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+            .unwrap_or_default(),
+    };
+    if derived.trim().is_empty() {
+        return Err(MnexisError::invalid_argument(
+            "namespace",
+            "this workspace has no name to offer: name its namespace yourself with \
+             `mnexis project bind <namespace> --key <key>`",
+        ));
+    }
+    if derived == "global" {
+        return Err(MnexisError::invalid_argument(
+            "namespace",
+            "`global` is reserved and a workspace cannot be bound to it: pick another \
+             namespace with `mnexis project bind <namespace> --key <key>`",
+        ));
+    }
+    validate_namespace(&derived)?;
+    Ok(Some(derived))
 }
 
 /// The namespace named by the nearest `.mnexis-namespace` marker at or
@@ -124,6 +203,17 @@ pub struct WorkspaceInfo {
     /// exists, even when a marker names one: only a binding is a
     /// permission, so this is what widens the read scope.
     pub bound_namespace: Option<String>,
+    /// Whether the process runs inside a git repository. A repository is a
+    /// project even before it is bound: a pointer outside one keeps letting
+    /// the profile allowlist decide, one inside does not (auto-namespace S5).
+    pub in_repo: bool,
+    /// The namespace a human would be asked to grant for this workspace
+    /// (auto-namespace S2): the last segment of its remote, or the
+    /// repository directory's own name. `None` outside a repository.
+    pub candidate_namespace: Option<String>,
+    /// Why the workspace offers no candidate although it is inside a
+    /// repository: the derived name was reserved or refused.
+    pub candidate_refusal: Option<String>,
 }
 
 /// Resolve the workspace of the process from its working directory and the
@@ -142,15 +232,25 @@ pub fn current_workspace(data_dir: &Path) -> Result<Option<WorkspaceInfo>, Mnexi
     // that work WITH the registry (`project list`, `project bind`) still
     // fail loudly on it.
     let registry = ProjectRegistry::load(&registry_path(data_dir)).unwrap_or_default();
-    let key = current_key(&cwd);
-    let bound_namespace = bound_namespace(&registry, &key);
+    let probe = probe(&cwd);
+    let bound_namespace = bound_namespace(&registry, &probe.key);
     let namespace = bound_namespace
         .clone()
         .or_else(|| find_marker_namespace(&cwd));
+    // Deriving a candidate is part of the answer, never an action: nothing
+    // is bound, allowed, or written here.
+    let candidate = candidate_namespace(probe.remote.as_deref(), probe.repo_root.as_deref());
+    let (candidate_namespace, candidate_refusal) = match candidate {
+        Ok(candidate) => (candidate, None),
+        Err(error) => (None, Some(error.to_string())),
+    };
     Ok(Some(WorkspaceInfo {
-        key,
+        key: probe.key,
         namespace,
         bound_namespace,
+        in_repo: probe.repo_root.is_some(),
+        candidate_namespace,
+        candidate_refusal,
     }))
 }
 
@@ -310,5 +410,74 @@ mod tests {
             resolve_namespace(&registry, "git:github.com-xeworg-mnexis", None),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod candidate_tests {
+    use super::*;
+
+    // --- the candidate namespace (auto-namespace S2) ---
+
+    #[test]
+    fn the_candidate_is_the_last_segment_of_the_remote() {
+        let root = Path::new("/w/nodexar");
+        assert_eq!(
+            candidate_namespace(Some("https://github.com/Xeworg/Nodexar.git"), Some(root))
+                .unwrap()
+                .as_deref(),
+            Some("nodexar")
+        );
+        assert_eq!(
+            candidate_namespace(Some("git@github.com:Xeworg/AegisPI.git"), Some(root))
+                .unwrap()
+                .as_deref(),
+            Some("aegispi")
+        );
+        // The remote is split, never the normalized key: every separator of
+        // `github.com-xeworg-my-project` is a dash, so the key's last
+        // dash-segment would be `project`.
+        assert_eq!(
+            candidate_namespace(Some("https://github.com/Xeworg/my-project.git"), Some(root))
+                .unwrap()
+                .as_deref(),
+            Some("my-project")
+        );
+    }
+
+    #[test]
+    fn the_candidate_falls_back_to_the_repository_directory() {
+        assert_eq!(
+            candidate_namespace(None, Some(Path::new("/w/MyProject")))
+                .unwrap()
+                .as_deref(),
+            Some("myproject")
+        );
+    }
+
+    #[test]
+    fn there_is_no_candidate_outside_a_repository() {
+        assert_eq!(candidate_namespace(None, None).unwrap(), None);
+        assert_eq!(
+            candidate_namespace(Some("https://github.com/Xeworg/Nodexar.git"), None).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn the_reserved_global_namespace_is_refused_with_its_reason() {
+        let error = candidate_namespace(
+            Some("https://github.com/someone/Global.git"),
+            Some(Path::new("/w/global")),
+        )
+        .expect_err("`global` is reserved");
+        assert!(error.to_string().contains("global"), "{error}");
+    }
+
+    #[test]
+    fn a_repository_with_no_usable_name_is_refused() {
+        let error = candidate_namespace(None, Some(Path::new("/")))
+            .expect_err("a root with no name offers nothing");
+        assert!(error.to_string().contains("no name to offer"), "{error}");
     }
 }
