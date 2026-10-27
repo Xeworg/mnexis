@@ -1226,11 +1226,25 @@ fn render_repair_text(repair: &RepairReport, report: &doctor::DoctorReport) -> S
     if !repair.titles_undeducible.is_empty() {
         // The records that keep no title: their text yields none, or the
         // key their title would give is another record's. They are named,
-        // never invented.
+        // never invented. The JSON carries the whole worklist; the line
+        // shows the first few, so one report does not drown in uuids.
+        let shown = repair
+            .titles_undeducible
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = repair.titles_undeducible.len().saturating_sub(5);
+        let rest = if more > 0 {
+            format!(" (+{more} more)")
+        } else {
+            String::new()
+        };
         lines.push(format!(
-            "  {} record(s) keep no title (their text yields none): {}",
+            "  {} record(s) keep no title (their text yields none, or the key it would give is \
+             another record's): {shown}{rest}",
             repair.titles_undeducible.len(),
-            repair.titles_undeducible.join(", ")
         ));
     }
     for line in render_doctor_text(report).split('\n') {

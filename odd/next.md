@@ -467,8 +467,8 @@ broken store.
 
 The repair (`doctor repair --plan|--dry-run|--apply`) fills the missing
 titles from each record's **own text** — its first sentence, the same
-thing the agent writes by hand — and the topic key that title yields,
-exactly as the save path derives it. A record whose text yields nothing
+thing the agent writes by hand — and, when the record holds no key at
+all, the key that title yields, exactly as the save path derives it. A record whose text yields nothing
 is reported, not invented, and a key another record already holds is not
 written: merging two facts is the agent's decision, not the doctor's.
 The fact does not change, so the revision does not move and the history

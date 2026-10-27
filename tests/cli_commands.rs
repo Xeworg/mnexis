@@ -1671,6 +1671,198 @@ fn a_record_whose_text_yields_no_title_is_reported_not_invented() {
     );
 }
 
+// --- what the repair touches, and what it does not (the independent verifier's probes) ---
+
+#[test]
+fn the_repair_fills_the_title_and_the_key_and_leaves_the_fact_alone() {
+    let p = Profile::new();
+    let uuid = save(
+        &p,
+        "el puerto del servicio es 8081. el cliente usa TLS.",
+        &[],
+    );
+    let db_path = p.data_dir.join("mnexis.db");
+
+    let before = {
+        let conn = mnexis_core::open_sqlite(&db_path).expect("open for the read");
+        conn.query_row(
+            "SELECT revision, updated_at, content, state FROM memories WHERE uuid = ?1",
+            [&uuid],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .expect("the record")
+    };
+
+    p.run_silent(&["doctor", "repair", "--apply"])
+        .unwrap_status("doctor repair --apply");
+
+    let conn = mnexis_core::open_sqlite(&db_path).expect("open for the read");
+    let after: (String, String, i64, String, String, String) = conn
+        .query_row(
+            "SELECT title, topic_key, revision, updated_at, content, state FROM memories \
+             WHERE uuid = ?1",
+            [&uuid],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .expect("the record");
+    assert_eq!(
+        after.0, "el puerto del servicio es 8081",
+        "the title comes from the record's own text"
+    );
+    assert_eq!(
+        after.1, "el-puerto-del-servicio-es-8081",
+        "and the key that title yields"
+    );
+    assert_eq!(
+        (after.2, after.3, after.4, after.5),
+        (before.0, before.1, before.2, before.3),
+        "the fact did not change: the revision, the timestamp, the content and the state stay"
+    );
+    let history: i64 = conn
+        .query_row("SELECT count(*) FROM memory_history", [], |row| row.get(0))
+        .expect("the history count");
+    assert_eq!(history, 0, "the repair writes no history");
+    let fts_title: String = conn
+        .query_row(
+            "SELECT title FROM memories_fts \
+             WHERE rowid = (SELECT id FROM memories WHERE uuid = ?1)",
+            [&uuid],
+            |row| row.get(0),
+        )
+        .expect("the indexed title");
+    assert_eq!(fts_title, after.0, "the index follows the table");
+}
+
+#[test]
+fn the_repair_does_not_write_a_key_another_record_already_holds() {
+    let p = Profile::new();
+    save(&p, "el puerto del servicio es 8081", &[]);
+    // The same words, a second record: the title each would yield gives the
+    // same key, so only one of them can be named — the other keeps no title.
+    save(&p, "El Puerto del Servicio es 8081.", &[]);
+
+    let out = p
+        .run_silent(&["doctor", "repair", "--apply"])
+        .unwrap_status("doctor repair --apply");
+    let json = stdout_json(&out);
+    assert_eq!(json["repair"]["titles_derived"], 1, "{json}");
+    let undeducible = json["repair"]["titles_undeducible"]
+        .as_array()
+        .expect("the undeducible records")
+        .clone();
+    assert_eq!(undeducible.len(), 1, "the other one is reported: {json}");
+
+    // Which record wins is the order the repair reads them in
+    // (`created_at, uuid`), and both were saved in the same second: the
+    // assertion is the invariant, not the winner — the repair never merges
+    // two facts, so the key is written exactly once and the record that
+    // keeps no title keeps no new key either.
+    let db_path = p.data_dir.join("mnexis.db");
+    let conn = mnexis_core::open_sqlite(&db_path).expect("open for the read");
+    let mut statement = conn
+        .prepare("SELECT uuid, title, topic_key FROM memories WHERE deleted = 0")
+        .expect("read the records");
+    let rows: Vec<(String, String, String)> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .expect("the records")
+        .map(|row| row.expect("a record"))
+        .collect();
+
+    let titled: Vec<&(String, String, String)> = rows
+        .iter()
+        .filter(|(_, title, _)| !title.is_empty())
+        .collect();
+    assert_eq!(
+        titled.len(),
+        1,
+        "exactly one record keeps the fact named: {rows:?}"
+    );
+    assert_eq!(
+        titled[0].2, "el-puerto-del-servicio-es-8081",
+        "and it carries the key its title yields: {rows:?}"
+    );
+
+    let keys: Vec<&String> = rows
+        .iter()
+        .map(|(_, _, key)| key)
+        .filter(|key| !key.is_empty())
+        .collect();
+    assert_eq!(
+        keys.len(),
+        1,
+        "the key is written once, never twice: the repair merged two facts: {rows:?}"
+    );
+
+    let unnamed = rows
+        .iter()
+        .find(|(_, title, _)| title.is_empty())
+        .expect("the record that keeps no title");
+    assert_eq!(
+        unnamed.2, "",
+        "the record that keeps no title keeps no new key either: {rows:?}"
+    );
+    assert_eq!(
+        undeducible[0].as_str(),
+        Some(unnamed.0.as_str()),
+        "and it is the one the report names: {json}"
+    );
+}
+
+#[test]
+fn a_repair_that_fails_leaves_the_profile_as_it_was() {
+    let p = Profile::new();
+    save(&p, "el puerto del servicio es 8081", &[]);
+    save(&p, "la decision es staging-eu", &[]);
+    let db_path = p.data_dir.join("mnexis.db");
+    {
+        // The second record's title cannot be written: the repair fails
+        // halfway, and the savepoint has to undo the first one too.
+        let conn = mnexis_core::open_sqlite(&db_path).expect("open for the trigger");
+        conn.execute_batch(
+            "CREATE TRIGGER block_title BEFORE UPDATE OF title ON memories \
+             WHEN new.uuid = (SELECT uuid FROM memories ORDER BY id LIMIT 1 OFFSET 1) \
+             BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+        )
+        .expect("the trigger");
+    }
+
+    let out = p.run_silent(&["doctor", "repair", "--apply"]);
+    assert!(
+        !out.status.success(),
+        "the repair failed: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let conn = mnexis_core::open_sqlite(&db_path).expect("open for the read");
+    let left: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM memories WHERE trim(title) = ''",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the count");
+    assert_eq!(
+        left, 2,
+        "the failed repair wrote nothing: the savepoint rolled back"
+    );
+}
+
 #[test]
 fn the_old_repair_flag_is_gone() {
     let p = Profile::new();

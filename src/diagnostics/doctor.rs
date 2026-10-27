@@ -1020,7 +1020,7 @@ fn derive_missing_titles(conn: &Connection) -> Result<(usize, Vec<String>), Mnex
         // The key the record already holds wins; a key another record
         // holds is not written — the unique index would refuse it, and
         // merging two facts is the agent's decision.
-        let new_key = if topic_key.trim().is_empty() {
+        let new_key = if topic_key.is_empty() {
             let held: i64 = conn
                 .query_row(
                     "SELECT count(*) FROM memories \
