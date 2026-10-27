@@ -136,21 +136,21 @@ export function summaryLine(toolName, result) {
 			return `↳ ✓ ${type} · rev ${memory.revision ?? "?"} · ${memory.namespace ?? "?"}`;
 		}
 		case "mnexis_list":
-			return `↳ ✓ ${details.count ?? 0} memories`;
+			return `↳ ✓ ${counted(details.count ?? 0, "memory", "memories")}`;
 		case "mnexis_search":
-			return `↳ ✓ ${details.count ?? 0} results`;
+			return `↳ ✓ ${counted(details.count ?? 0, "result")}`;
 		case "mnexis_recall":
-			return `↳ ✓ ${details.memories ?? 0} memories`;
+			return `↳ ✓ ${counted(details.memories ?? 0, "memory", "memories")}`;
 		case "mnexis_history":
-			return `↳ ✓ ${details.count ?? 0} revisions`;
+			return `↳ ✓ ${counted(details.count ?? 0, "revision")}`;
 		case "mnexis_search_prompts":
-			return `↳ ✓ ${details.count ?? 0} prompts`;
+			return `↳ ✓ ${counted(details.count ?? 0, "prompt")}`;
 		case "mnexis_context": {
 			const tokens = details.tokens_used;
 			const count = details.count ?? 0;
 			return tokens === null || tokens === undefined
-				? `↳ ✓ ${count} memories`
-				: `↳ ✓ ${count} memories · ${tokens} tokens`;
+				? `↳ ✓ ${counted(count, "memory", "memories")}`
+				: `↳ ✓ ${counted(count, "memory", "memories")} · ${tokens} tokens`;
 		}
 		case "mnexis_workspace": {
 			const workspace = details.workspace ?? {};
@@ -226,8 +226,14 @@ export function renderers(toolName) {
 		renderCall(args) {
 			return new Panel(callLines(toolName, args));
 		},
-		renderResult(result, options) {
-			return new Panel(resultLines(toolName, result, options), { maxLines: PANEL_MAX_LINES });
+		renderResult(result, options, _theme, context) {
+			// pi hands the renderer the content and the details, never the
+			// error flag: that lives in the render context, the fourth
+			// argument. Without it a failed call would draw a tick.
+			const isError = Boolean(options?.isError || context?.isError);
+			return new Panel(resultLines(toolName, result, { ...options, isError }), {
+				maxLines: PANEL_MAX_LINES,
+			});
 		},
 	};
 }
@@ -373,6 +379,11 @@ export function wrapLine(text, width) {
 	return lines.length === 0 ? [""] : lines;
 }
 
+/** A count with its noun: one memory, two memories. */
+function counted(count, singular, plural = `${singular}s`) {
+	return `${count} ${count === 1 ? singular : plural}`;
+}
+
 /** The lines of a memory: what it is, then what it says. */
 function memoryLines(memory) {
 	const type = memory.memory_type ?? "fact";
@@ -383,6 +394,10 @@ function memoryLines(memory) {
 	lines.push(`revision    ${memory.revision ?? "—"}`);
 	lines.push(`namespace   ${memory.namespace ?? "—"}`);
 	if (memory.created_at) lines.push(`created     ${memory.created_at}`);
+	if (memory.updated_at && memory.updated_at !== memory.created_at) {
+		lines.push(`updated     ${memory.updated_at}`);
+	}
+	if (memory.assertion_basis) lines.push(`basis       ${memory.assertion_basis}`);
 	if (memory.content) {
 		lines.push("");
 		lines.push(String(memory.content));
@@ -390,28 +405,48 @@ function memoryLines(memory) {
 	return lines;
 }
 
-/** One line per memory: what it is, and a few words of what it says. */
+/**
+ * One line per memory: what it is, and a few words of what it says.
+ *
+ * A record that carries its whole content shows it — the door promises the
+ * state with its content, and the drawing is the only view the human has.
+ */
 function itemLines(items) {
 	if (!Array.isArray(items) || items.length === 0) return ["(nothing)"];
-	return items.map((item) => {
+	return items.flatMap((item) => {
 		const type = item.memory_type ?? item.type ?? "fact";
 		const uuid = shortUuid(item.uuid);
-		const text = item.title || item.preview || item.content || "";
 		const head = `${typeIcon(type)} ${type}${uuid ? ` · ${uuid}` : ""}`;
-		return text === "" ? head : `${head}  ${truncate(text, PREVIEW_MAX)}`;
+		if (typeof item.content === "string" && item.content !== "") {
+			return [head, ...indentLines(item.content)];
+		}
+		const text = item.title || item.preview || "";
+		return text === "" ? [head] : [`${head}  ${truncate(text, PREVIEW_MAX)}`];
 	});
 }
 
-/** One line per revision of a memory. */
+/** One line per revision of a memory, with why it changed and what it said. */
 function revisionLines(items) {
 	if (!Array.isArray(items) || items.length === 0) return ["(no revisions)"];
-	return items.map((item, index) => {
+	return items.flatMap((item, index) => {
 		const revision = item.revision ?? index + 1;
 		const state = item.state ?? "—";
 		const when = item.changed_at ?? item.updated_at ?? item.created_at ?? "";
 		const who = item.changed_by ?? item.actor ?? item.assertion_basis ?? "";
-		return `🔁 rev ${revision} · ${state}${when ? ` · ${when}` : ""}${who ? ` · ${who}` : ""}`;
+		const lines = [
+			`🔁 rev ${revision} · ${state}${when ? ` · ${when}` : ""}${who ? ` · ${who}` : ""}`,
+		];
+		if (item.change_reason) lines.push(`   reason: ${item.change_reason}`);
+		if (item.content) lines.push(...indentLines(item.content));
+		return lines;
 	});
+}
+
+/** The text of a record, one line per line, indented under its heading. */
+function indentLines(text, prefix = "   ") {
+	return String(text)
+		.split("\n")
+		.map((line) => `${prefix}${line}`);
 }
 
 /** The workspace answer: where this session writes, and what is there. */
