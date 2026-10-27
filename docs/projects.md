@@ -117,7 +117,17 @@ The `mnexis-memory` skill implements this for AI agents:
 
 1. Compute the key from the working directory (rules above).
 2. `mnexis project list` — if the key is bound, use that namespace.
-3. Otherwise pick a short, lowercase name and `mnexis project bind` it.
+3. Otherwise ask the engine what the workspace would be called:
+   `mnexis status --json` publishes `workspace.candidate_namespace` (the
+   last segment of the git remote, lowercased, or the repository
+   directory's own name) and, when it refuses to offer one, the reason in
+   `workspace.candidate_refusal`. The pi extension puts that candidate to
+   the human as **one question per workspace**, naming the namespace, the
+   key, the path and the two permissions a yes grants, and runs
+   `mnexis project bind <candidate> --key <key> --path <path>` followed by
+   `mnexis config allow-namespace <candidate>` only after an explicit yes.
+   A skill working without the extension asks the human and runs the same
+   two commands.
 4. If writes to that namespace fail with `NOT_FOUND namespace:<name>`,
    **ask the human** and then run `mnexis config allow-namespace`. The
    human owns the permissions; the agent does not grant itself access.
@@ -139,18 +149,23 @@ refuses the same writes before they reach the CLI.
 
 A workspace resolves to a namespace in this order: the binding recorded
 for its key, then the nearest `.mnexis-namespace` marker at or above the
-working directory, then nothing — and "nothing" means the profile
+working directory, then nothing.
+
+A write without `--namespace` follows the same answer: it lands in the
+workspace's own namespace, and inside a git repository that names none it is
+refused with the candidate and the two commands that bind and allow it. It
+never falls into the profile's default namespace — that fall-through is how
+a repository's memories end up pooled in the shared drawer while the
+workspace still reports as unbound. Outside a repository the profile's
 allowlist keeps deciding, as it always did.
 
-**A namespace is never invented.** The name of a directory is not a
-namespace: the pi extension used to derive one from the working
-directory, bind the workspace to it, and leave the agent with a write the
-allowlist did not allow and a binding the human did not ask for. Now a
-workspace with no binding and no marker simply has no namespace, and the
-write is refused with the two commands the human has to run: the bind
-command with the canonical key, and the allow-namespace command for the
-namespace. Reading keeps working: the recall of an unbound workspace
-reaches every namespace the profile allows.
+**A namespace is still never invented.** The engine derives a _candidate_ —
+the name of the remote's last segment, or the repository directory's name —
+and offers it; nothing binds until a human says yes. The `.mnexis-namespace`
+marker follows the same rule: it is a file inside the workspace, so it can
+name the candidate (and its name wins over the derived one), but it grants
+nothing on its own. Reading keeps working for an unbound workspace: the
+recall reaches every namespace the profile allows.
 
 ## Example
 

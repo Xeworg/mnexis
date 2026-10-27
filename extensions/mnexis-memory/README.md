@@ -104,25 +104,38 @@ workspace:
 2. `mnexis project list` is consulted with that key: an existing binding is
    never renamed.
 3. A workspace with no binding and no `.mnexis-namespace` marker has **no**
-   namespace. The extension does not invent one — the name of a directory is
-   not a namespace — so the write is refused and the message names the two
-   commands the human has to run: the bind command with the canonical key,
-   and the allow-namespace command for the namespace. A marker names one
-   (the human wrote it down), and only then is the binding recorded.
+   namespace yet, and the engine offers the one it would take
+   (`mnexis status --json` → `workspace.candidate_namespace`: the last
+   segment of the git remote, lowercased, or the repository directory's own
+   name; `workspace.candidate_refusal` when it will not offer one). The
+   extension never names a workspace itself: it puts that candidate to the
+   human as one question, and a declined question writes nothing. A marker
+   names the candidate too — the human wrote it down, so it wins over the
+   derived name — but a marker grants nothing on its own: only the human's
+   confirmation binds it.
 
 ## The permission gate
 
 Permissions belong to the human, so the extension never grants itself one:
 
-- **Already authorized** → the write happens silently. The agent does not
-  ask anything.
+- **Bound and already authorized** → the write happens silently. The agent
+  does not ask anything.
+- **Unbound workspace, interactive session** → pi shows one question naming
+  the namespace, the workspace key, the path and the two permissions a yes
+  grants (the binding widens the read scope, the allowlist adds the write
+  one). Confirming runs `mnexis project bind` and then
+  `mnexis config allow-namespace` once; both persist in the profile, so
+  later sessions write without asking again. Declining binds nothing and
+  allows nothing.
 - **Not authorized, interactive session** → pi shows one confirmation naming
   the namespace and exactly what it grants. Confirming runs
   `mnexis config allow-namespace <ns>` once; the grant persists in the
   profile, so later writes never ask again.
-- **Not authorized, headless session** (`pi -p`, JSON, RPC without UI) →
-  nothing is authorized. The tool fails with the exact command a human must
-  run: `mnexis config allow-namespace <ns>`.
+- **Unbound or not authorized, headless session** (`pi -p`, JSON, RPC
+  without UI) → nothing is authorized. The tool fails with the exact
+  commands a human must run, filled in with the candidate and the key:
+  `mnexis project bind <ns> --key <key> --path <path>` and
+  `mnexis config allow-namespace <ns>`.
 
 The extension only drives the mnexis CLI; it never edits `mnexis.toml` or
 `projects.toml` by hand.
