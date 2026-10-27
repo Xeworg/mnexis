@@ -70,6 +70,21 @@ whole accumulated transcript billed again.
      A round is one assistant message plus the tool calls it issued (the
      definition `score-calls.py` already uses). The metric is the **presence
      rate**: how many of the 10 runs of phase S still carry one.
+     - **The edge, settled before any run** (amended 2026-10-27, before the
+       batch, after the manipulation check exposed it): a run that **never
+       opened the door** carries no door round to be "after". For that run,
+       **any** `mnexis_list`/`mnexis_recall` round counts as a verification
+       round — the agent rebuilt the answer by hand, which is the round this
+       metric is about — and a run that neither opens the door nor calls
+       `list`/`recall` carries none. The denominator is the 10 runs in every
+       arm: an arm is never rewarded for skipping the door.
+     - **Two readings are reported, and P1 is judged on the primary one**
+       (the edge rule above). The **strict** reading counts only the runs
+       that opened the door, and the **door-call rate** per arm is reported
+       next to it. **If the primary and the strict reading disagree about
+       the verdict, the verdict is reported as not settled and nothing
+       ascends** — a difference that rests on how many runs opened the door
+       is not a difference in the rendering.
      - **P1 (the effect the board asks about):** arm C's presence rate is
        **≤ 2/10** and arm A's is **≥ 8/10**. The effect must exist in both
        directions: the shaped answer removes the round, today's answer
