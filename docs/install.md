@@ -28,7 +28,7 @@ Pin a version with the environment (the script installs the version you
 ask for, and refuses an artifact that carries another one):
 
 ```sh
-MNEXIS_VERSION=0.3.0 \
+MNEXIS_VERSION=0.4.0 \
   curl -fsSL https://github.com/Xeworg/mnexis/releases/latest/download/install.sh | bash
 ```
 

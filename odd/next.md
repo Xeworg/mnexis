@@ -44,9 +44,14 @@ archived and **not** merged — see item 1c). The `session-recall` slices
 `feat/session-recall-state`) and the leftover `feat/session-recall` are
 merged and waiting to be deleted.
 
-**Released: v0.3.0** (2026-10-23), the identity work. The schema is at
-version 8 (migration 008 added the anchor of a session) and there is no
-downgrade: an old binary refuses to open a newer store.
+**Released: v0.4.0** (2026-10-26), the door and the call budget: the
+one-call door as a pi tool (#64), the doctor's check and repair for the
+records without a title (#65, #71, #72), the type of a memory as a closed set
+the agent writes (#66), and the session state riding the door's answer by
+default — the call-budget experiment's pre-registered ascension (#68, #70).
+The schema is at version 8 (migration 008 added the anchor of a session) and
+there is no downgrade: an old binary refuses to open a newer store. The
+branch in flight carries **0.5.0-dev**: the chrome for pi (item 10).
 
 ## The measurement that runs the board
 
@@ -542,3 +547,73 @@ state block and its price (nothing — it rides outside the budget). The
 differential against the pre-ascension binary: `status`, `list`,
 `list --full`, `search`, `recall` and the budgeted `context` envelope are
 byte-identical; the door's new key is the whole behaviour change.
+
+### 10. The chrome — the drawing the human reads, free
+
+The other engine's tools look alive: a brain, a tick, a line per call. That
+drawing is not the engine and not the CLI — it is the **extension's own
+renderer**, and it is free there: pi draws the call and the result, and the
+model reads the plain text the CLI answered.
+
+**Measured, with the engine's own tokenizer** (`token_count_v1`, the one the
+door's budget uses), for one memory: the JSON the extension hands the model
+today costs **236 tokens**; the human's plain block costs **110**; a drawn
+panel with the type's icon and no table border costs **81**; the same panel
+with ANSI colour codes costs **117** (pi's bash tool does not strip escape
+sequences, so the codes land in the agent's context); a panel drawn with
+markdown table borders costs **374**, because every box character is a token.
+
+**So the drawing is not portable, only the shape is.** The CLI's stdout is
+the machine channel of every agent — this extension, opencode, and the
+codex and claude code integrations still to come — and a drawing there is
+paid by every agent, in tokens, for every memory it reads. What ships is
+therefore:
+
+- **pi only**: `extensions/mnexis-memory/lib/chrome.js` draws the call line,
+  the panel that names a memory (its kind, its state, its revision, its
+  namespace) and the footer status. The tool's own answer is untouched: the
+  text the model reads is exactly what the CLI answered, and the drawing
+  reads `details` to draw what the human reads.
+- **every host**: the shape, not the decoration. The kind of the fact next
+  to its name, one physical line per memory in a list, the identity of a
+  record before its text — and, in the open items, the priced answer the
+  model reads instead of the fat JSON.
+
+**The hosts, measured, not assumed.** pi is the only host with a renderer
+API (`renderCall`/`renderResult`/`renderShell`). opencode's TUI hardcodes
+the rendering per tool id, so a plugin cannot restyle an MCP tool (issues
+#21018, #33302); its web UI can (`ToolRegistry.register()`). claude code
+renders MCP results as plain text and has an open request for structured
+display formats (#30271) — and its own issue #15718 measures an
+ANSI-formatted MCP answer at ~7k tokens of escape codes against ~6k of real
+content. codex renders MCP results as plain text too (#1265 explores rich
+widgets). The drawing is therefore a pi feature, and the shape is the
+portable contract.
+
+**The slices.** `07f442a` the chrome and its wiring, `fd468db` the pins that
+hold it, and this commit the board. The module is one file and the suite
+another: neither splits without breaking the thing it pins, so the
+~400-line slice gives way to the unit — the drawing, then the promise.
+
+### 11. The door is not in the MCP surface — the next thing for opencode
+
+The MCP server the binary ships has sixteen tools, and **`memory_context` is
+not one of them**. It has `memory_workspace` (the priced identity and
+preview) and `memory_recall`, but not the one-call door, and therefore not
+the session state that now rides it.
+
+So in opencode — and in the codex and claude code integrations still to
+come — the agent has to **rebuild the answer by hand**, which is exactly
+what #59 fixed for pi, and it never receives the state block that made one
+complete answer buy the round back (item 9). The order for the multi-host
+goal is: expose the door in the MCP, then add the environments to the
+installer (`AgentEnvironment` knows `pi` and `opencode` today), each one a
+skill plus its host's MCP entry.
+
+**And the question the chrome opens** — the only place where a *presentation*
+could pay the agent something: the board's rule 6 says the agent cross-checks
+an answer before it trusts it, and the `list+recall` round survives in every
+run of every arm. A shape that makes the answer visibly complete might kill
+that round, and a round is the whole transcript billed again. That is a
+measurement with the criterion written before the numbers, not a change to
+guess at.

@@ -36,6 +36,26 @@ listen port`). They are the topic's vocabulary, never a value, and they
 accumulate on the record across sessions, so the tool's answer shows the
 words the memory carries now — read it and prune a word that is wrong.
 
+## What the human sees
+
+The tools draw themselves: pi renders the call and the result with the
+extension's own chrome (`lib/chrome.js`), so the transcript reads like a
+conversation instead of a log of JSON. A call names the tool and its
+argument, an answer says what it is — the kind of the fact, its state, its
+revision, its namespace — and the footer carries the engine's status while
+it runs.
+
+The drawing is **only** for the human. The text the model reads is exactly
+what the CLI answered; the chrome reads the tool's `details` to draw what
+you read, and never touches what the model gets. That is why it lives in
+the extension and not in the CLI: the CLI's stdout is the machine channel
+of every agent — this extension, opencode, and the codex and claude code
+integrations to come — and a drawing there would be paid by every agent, in
+tokens, for every memory it reads.
+
+The kind of a memory has its own icon: 📘 knowledge, ⚖️ decision, ⭐
+preference, 🧭 procedure, 📍 project_state, 🎞️ episode, 🧠 fact.
+
 ## Read across projects, write inside one
 
 Reads are open: `mnexis_search` and `mnexis_list` reach every project
