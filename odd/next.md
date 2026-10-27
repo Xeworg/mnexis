@@ -617,10 +617,28 @@ goal is: expose the door in the MCP, then add the environments to the
 installer (`AgentEnvironment` knows `pi` and `opencode` today), each one a
 skill plus its host's MCP entry.
 
-**And the question the chrome opens** — the only place where a *presentation*
-could pay the agent something: the board's rule 6 says the agent cross-checks
-an answer before it trusts it, and the `list+recall` round survives in every
-run of every arm. A shape that makes the answer visibly complete might kill
-that round, and a round is the whole transcript billed again. That is a
-measurement with the criterion written before the numbers, not a change to
-guess at.
+**And the question the chrome opens — measured, and the answer is no.** The
+board's rule 6 says the agent cross-checks an answer before it trusts it, and
+the `list+recall` round survives in every run of every arm. The shape
+experiment ran 3 arms × 2 phases × N=10 on the same model, the same images and
+the same seeds, with the criterion pre-registered in
+`odd/tasks/chrome-shape.md` S4 before any arm existed: today's fat JSON, the
+same items plus the session-state block, and the same content rendered in the
+chrome's shape. **The verification round survived 10/10 in all three arms.**
+P1 failed in the direction that matters — the shape did not remove it — and
+P5 failed too: the block alone did not. Rules 2–5 held everywhere: the state
+facts 10/10 with nothing invented, the trap `staging-eu` kept 10/10, the write
+path 20/20, and both new arms answered *cheaper* than today's answer (36.2k
+and 37.3k input+cacheRead tokens against 45.6k) while still paying the round.
+The round is not a presentation problem: reading the sequences, it is the
+agent enumerating (`list`, often in the door's own round) and then recalling —
+a protocol, not a doubt about whether the answer was complete.
+
+So **nothing ascends**, and the next question is the door's contract: the
+extension's `memory_context` description promises the model the session state
+(`PLUS the session state — the project_state and decision records with their
+whole content and the previous session's summary`) and **no client renders
+it**. Either the description stops promising it, or the block ships as a
+promise kept rather than as a measured win — and the docs would have to say
+exactly that. After that, item 11 (the door in the MCP surface) is what the
+multi-host goal needs.
