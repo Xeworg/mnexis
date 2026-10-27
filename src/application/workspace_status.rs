@@ -49,12 +49,13 @@ pub struct StatusWorkspace {
     /// keeps deciding.
     pub namespace: Option<String>,
     /// The namespace a human would be asked to grant for this workspace
-    /// (auto-namespace S2). `None` outside a repository, or when the derived
-    /// name was refused — `candidate_refusal` says which.
+    /// (auto-namespace S2) — the remote's last segment, or the name of the
+    /// directory that names the workspace, in or out of a repository. `None`
+    /// only when the name was refused (`candidate_refusal` says why) or the
+    /// working directory cannot be read.
     pub candidate_namespace: Option<String>,
-    /// Why no candidate is offered although the process is inside a
-    /// repository: the reserved `global`, a name with a line break, or a
-    /// repository with no usable name.
+    /// Why no candidate is offered: the reserved `global`, a name with a
+    /// line break, or a directory with no usable name.
     pub candidate_refusal: Option<String>,
 }
 

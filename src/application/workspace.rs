@@ -109,24 +109,26 @@ fn remote_tail(remote: &str) -> Option<String> {
 }
 
 /// The namespace a human would be asked to grant for this workspace
-/// (auto-namespace S2): the last segment of the remote, or the repository
-/// directory's own name when the repository has no remote.
+/// (auto-namespace S2): the last segment of the remote, or the name of the
+/// directory that names the workspace — the repository root, or the working
+/// directory itself when the process is not inside a repository, because a
+/// new project before `git init` still has a name.
 ///
-/// `Ok(None)` means the process is not inside a repository: there is no
-/// project to name. The reserved `global` namespace, a name the workspace
-/// validator refuses, and a repository with no usable name are errors, so
-/// the caller can name the reason instead of quietly offering nothing.
-/// Nothing here writes: deriving a candidate is not binding it.
+/// `Ok(None)` means the working directory could not be read at all. The
+/// reserved `global` namespace, a name the workspace validator refuses, and a
+/// directory with no usable name are errors, so the caller can name the
+/// reason instead of quietly offering nothing. Nothing here writes: deriving
+/// a candidate is not binding it.
 pub fn candidate_namespace(
     remote: Option<&str>,
-    repo_root: Option<&Path>,
+    dir: Option<&Path>,
 ) -> Result<Option<String>, MnexisError> {
-    let Some(root) = repo_root else {
+    let Some(dir) = dir else {
         return Ok(None);
     };
     let derived = match remote.and_then(remote_tail) {
         Some(tail) => tail,
-        None => root
+        None => dir
             .file_name()
             .map(|name| name.to_string_lossy().to_lowercase())
             .unwrap_or_default(),
@@ -208,11 +210,13 @@ pub struct WorkspaceInfo {
     /// the profile allowlist decide, one inside does not (auto-namespace S5).
     pub in_repo: bool,
     /// The namespace a human would be asked to grant for this workspace
-    /// (auto-namespace S2): the last segment of its remote, or the
-    /// repository directory's own name. `None` outside a repository.
+    /// (auto-namespace S2): the last segment of its remote, or the name of
+    /// the directory that names it — the repository root, or the working
+    /// directory itself outside a repository. `None` only when the working
+    /// directory cannot be read.
     pub candidate_namespace: Option<String>,
-    /// Why the workspace offers no candidate although it is inside a
-    /// repository: the derived name was reserved or refused.
+    /// Why the workspace offers no candidate: the derived name was reserved
+    /// or refused, or the working directory has no name to offer.
     pub candidate_refusal: Option<String>,
 }
 
@@ -238,8 +242,11 @@ pub fn current_workspace(data_dir: &Path) -> Result<Option<WorkspaceInfo>, Mnexi
         .clone()
         .or_else(|| find_marker_namespace(&cwd));
     // Deriving a candidate is part of the answer, never an action: nothing
-    // is bound, allowed, or written here.
-    let candidate = candidate_namespace(probe.remote.as_deref(), probe.repo_root.as_deref());
+    // is bound, allowed, or written here. The directory that names the
+    // workspace is the repository root, or the working directory when the
+    // process is not in a repository at all.
+    let naming_dir = probe.repo_root.as_deref().unwrap_or(&cwd);
+    let candidate = candidate_namespace(probe.remote.as_deref(), Some(naming_dir));
     let (candidate_namespace, candidate_refusal) = match candidate {
         Ok(candidate) => (candidate, None),
         Err(error) => (None, Some(error.to_string())),
@@ -421,15 +428,15 @@ mod candidate_tests {
 
     #[test]
     fn the_candidate_is_the_last_segment_of_the_remote() {
-        let root = Path::new("/w/nodexar");
+        let dir = Path::new("/w/nodexar");
         assert_eq!(
-            candidate_namespace(Some("https://github.com/Xeworg/Nodexar.git"), Some(root))
+            candidate_namespace(Some("https://github.com/Xeworg/Nodexar.git"), Some(dir))
                 .unwrap()
                 .as_deref(),
             Some("nodexar")
         );
         assert_eq!(
-            candidate_namespace(Some("git@github.com:Xeworg/AegisPI.git"), Some(root))
+            candidate_namespace(Some("git@github.com:Xeworg/AegisPI.git"), Some(dir))
                 .unwrap()
                 .as_deref(),
             Some("aegispi")
@@ -438,7 +445,7 @@ mod candidate_tests {
         // `github.com-xeworg-my-project` is a dash, so the key's last
         // dash-segment would be `project`.
         assert_eq!(
-            candidate_namespace(Some("https://github.com/Xeworg/my-project.git"), Some(root))
+            candidate_namespace(Some("https://github.com/Xeworg/my-project.git"), Some(dir))
                 .unwrap()
                 .as_deref(),
             Some("my-project")
@@ -446,22 +453,27 @@ mod candidate_tests {
     }
 
     #[test]
-    fn the_candidate_falls_back_to_the_repository_directory() {
+    fn the_candidate_falls_back_to_the_directory_that_names_the_workspace() {
+        // A repository without a remote is named by its root.
         assert_eq!(
             candidate_namespace(None, Some(Path::new("/w/MyProject")))
                 .unwrap()
                 .as_deref(),
             Some("myproject")
         );
+        // So is a directory that is not a repository at all: a new project
+        // before `git init` still has a name a human can be asked about.
+        assert_eq!(
+            candidate_namespace(None, Some(Path::new("/w/Nuevo-Proyecto")))
+                .unwrap()
+                .as_deref(),
+            Some("nuevo-proyecto")
+        );
     }
 
     #[test]
-    fn there_is_no_candidate_outside_a_repository() {
+    fn there_is_no_candidate_when_the_directory_has_no_name() {
         assert_eq!(candidate_namespace(None, None).unwrap(), None);
-        assert_eq!(
-            candidate_namespace(Some("https://github.com/Xeworg/Nodexar.git"), None).unwrap(),
-            None
-        );
     }
 
     #[test]
@@ -472,10 +484,14 @@ mod candidate_tests {
         )
         .expect_err("`global` is reserved");
         assert!(error.to_string().contains("global"), "{error}");
+        // A directory that happens to be called `global` is refused too.
+        let error = candidate_namespace(None, Some(Path::new("/w/GLOBAL")))
+            .expect_err("`global` is reserved");
+        assert!(error.to_string().contains("global"), "{error}");
     }
 
     #[test]
-    fn a_repository_with_no_usable_name_is_refused() {
+    fn a_directory_with_no_usable_name_is_refused() {
         let error = candidate_namespace(None, Some(Path::new("/")))
             .expect_err("a root with no name offers nothing");
         assert!(error.to_string().contains("no name to offer"), "{error}");

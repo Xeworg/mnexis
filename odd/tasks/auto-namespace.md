@@ -13,12 +13,17 @@ of code, not the absence of provisioning.
 - S1 (the ask, verbatim 2026-10-27): "mnexis no esta funcionando debemos hacer
   que el namespace se pueda crear automatico cuando exista git que se vincule
   si existe". Scope: a process running inside a git repository — with a remote
-  or without one — is a project; a directory that is not in a repository is
-  not, and keeps today's behaviour.
+  or without one — is a project. A directory that is not in a repository is a
+  project too, and the human's question made that explicit (L7): the
+  candidate is offered for it, while the CLI's refusal stays where the silent
+  fall-through was measured, in a repository, and the profile's default
+  namespace keeps deciding outside one.
 - S2 (the candidate name, verbatim answer 2026-10-27): "Último segmento:
   nodexar". The candidate namespace is the last segment of the normalized
   remote, lowercased (`https://github.com/Xeworg/Nodexar.git` → `nodexar`).
-  A repository with no remote takes the basename of its root directory. The
+  With no remote — a repository before its first push, or a directory that is
+  not a repository at all — it is the name of the directory that names the
+  workspace: the repository root, or the working directory itself. The
   candidate is rejected — with the reason named, never silently — when it is
   the reserved `global`, when it is empty, or when the engine's namespace
   validator refuses it. Collisions are not resolved by the engine: the human
@@ -136,3 +141,15 @@ the user decides when they open.
   `default`, unchanged. The extension's one-confirmation path is covered by
   its own suite against a fake engine (a real TUI confirmation is the one
   step this record does not observe live).
+- L7 (2026-10-27, the human's question, verbatim): "solo tengo una duda y si no
+  hay repo que pasara cuando haga un proyecto nuevo y no haya iniciado el repo
+  eso se ha contemplado". Measured answer, in a directory with no `git` at
+  all: `status` reported `candidate_namespace: null` and a namespace-less save
+  still landed in `default` — the same silent pooling S5 removed from
+  repositories, one case over. `git init` without a remote was already
+  covered (the candidate is the directory's name). The decision, verbatim:
+  "Candidato siempre: el nombre de la carpeta" — the candidate is derived from
+  the directory that names the workspace whether or not it is a repository, so
+  a project before `git init` gets the same one question; the CLI's refusal
+  stays inside repositories, where the silent fall-through was measured, and
+  the profile's default namespace keeps deciding outside one.
