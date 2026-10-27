@@ -12,8 +12,21 @@
  */
 
 import { createClient, defaultExec } from "./lib/cli.js";
-import { decideAuthorization, describeFailure, allowNamespaceCommand } from "./lib/gate.js";
-import { findMarkerNamespace, selectNamespace, workspaceKey } from "./lib/workspace.js";
+import {
+	decideAuthorization,
+	decideBinding,
+	describeFailure,
+	allowNamespaceCommand,
+	bindCommand,
+} from "./lib/gate.js";
+import {
+	candidateFromMarker,
+	deriveWorkspaceCandidate,
+	findMarkerNamespace,
+	readWorkspaceCandidate,
+	selectNamespace,
+	workspaceKey,
+} from "./lib/workspace.js";
 import { renderers, withStatus } from "./lib/chrome.js";
 
 /**
@@ -286,23 +299,44 @@ export default function mnexisMemoryExtension(pi) {
 		const canonicalKey = publishedKey ?? key;
 		// A `.mnexis-namespace` marker names the namespace of the
 		// workspace; the mnexis CLI resolves it the same way, so both
-		// sides agree on which project a directory belongs to.
+		// sides agree on which project a directory belongs to. The marker
+		// is a file inside the workspace, so it can only NAME a candidate:
+		// nothing is bound from here (auto-namespace S6).
 		const marked = findMarkerNamespace(rootPath);
 		const selection = selectNamespace({ bindings, key: canonicalKey, fallbackName: marked });
 
-		if (!selection.bound && selection.namespace) {
-			// The human wrote the namespace down (in the marker), so the
-			// binding can be recorded. Nothing else is bound here: a
-			// namespace the agent invented is a namespace nobody allowed.
-			const bind = await client.bind(selection.namespace, canonicalKey, rootPath, cwd);
-			if (bind.code !== 0) {
-				throw new Error(
-					describeFailure({ code: bind.code, stderr: bind.stderr, namespace: selection.namespace }),
-				);
+		// The candidate namespace a human would be offered (auto-namespace
+		// S2). The engine derives it, so the extension reads the engine's
+		// answer instead of deriving a second copy that could drift.
+		let candidate = { namespace: null, refusal: null };
+		if (!selection.bound) {
+			if (marked) {
+				// The name a human wrote down wins over the name a remote
+				// yields — and is still only a candidate.
+				candidate = candidateFromMarker(marked);
+			} else {
+				const status = await client.status(cwd);
+				const published = readWorkspaceCandidate(status.code === 0 ? status.data : null);
+				// Only an engine that cannot answer leaves the derivation to
+				// the extension: the rules in lib/workspace.js (the last
+				// segment of the remote, lowercased, or the repository
+				// directory's name) are the engine's own rules, kept for an
+				// older or unreachable engine.
+				candidate = published.answered
+					? published
+					: deriveWorkspaceCandidate({ remote: remoteUrl, repoRoot });
 			}
 		}
 
-		resolution = { key: canonicalKey, namespace: selection.namespace, root: rootPath, remote: remoteUrl };
+		resolution = {
+			key: canonicalKey,
+			namespace: selection.namespace,
+			bound: selection.bound,
+			candidate: candidate.namespace,
+			refusal: candidate.refusal,
+			root: rootPath,
+			remote: remoteUrl,
+		};
 		return resolution;
 	}
 
@@ -384,30 +418,169 @@ export default function mnexisMemoryExtension(pi) {
 		return { authorized: true, asked: true };
 	}
 
-	/** Shared prologue for the write tools. */
-	async function prepareWrite(ctx) {
-		const workspace = await resolveWorkspace(ctx.cwd);
-		if (!workspace.namespace) {
-			// No binding and no marker: the namespace is the human's
-			// decision, and the message has to say exactly what to run.
+	/**
+	 * The question a human answers once per workspace (auto-namespace S3).
+	 *
+	 * It names the four things the decision needs — the namespace, the
+	 * workspace key, the path, and what the grant allows — because a binding
+	 * widens the read scope and the allowlist entry adds the write
+	 * permission: both are permissions, so both are said out loud.
+	 */
+	function bindingPrompt(workspace) {
+		return (
+			`Bind this workspace to the namespace '${workspace.candidate}'?\n\n` +
+			`Namespace: ${workspace.candidate}\n` +
+			`Workspace key: ${workspace.key}\n` +
+			`Path: ${workspace.root}\n\n` +
+			`Saying yes grants two things at once: the binding widens the read scope to ` +
+			`'${workspace.candidate}', and the allowlist entry lets the agent write memories ` +
+			`there (save, update, supersede). Other namespaces and the reserved 'global' ` +
+			`stay untouched, and you can revoke both later in the mnexis profile.`
+		);
+	}
+
+	/** Why the write stops when the engine offers no candidate. */
+	function noCandidateMessage(workspace) {
+		return (
+			`This workspace (${workspace.key}) has no namespace yet, and the agent ` +
+			`does not choose one. Ask the human to run:\n` +
+			`  mnexis project bind <namespace> --key ${workspace.key}\n` +
+			`  mnexis config allow-namespace <namespace>\n` +
+			`and retry. Reading is still available.`
+		);
+	}
+
+	/** Why the write stops when the engine refused its own candidate. */
+	function refusedCandidateMessage(workspace) {
+		return (
+			`This workspace (${workspace.key}) offers no candidate namespace, so the agent ` +
+			`does not ask for one. Reason: ${workspace.refusal}\nNo memory was written.`
+		);
+	}
+
+	/** The two commands a human must run when the session cannot ask. */
+	function pendingBindingMessage(workspace, reason) {
+		return (
+			`This workspace (${workspace.key}) is not bound to a namespace. The engine offers ` +
+			`'${workspace.candidate}' for it, and only a human can grant it: ${reason}. Ask the human to run:\n` +
+			`  ${bindCommand(workspace.candidate, workspace.key, workspace.root)}\n` +
+			`  ${allowNamespaceCommand(workspace.candidate)}\n` +
+			`and retry. No memory was written.`
+		);
+	}
+
+	/**
+	 * Offer an unbound workspace's candidate namespace to the human, and
+	 * grant it only on an explicit yes (auto-namespace S2, S3, S4, S6).
+	 *
+	 * One question per workspace, naming the namespace, the key, the path
+	 * and the two permissions it grants. Nothing is bound or allowed without
+	 * that answer: a headless session reports the exact commands instead of
+	 * guessing, and a candidate the engine refused is reported with its
+	 * reason instead of being asked about. The reserved `global` can never
+	 * reach this path — the engine refuses it, and so does the marker rule.
+	 */
+	async function bindOnConfirmation(workspace, ctx) {
+		const decision = decideBinding({
+			candidate: workspace.candidate,
+			refusal: workspace.refusal,
+			hasUI: Boolean(ctx.hasUI),
+			mode: ctx.mode,
+		});
+		if (decision.action === "refuse") {
+			return {
+				workspace,
+				gate: { authorized: false, asked: false, message: refusedCandidateMessage(workspace) },
+			};
+		}
+		if (decision.action === "none") {
+			return {
+				workspace,
+				gate: { authorized: false, asked: false, message: noCandidateMessage(workspace) },
+			};
+		}
+		if (decision.action === "pending") {
 			return {
 				workspace,
 				gate: {
 					authorized: false,
 					asked: false,
-					message:
-						`This workspace (${workspace.key}) has no namespace yet, and the agent ` +
-						`does not choose one. Ask the human to run:\n` +
-						`  mnexis project bind <namespace> --key ${workspace.key}\n` +
-						`  mnexis config allow-namespace <namespace>\n` +
-						`and retry. Reading is still available.`,
+					message: pendingBindingMessage(workspace, decision.reason),
 				},
 			};
 		}
-		const gate = await ensureWritable(workspace.namespace, ctx);
-		if (!gate.authorized) {
-			return { workspace, gate };
+		const confirmed = await ctx.ui.confirm(
+			bindingPrompt(workspace),
+			"mnexis: name this workspace",
+		);
+		if (!confirmed) {
+			return {
+				workspace,
+				gate: {
+					authorized: false,
+					asked: true,
+					message:
+						`Binding this workspace (${workspace.key}) to '${workspace.candidate}' was declined. ` +
+						`No memory was written: nothing was bound and nothing was allowed.`,
+				},
+			};
 		}
+		const allowed = await getWriteNamespaces(ctx.cwd);
+		const bind = await client.bind(workspace.candidate, workspace.key, workspace.root, ctx.cwd);
+		if (bind.code !== 0) {
+			return {
+				workspace,
+				gate: {
+					authorized: false,
+					asked: true,
+					message: `${describeFailure({
+						code: bind.code,
+						stderr: bind.stderr,
+						namespace: workspace.candidate,
+					})}. No memory was written.`,
+				},
+			};
+		}
+		const allow = await client.allowNamespace(workspace.candidate, ctx.cwd);
+		if (allow.code !== 0) {
+			return {
+				workspace,
+				gate: {
+					authorized: false,
+					asked: true,
+					message:
+						`The workspace was bound to '${workspace.candidate}', but the write allowlist ` +
+						`could not be updated: ${describeFailure({
+							code: allow.code,
+							stderr: allow.stderr,
+							namespace: workspace.candidate,
+						})}. No memory was written.`,
+				},
+			};
+		}
+		// The grant is real now: remember both halves — the binding the
+		// resolution carries and the allowlist entry — so the rest of the
+		// session writes without asking again.
+		writeNamespaces = [...allowed, workspace.candidate];
+		resolution = {
+			...workspace,
+			namespace: workspace.candidate,
+			bound: true,
+			candidate: null,
+			refusal: null,
+		};
+		return { workspace: resolution, gate: { authorized: true, asked: true } };
+	}
+
+	/** Shared prologue for the write tools. */
+	async function prepareWrite(ctx) {
+		const workspace = await resolveWorkspace(ctx.cwd);
+		if (!workspace.bound) {
+			// No binding: the namespace is the human's decision. The engine's
+			// candidate is the question; it is never the answer on its own.
+			return bindOnConfirmation(workspace, ctx);
+		}
+		const gate = await ensureWritable(workspace.namespace, ctx);
 		return { workspace, gate };
 	}
 
@@ -451,7 +624,10 @@ export default function mnexisMemoryExtension(pi) {
 		}
 		try {
 			const workspace = await resolveWorkspace(ctx.cwd);
-			if (!workspace.namespace) {
+			// Only a bound workspace has a namespace that is a permission: a
+			// marker names a candidate, and a file inside the workspace must
+			// not become the target of a write on its own (auto-namespace S6).
+			if (!workspace.bound || !workspace.namespace) {
 				return;
 			}
 			const allowed = await getWriteNamespaces(ctx.cwd);

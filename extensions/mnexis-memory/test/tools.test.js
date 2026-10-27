@@ -131,9 +131,19 @@ if (args[0] === "project" && args[1] === "list") {
 		}),
 	);
 } else if (args[0] === "status") {
+	// The engine publishes the candidate namespace of an unbound workspace
+	// (auto-namespace S2). MNEXIS_FAKE_CANDIDATE_* stands for what the
+	// engine derived, or for the reason it refused to derive one.
+	const candidate = process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE || null;
+	const refusal = process.env.MNEXIS_FAKE_CANDIDATE_REFUSAL || null;
 	process.stdout.write(
 		JSON.stringify({
-			workspace: { key: "git:github.com-xeworg-mnexis", namespace: workspace },
+			workspace: {
+				key: "git:github.com-xeworg-mnexis",
+				namespace: workspace,
+				candidate_namespace: candidate,
+				candidate_refusal: refusal,
+			},
 			scope: { default_namespace: "default", write_namespaces: [workspace] },
 			memory_count: 3,
 			recent: [
@@ -246,6 +256,25 @@ function context() {
 		hasUI: false,
 		mode: "print",
 		ui: { confirm: async () => false },
+	};
+}
+
+/** An interactive pi session, with a UI that records what it was asked. */
+function interactive(answer, cwd = process.cwd()) {
+	const prompts = [];
+	return {
+		prompts,
+		ctx: {
+			cwd,
+			hasUI: true,
+			mode: "tui",
+			ui: {
+				confirm: async (message) => {
+					prompts.push(message);
+					return answer;
+				},
+			},
+		},
 	};
 }
 
@@ -424,7 +453,7 @@ test("a supersede inside the workspace namespace goes through", async () => {
 	assert.ok(call, "supersede was called");
 });
 
-test("a marker names the namespace the extension binds", async () => {
+test("a marker names the candidate the human is asked about, and binds nothing itself", async () => {
 	const { log, dir } = setup();
 	process.env.MNEXIS_FAKE_NO_BINDING = "1";
 	writeFileSync(join(dir, ".mnexis-namespace"), "ns-marcado\n");
@@ -433,15 +462,248 @@ test("a marker names the namespace the extension binds", async () => {
 	const save = tools.get("mnexis_save");
 	assert.ok(save, "mnexis_save is registered");
 
-	await save.execute("t7", { content: "a fact" }, undefined, undefined, {
+	const result = await save.execute("t7", { content: "a fact" }, undefined, undefined, {
 		...context(),
 		cwd: dir,
 	});
 
-	const bind = calls(log).find((args) => args[0] === "project" && args[1] === "bind");
-	assert.ok(bind, "the workspace was bound");
-	assert.equal(bind[2], "ns-marcado", "the marker names the namespace");
+	assert.equal(
+		calls(log).find((args) => args[0] === "project" && args[1] === "bind"),
+		undefined,
+		"a file inside the workspace does not bind a namespace",
+	);
+	assert.equal(
+		calls(log).find((args) => args[0] === "config" && args[1] === "allow-namespace"),
+		undefined,
+		"and it grants no write permission either",
+	);
+	const text = result.content.map((block) => block.text).join(" ");
+	assert.match(
+		text,
+		/ns-marcado/,
+		`the marker names the candidate the human is asked about: ${text}`,
+	);
 	delete process.env.MNEXIS_FAKE_NO_BINDING;
+});
+
+test("an unbound workspace asks once, then binds and allows the confirmed candidate", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_NO_BINDING = "1";
+	// The engine's candidate, deliberately not the name the git remote would
+	// derive: the extension reads the candidate, it does not derive it again.
+	process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE = "nodexar";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+		const ui = interactive(true);
+
+		const result = await save.execute(
+			"t-candidate-yes",
+			{ content: "a fact" },
+			undefined,
+			undefined,
+			ui.ctx,
+		);
+
+		assert.equal(
+			ui.prompts.length,
+			1,
+			`one confirmation per workspace: ${JSON.stringify(ui.prompts)}`,
+		);
+		const question = ui.prompts[0];
+		assert.match(question, /nodexar/, `the question names the namespace: ${question}`);
+		assert.match(
+			question,
+			/git:github\.com-xeworg-mnexis/,
+			`the question names the workspace key: ${question}`,
+		);
+		assert.ok(
+			question.includes(ui.ctx.cwd),
+			`the question names the workspace path: ${question}`,
+		);
+		assert.match(question, /read/i, `the question says the grant widens reads: ${question}`);
+		assert.match(question, /writ/i, `the question says the grant allows writes: ${question}`);
+
+		const logged = calls(log);
+		const bind = logged.find((args) => args[0] === "project" && args[1] === "bind");
+		const allow = logged.find((args) => args[0] === "config" && args[1] === "allow-namespace");
+		assert.ok(bind, "the confirmation binds the workspace");
+		assert.ok(allow, "the confirmation adds the write permission");
+		assert.equal(bind[2], "nodexar", "the bind names the engine's candidate");
+		assert.equal(
+			bind[bind.indexOf("--key") + 1],
+			"git:github.com-xeworg-mnexis",
+			"the bind names the workspace key",
+		);
+		assert.equal(allow[2], "nodexar", "the allow names the same namespace");
+		assert.ok(
+			logged.indexOf(bind) < logged.indexOf(allow),
+			"the binding is recorded before the allowlist entry",
+		);
+		const saveCall = logged.filter((args) => args[0] === "save").pop();
+		assert.ok(saveCall, "the write continues after the grant");
+		assert.equal(
+			saveCall[saveCall.indexOf("--namespace") + 1],
+			"nodexar",
+			`the save targets the confirmed namespace: ${JSON.stringify(saveCall)}`,
+		);
+		assert.notEqual(result.isError, true, "the write goes through");
+	} finally {
+		delete process.env.MNEXIS_FAKE_NO_BINDING;
+		delete process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE;
+	}
+});
+
+test("a declined confirmation binds nothing, allows nothing and writes nothing", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_NO_BINDING = "1";
+	process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE = "nodexar";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+		const ui = interactive(false);
+
+		const result = await save.execute(
+			"t-candidate-no",
+			{ content: "a fact" },
+			undefined,
+			undefined,
+			ui.ctx,
+		);
+
+		assert.equal(ui.prompts.length, 1, "the human is asked once");
+		assert.equal(result.isError, true, "the write is refused");
+		const logged = calls(log);
+		assert.equal(
+			logged.find((args) => args[0] === "project" && args[1] === "bind"),
+			undefined,
+			"a declined question binds nothing",
+		);
+		assert.equal(
+			logged.find((args) => args[0] === "config" && args[1] === "allow-namespace"),
+			undefined,
+			"and it allows nothing",
+		);
+		assert.equal(logged.find((args) => args[0] === "save"), undefined, "and nothing is written");
+		const text = result.content.map((block) => block.text).join(" ");
+		assert.match(text, /No memory was written/, `the answer says nothing was written: ${text}`);
+	} finally {
+		delete process.env.MNEXIS_FAKE_NO_BINDING;
+		delete process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE;
+	}
+});
+
+test("a headless session names the candidate and the two commands a human must run", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_NO_BINDING = "1";
+	process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE = "nodexar";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+
+		const result = await save.execute("t-candidate-headless", { content: "a fact" }, undefined, undefined, context());
+
+		const logged = calls(log);
+		assert.equal(
+			logged.find((args) => args[0] === "project" && args[1] === "bind"),
+			undefined,
+			"a headless session never binds",
+		);
+		assert.equal(
+			logged.find((args) => args[0] === "config" && args[1] === "allow-namespace"),
+			undefined,
+			"and never allows",
+		);
+		const text = result.content.map((block) => block.text).join(" ");
+		assert.match(text, /nodexar/, `the answer names the candidate: ${text}`);
+		assert.match(
+			text,
+			/mnexis project bind nodexar --key git:github\.com-xeworg-mnexis/,
+			`the answer names the bind command, filled in: ${text}`,
+		);
+		assert.match(
+			text,
+			/mnexis config allow-namespace nodexar/,
+			`the answer names the allow command, filled in: ${text}`,
+		);
+	} finally {
+		delete process.env.MNEXIS_FAKE_NO_BINDING;
+		delete process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE;
+	}
+});
+
+test("a marker's name wins over the engine's candidate when the human confirms", async () => {
+	const { log, dir } = setup();
+	process.env.MNEXIS_FAKE_NO_BINDING = "1";
+	process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE = "nodexar";
+	writeFileSync(join(dir, ".mnexis-namespace"), "ns-marcado\n");
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+		const ui = interactive(true, dir);
+
+		const result = await save.execute("t-marker-yes", { content: "a fact" }, undefined, undefined, ui.ctx);
+
+		assert.equal(ui.prompts.length, 1, "the human is asked once");
+		assert.match(ui.prompts[0], /ns-marcado/, `the marker is the candidate asked about: ${ui.prompts[0]}`);
+		const logged = calls(log);
+		const bind = logged.find((args) => args[0] === "project" && args[1] === "bind");
+		const allow = logged.find((args) => args[0] === "config" && args[1] === "allow-namespace");
+		assert.ok(bind, "the confirmation binds the workspace");
+		assert.equal(bind[2], "ns-marcado", "the marker's name is the one bound");
+		assert.ok(allow, "the confirmation allows the write");
+		assert.equal(allow[2], "ns-marcado", "the marker's name is the one allowed");
+		const saveCall = logged.filter((args) => args[0] === "save").pop();
+		assert.ok(saveCall, "the write continues");
+		assert.equal(saveCall[saveCall.indexOf("--namespace") + 1], "ns-marcado");
+		assert.notEqual(result.isError, true, "the write goes through");
+	} finally {
+		delete process.env.MNEXIS_FAKE_NO_BINDING;
+		delete process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE;
+	}
+});
+
+test("a refused candidate is reported to the agent, never offered to the human", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_NO_BINDING = "1";
+	process.env.MNEXIS_FAKE_CANDIDATE_REFUSAL =
+		"`global` is reserved and a workspace cannot be bound to it";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+		const ui = interactive(true);
+
+		const result = await save.execute("t-candidate-refused", { content: "a fact" }, undefined, undefined, ui.ctx);
+
+		assert.equal(ui.prompts.length, 0, "nobody is asked about a candidate the engine refused");
+		const logged = calls(log);
+		assert.equal(
+			logged.find((args) => args[0] === "project" && args[1] === "bind"),
+			undefined,
+			"a refused candidate is not bound",
+		);
+		assert.equal(
+			logged.find((args) => args[0] === "config" && args[1] === "allow-namespace"),
+			undefined,
+			"and it is not allowed",
+		);
+		const text = result.content.map((block) => block.text).join(" ");
+		assert.match(text, /reserved/, `the refusal reason is what the answer carries: ${text}`);
+		assert.equal(result.isError, true, "the write is refused");
+	} finally {
+		delete process.env.MNEXIS_FAKE_NO_BINDING;
+		delete process.env.MNEXIS_FAKE_CANDIDATE_REFUSAL;
+	}
 });
 
 test("a workspace with no binding refuses the write and names the commands", async () => {
