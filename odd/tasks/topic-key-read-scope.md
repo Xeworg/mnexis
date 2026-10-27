@@ -71,10 +71,26 @@ caller never asked about.
 
 | ID | Spec | Route | Commit |
 |---|---|---|---|
-| T1 | S1, S2, S4, S6 | the CLI: the suggestion asks in the workspace's namespace and no longer passes the write guard; the help and the answer name it | feat branch |
-| T2 | S3, S5 | the MCP: the suggestion asks in the workspace's namespace, and the answer names it | feat branch |
-| T3 | S1–S6 | the tests that pin both surfaces, and the docs that describe the contract | feat branch |
+| T1 | S1, S2, S4, S6 | the CLI: the suggestion asks in the workspace's namespace and no longer passes the write guard; the help and the answer name it | 5d5c344 |
+| T2 | S3, S5 | the MCP: the suggestion asks in the workspace's namespace, and the answer names it | 5d5c344 |
+| T3 | S1–S6 | the tests that pin both surfaces, and the docs that describe the contract | e4a2fec, 5d5c344 |
 | T4 | S1–S6 | the delivery: the review slice and the PR | PR |
+
+**The slice boundary, and why the work is two units.** The slice
+heuristic is about 400 authored lines, and the whole feature is over it
+(726). The work therefore lands as two reviewable units rather than one
+long one, and the split is not cosmetic: the first unit is the **guard**,
+the second is the **behavior**. The guard is what a review must take
+alone, because it is the part that can leak.
+
+- `9814e48` — the guard: `topic_for_title`'s `None` branch authorizes the
+  read of the scope's default namespace, as the named branch already did.
+  Its own regression test, one per surface.
+- `5d5c344` — the behavior: the CLI, the MCP, their help and their
+  descriptions.
+
+`13bd1cb` is this document, and it carries the reproduction and the review
+that found the regression (L7).
 
 ## Log
 
