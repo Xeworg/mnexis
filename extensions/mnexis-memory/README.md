@@ -18,7 +18,7 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 | Tool | Purpose |
 | --- | --- |
 | `mnexis_workspace` | First call of a session: the namespace this workspace writes into, the allowlists, and the most recent memories — each with its title and a preview, never the whole record. |
-| `mnexis_context` | The budgeted one-call door: the task in one line, and the memories this project recorded that matter for it, trimmed to a token budget. The answer declares the namespace it searched and the tokens it spent. |
+| `mnexis_context` | The one-call door: the task in one line, and the memories this project recorded that matter for it, trimmed to a token budget — plus the **session state** (the `project_state`/`decision` records with their whole content and the previous session's summary), so one call answers "where did we leave off". The answer declares the namespace it searched and the tokens it spent. |
 | `mnexis_save` | Store a durable, self-contained memory about the project, with the `type` of fact it is when the agent knows it: one of `knowledge`, `decision`, `preference`, `procedure`, `project_state`, `episode`, `fact` (optional, so the engine decides otherwise). |
 | `mnexis_search` | Full-text search over the stored memories (ranked), narrowed by `type` when only some kinds matter. |
 | `mnexis_list` | List what is already stored, narrowed by `type` when only some kinds matter. |
@@ -52,6 +52,17 @@ save lands in — and says which namespace it searched. An empty answer is
 then never another project's silence. It takes `namespace` when the
 question is about another project, and `token_budget` when the default
 budget is not the one wanted.
+
+Its answer also carries the **session state**, outside the token budget:
+the `project_state` and `decision` records of that namespace with their
+whole content, newest first, plus the summary of the most recent finished
+session. That block is the measured answer to the session's fan-out (the
+call-budget experiment: three extra rounds rebuilding the same state by
+hand became one call), so read it before asking the other surfaces — the
+state is already in the first answer. It carries an empty list and a
+null session when the project has recorded nothing, and never another
+namespace's records; a namespace the profile may write but not read
+yields the empty block.
 
 Writes are not: `mnexis_save` always targets the workspace namespace, and
 `mnexis_supersede` refuses a memory that lives in another project. The
