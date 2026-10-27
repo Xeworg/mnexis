@@ -1450,6 +1450,230 @@ async fn memory_suggest_topic_key_answers_from_the_title() -> Result<(), Box<dyn
 }
 
 #[tokio::test]
+async fn memory_suggest_topic_key_asks_in_the_workspace_namespace()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    // The profile's default namespace is not the one the workspace writes
+    // into: only the workspace's own namespace holds the record below, and
+    // only the binding opens it for reading.
+    std::fs::write(
+        data_dir.join("mnexis.toml"),
+        "default_namespace = \"default\"\nread_namespaces = [\"default\"]\n\
+         write_namespaces = [\"default\", \"mnexis\"]\nallow_read_all = false\n\
+         allow_global = false\nexistence_disclosure = \"not_found\"\n\
+         allowed_operations = [\"all\"]\n",
+    )?;
+
+    // A workspace bound to `mnexis`, exactly like a real project.
+    let workspace = tempfile::tempdir_in("target")?;
+    let git = |args: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(workspace.path())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()?;
+        assert!(status.success(), "git {args:?} failed");
+        Ok(())
+    };
+    git(&["init", "-q", "."])?;
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/Xeworg/mnexis.git",
+    ])?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let bound = std::process::Command::new(&binary)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .args([
+            "project",
+            "bind",
+            "mnexis",
+            "--key",
+            "git:github.com/Xeworg/mnexis",
+        ])
+        .output()?;
+    assert!(
+        bound.status.success(),
+        "bind failed: {}",
+        String::from_utf8_lossy(&bound.stderr)
+    );
+
+    // One titled record, in the namespace the workspace writes into.
+    let saved = std::process::Command::new(&binary)
+        .current_dir(workspace.path())
+        .arg("--data-dir")
+        .arg(data_dir)
+        .args([
+            "--json",
+            "save",
+            "--namespace",
+            "mnexis",
+            "--title",
+            "puerto del servicio",
+            "El servicio escucha en el puerto 8081",
+        ])
+        .output()?;
+    assert!(
+        saved.status.success(),
+        "save failed: {}",
+        String::from_utf8_lossy(&saved.stderr)
+    );
+    let saved_json: serde_json::Value = serde_json::from_slice(&saved.stdout)?;
+    let uuid = saved_json["uuid"].as_str().expect("uuid").to_string();
+
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir")
+                .arg(data_dir)
+                .arg("mcp")
+                .arg("serve")
+                .current_dir(workspace.path());
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // Without a namespace the tool asks about the workspace's own namespace —
+    // the one a save lands in — and the answer names it. Before this rule it
+    // answered about the profile's default namespace, silently, and reported
+    // the key as free.
+    let text = call_tool_text(
+        &client,
+        "memory_suggest_topic_key",
+        serde_json::json!({ "title": "puerto del servicio" }),
+    )
+    .await?;
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(
+        json["namespace"], "mnexis",
+        "the answer names the namespace it asked about: {json}"
+    );
+    assert_eq!(json["topic_key"], "puerto-del-servicio", "{json}");
+    assert_eq!(
+        json["recorded_by"], uuid,
+        "the record of the workspace's namespace holds the key: {json}"
+    );
+
+    // A key nobody holds is free in that same namespace, and says so.
+    let text = call_tool_text(
+        &client,
+        "memory_suggest_topic_key",
+        serde_json::json!({ "title": "otro asunto" }),
+    )
+    .await?;
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(json["namespace"], "mnexis", "{json}");
+    assert_eq!(json["recorded_by"], serde_json::Value::Null, "{json}");
+
+    // A namespace the caller names is still the one asked about.
+    let text = call_tool_text(
+        &client,
+        "memory_suggest_topic_key",
+        serde_json::json!({ "title": "puerto del servicio", "namespace": "default" }),
+    )
+    .await?;
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(json["namespace"], "default", "{json}");
+    assert_eq!(json["recorded_by"], serde_json::Value::Null, "{json}");
+
+    // The description and the arg doc say which namespace the tool asks
+    // about: the workspace's, not the profile's default one (S6).
+    let tools = client.list_all_tools().await?;
+    let tool = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "memory_suggest_topic_key")
+        .expect("memory_suggest_topic_key present in the tool list");
+    let description = tool.description.as_deref().unwrap_or_default().to_string();
+    assert!(
+        description.contains("this workspace writes into"),
+        "the description must say which namespace is asked about: {description:?}"
+    );
+    let namespace_doc = tool
+        .input_schema
+        .get("properties")
+        .and_then(|props| props.get("namespace"))
+        .and_then(|prop| prop.get("description"))
+        .and_then(|doc| doc.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "the schema must describe namespace: {:?}",
+                tool.input_schema
+            )
+        });
+    // The schema keeps the doc's line breaks: compare the words.
+    let namespace_doc = namespace_doc
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        namespace_doc.contains("the namespace this workspace writes into"),
+        "the arg doc must say which namespace is asked about: {namespace_doc:?}"
+    );
+    assert!(
+        !namespace_doc.contains("Namespace (default: the profile's default namespace)"),
+        "the arg doc must not claim the profile's default namespace: {namespace_doc:?}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_suggest_topic_key_refuses_a_namespace_the_profile_cannot_read()
+-> Result<(), Box<dyn std::error::Error>> {
+    // A profile whose `default_namespace` is NOT one of its readable
+    // namespaces. The suggestion falls back to the scope's default when the
+    // workspace names none, and that fallback is a read: the scope must
+    // refuse it, exactly as it refuses every other read. The tool must not
+    // answer about a namespace the profile may not read — not even to say
+    // the key is free.
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+    std::fs::write(
+        data_dir.join("mnexis.toml"),
+        "default_namespace = \"secreto\"\nread_namespaces = [\"default\"]\n\
+         write_namespaces = [\"default\"]\nallow_read_all = false\nallow_global = false\n\
+         existence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n",
+    )?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("memory_suggest_topic_key".to_string()).with_arguments(
+                serde_json::json!({ "title": "puerto del servidor" })
+                    .as_object()
+                    .expect("object")
+                    .clone(),
+            ),
+        )
+        .await;
+    let error = match result {
+        Ok(ok) => panic!("the tool must refuse an unreadable namespace: {ok:?}"),
+        Err(error) => error,
+    };
+    let message = error.to_string();
+    assert!(
+        message.contains("not found: namespace:secreto"),
+        "the refusal names the namespace and the route: {message}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn the_list_carries_the_relations_between_the_memories()
 -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir_in("target")?;
