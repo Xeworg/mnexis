@@ -579,6 +579,13 @@ therefore:
   record before its text — and, in the open items, the priced answer the
   model reads instead of the fat JSON.
 
+**The renderer's contract, the way pi calls it.** pi hands the renderer
+`{content, details}` and `{expanded, isPartial}` — **never the error flag**:
+that lives in the render context, the fourth argument (`context.isError`).
+A renderer that looks for the error in the result or in the options draws a
+tick on a failed call. The review after the merge found exactly that, and
+the fix reads the context.
+
 **The hosts, measured, not assumed.** pi is the only host with a renderer
 API (`renderCall`/`renderResult`/`renderShell`). opencode's TUI hardcodes
 the rendering per tool id, so a plugin cannot restyle an MCP tool (issues

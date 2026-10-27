@@ -522,7 +522,7 @@ test("the workspace panel draws the recent memories", () => {
 	assert.ok(lines[1].startsWith("📍 project_state"), `the kind leads the line: ${lines[1]}`);
 });
 
-test("a revision carries when it happened and who did it", () => {
+test("a revision carries when it happened, who did it and why", () => {
 	const lines = resultLines(
 		"mnexis_history",
 		{
@@ -535,15 +535,117 @@ test("a revision carries when it happened and who did it", () => {
 						changed_at: "2026-10-26T18:00:00Z",
 						changed_by: "agent",
 						change_reason: "the fact changed",
+						content: "the fact says something else now",
 					},
 				],
 			},
 		},
 		{ expanded: true },
 	);
-	assert.equal(lines.length, 1, `one revision, one line: ${JSON.stringify(lines)}`);
+	assert.equal(lines.length, 3, `the revision, its reason and its text: ${JSON.stringify(lines)}`);
 	assert.match(lines[0], /2026-10-26T18:00:00Z/, `the revision says when: ${lines[0]}`);
 	assert.match(lines[0], /agent/, `the revision says who: ${lines[0]}`);
+	assert.match(lines[1], /reason: the fact changed/, `the revision says why: ${lines[1]}`);
+	assert.match(lines[2], /the fact says something else now/, `the revision says what: ${lines[2]}`);
+});
+
+test("a failed call is marked as a failure, the way pi reports it", () => {
+	// pi hands the renderer the content and the details — never the error
+	// flag: that lives in the render context, the fourth argument.
+	const result = {
+		content: [{ type: "text", text: "not found: memory: 191cc344" }],
+		details: { uuid: "191cc344" },
+	};
+	const component = renderers("mnexis_show").renderResult(result, { expanded: true }, undefined, {
+		isError: true,
+	});
+	const lines = component.render(80);
+	assert.equal(lines.length, 1, `a failure is one line: ${JSON.stringify(lines)}`);
+	assert.ok(lines[0].startsWith("↳ ✗"), `the line is marked as a failure: ${lines[0]}`);
+	assert.match(lines[0], /not found/, `the line says what went wrong: ${lines[0]}`);
+});
+
+test("a failed call collapsed is a failure too", () => {
+	const component = renderers("mnexis_show").renderResult(
+		{ content: [{ type: "text", text: "not found: memory: 191cc344" }], details: {} },
+		{ expanded: false },
+		undefined,
+		{ isError: true },
+	);
+	const lines = component.render(80);
+	assert.ok(lines[0].startsWith("↳ ✗"), `the collapsed line is marked: ${lines[0]}`);
+});
+
+test("the door shows the content of the records it answers with", () => {
+	const lines = resultLines(
+		"mnexis_context",
+		{
+			details: {
+				count: 1,
+				memories: [
+					{
+						uuid: "7f5561f7-7493-44c9-b594-3ea1c8c5519e",
+						memory_type: "project_state",
+						content: "the board is in odd/next.md",
+					},
+				],
+			},
+		},
+		{ expanded: true },
+	);
+	assert.equal(lines.length, 2, `the record and its content: ${JSON.stringify(lines)}`);
+	assert.ok(lines[0].startsWith("📍 project_state"), `the kind leads the line: ${lines[0]}`);
+	assert.match(lines[1], /the board is in odd\/next\.md/, `the content is there: ${lines[1]}`);
+});
+
+test("a record that only carries a preview stays one line", () => {
+	const lines = resultLines(
+		"mnexis_list",
+		{
+			details: {
+				count: 1,
+				memories: [
+					{
+						uuid: "7f5561f7-7493-44c9-b594-3ea1c8c5519e",
+						memory_type: "fact",
+						preview: "the board is in odd/next.md",
+					},
+				],
+			},
+		},
+		{ expanded: true },
+	);
+	assert.equal(lines.length, 1, `a preview is one line: ${JSON.stringify(lines)}`);
+});
+
+test("the panel of a record names when it changed and on what basis", () => {
+	const lines = resultLines(
+		"mnexis_show",
+		{
+			details: {
+				memory: {
+					uuid: "191cc344-9560-46cb-b05b-fc1bbe48b8cb",
+					memory_type: "fact",
+					namespace: "default",
+					state: "active",
+					revision: 1,
+					created_at: "2026-10-20T02:08:58Z",
+					updated_at: "2026-10-26T18:00:00Z",
+					assertion_basis: "user_stated",
+					content: "a fact",
+				},
+			},
+		},
+		{ expanded: true },
+	);
+	assert.ok(
+		lines.some((line) => line.startsWith("updated     2026-10-26T18:00:00Z")),
+		`the panel says when it changed: ${JSON.stringify(lines)}`,
+	);
+	assert.ok(
+		lines.some((line) => line.startsWith("basis       user_stated")),
+		`the panel says on what basis: ${JSON.stringify(lines)}`,
+	);
 });
 
 test("an empty panel still draws a line", () => {
@@ -556,4 +658,14 @@ test("a joined emoji is one glyph, and a wide letter is two columns", () => {
 	assert.equal(displayWidth("漢"), 2, "a wide letter takes two columns");
 	assert.equal(displayWidth("🧠"), 2, "an emoji takes two columns");
 	assert.equal(displayWidth("a"), 1, "a letter takes one column");
+});
+
+test("a count speaks in the singular when it is one", () => {
+	assert.equal(summaryLine("mnexis_list", { details: { count: 1 } }), "↳ ✓ 1 memory");
+	assert.equal(summaryLine("mnexis_list", { details: { count: 2 } }), "↳ ✓ 2 memories");
+	assert.equal(summaryLine("mnexis_search", { details: { count: 1 } }), "↳ ✓ 1 result");
+	assert.equal(
+		summaryLine("mnexis_context", { details: { count: 1, tokens_used: 1156 } }),
+		"↳ ✓ 1 memory · 1156 tokens",
+	);
 });
