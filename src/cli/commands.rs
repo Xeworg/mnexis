@@ -296,30 +296,58 @@ pub fn save(
     ))
 }
 
+/// The namespace a read of this profile asks when the caller names none: the
+/// workspace's own namespace — the one a save lands in — when the profile may
+/// read it (read-granularity S2, topic-key-read-scope S1).
+///
+/// `None` means the workspace names no namespace, or names one this profile
+/// may not read, so the caller keeps its own fallback. This is the rule the
+/// door already follows; every read that resolves a namespace itself reuses it
+/// instead of inventing a second one. It never widens a read on its own.
+fn read_namespace_of(profile: &Profile) -> Option<String> {
+    let workspace = crate::application::workspace::current_workspace(&profile.data_dir)
+        .ok()
+        .flatten();
+    crate::application::workspace::read_namespace(profile.service_ref().scope(), workspace.as_ref())
+}
+
 /// `mnexis suggest-topic-key "<title>"` — the key a title yields, and the
 /// record that already holds it.
+///
+/// The suggestion is a **read**: it asks which key a title yields and who
+/// holds it, and it writes nothing. The write isolation of the workspace does
+/// not apply to it — the read scope decides, exactly as it does for every
+/// other read. A read without an explicit namespace asks in the workspace's
+/// own namespace, the one a save lands in, and the answer names the namespace
+/// it asked about so a human can tell which project was consulted.
 pub fn suggest_topic_key(
     profile: &mut Profile,
     title: String,
     namespace: Option<String>,
 ) -> Result<CommandOutcome, MnexisError> {
-    let namespace = namespace.unwrap_or_else(|| profile.default_namespace());
-    WorkspaceGuard::resolve(profile)?.authorize(&namespace)?;
+    let namespace = namespace.or_else(|| read_namespace_of(profile));
     let (key, occupier) = profile
         .service_ref()
-        .topic_for_title(&title, Some(&namespace))?;
+        .topic_for_title(&title, namespace.as_deref())?;
+    // The namespace the suggestion actually asked about: `None` means the
+    // service's own fallback, the scope's default namespace. The answer names
+    // it either way, so it cannot be mistaken for an answer about another
+    // project.
+    let asked =
+        namespace.unwrap_or_else(|| profile.service_ref().scope().default_namespace.clone());
     let text = if key.is_empty() {
-        "this title yields no topic key".to_string()
+        format!("this title yields no topic key in namespace `{asked}`")
     } else if let Some(uuid) = &occupier {
-        format!("the key `{key}` is already recorded by {uuid}")
+        format!("the key `{key}` is already recorded by {uuid} in namespace `{asked}`")
     } else {
-        format!("the key `{key}` is free")
+        format!("the key `{key}` is free in namespace `{asked}`")
     };
     Ok(CommandOutcome::new(
         json!({
             "title": title,
             "topic_key": key,
             "recorded_by": occupier,
+            "namespace": asked,
         }),
         text,
     ))
@@ -1384,18 +1412,7 @@ pub fn context(
     // workspace's own namespace, the one a save lands in (#57). The
     // allowlist's first entry is the fallback, and it belongs to another
     // project as often as not.
-    let namespace = match namespace {
-        Some(namespace) => Some(namespace),
-        None => {
-            let workspace = crate::application::workspace::current_workspace(&profile.data_dir)
-                .ok()
-                .flatten();
-            crate::application::workspace::read_namespace(
-                profile.service_ref().scope(),
-                workspace.as_ref(),
-            )
-        }
-    };
+    let namespace = namespace.or_else(|| read_namespace_of(profile));
     let req = ContextRequest {
         task,
         namespace,

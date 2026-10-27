@@ -156,7 +156,8 @@ pub struct SavePromptArgs {
 pub struct SuggestTopicKeyArgs {
     /// The title of the fact you are about to record.
     pub title: String,
-    /// Namespace (default: the profile's default namespace).
+    /// Namespace to ask about (default: the namespace this workspace writes
+    /// into; the profile's default namespace outside one).
     #[serde(default)]
     pub namespace: Option<String>,
 }

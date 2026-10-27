@@ -105,6 +105,12 @@ pub struct McpServer {
     /// any known project: the profile allowlist keeps deciding.
     workspace_namespace: Option<String>,
     workspace_key: String,
+    /// The namespace a read of this workspace that names none asks: the
+    /// workspace's own namespace when the profile may read it. `None` when
+    /// the workspace names no namespace, or names one this profile may not
+    /// read — the service's default namespace decides then, as it always
+    /// did.
+    read_namespace: Option<String>,
 }
 impl McpServer {
     /// Build a McpServer from a data directory.
@@ -136,6 +142,10 @@ impl McpServer {
         let workspace = crate::application::workspace::current_workspace(&data_dir)?;
         let mut scope = settings.to_access_scope()?;
         crate::application::workspace::allow_bound_read_namespace(&mut scope, workspace.as_ref());
+        // The namespace a read that names none asks, resolved by the same
+        // rule the CLI's door follows (topic-key-read-scope S1, S3).
+        let read_namespace =
+            crate::application::workspace::read_namespace(&scope, workspace.as_ref());
         let service =
             crate::application::MemoryService::new(repo, scope, settings.to_service_config());
         let (workspace_namespace, workspace_key) = match workspace {
@@ -148,6 +158,7 @@ impl McpServer {
             data_dir,
             workspace_namespace,
             workspace_key,
+            read_namespace,
         })
     }
 
@@ -394,17 +405,27 @@ impl McpServer {
     }
 
     /// The topic key a title yields, and the record that already holds it.
+    ///
+    /// The namespace asked about, in order: the one the caller names, the
+    /// namespace this workspace writes into, and the scope's default when the
+    /// workspace names none. The answer names it, so a caller can tell which
+    /// project was consulted instead of trusting a silent default.
     fn do_suggest_topic_key(&self, args: SuggestTopicKeyArgs) -> Result<String, McpError> {
         let svc = self
             .service
             .lock()
             .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
-        let (key, occupier) = svc.topic_for_title(&args.title, args.namespace.as_deref())?;
+        let namespace = args.namespace.or_else(|| self.read_namespace.clone());
+        let (key, occupier) = svc.topic_for_title(&args.title, namespace.as_deref())?;
+        // `None` means the service read the scope's default namespace: the
+        // answer names it rather than leaving the caller to guess.
+        let asked = namespace.unwrap_or_else(|| svc.scope().default_namespace.clone());
         drop(svc);
         let json = serde_json::json!({
             "title": args.title,
             "topic_key": key,
             "recorded_by": occupier,
+            "namespace": asked,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
@@ -723,7 +744,7 @@ impl McpServer {
 
     #[tool(
         name = "memory_suggest_topic_key",
-        description = "Call this BEFORE you save a fact: it answers which topic key the title you are about to use yields, and whether the namespace already records it. The same title always gives the same key, so the same fact lands on the same record."
+        description = "Call this BEFORE you save a fact: it answers which topic key the title you are about to use yields, and whether the namespace already records it. The same title always gives the same key, so the same fact lands on the same record. It asks about the namespace this workspace writes into — the one a save lands in — unless you name another one you may read, and the answer names the namespace it asked about."
     )]
     fn memory_suggest_topic_key(
         &self,

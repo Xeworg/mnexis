@@ -687,3 +687,254 @@ fn a_binding_never_opens_the_reserved_global_namespace() {
         stderr_of(&direct)
     );
 }
+
+// ── the topic-key suggestion is a read (topic-key-read-scope S1–S6) ────────
+//
+// `suggest-topic-key` asks which key a title yields and who holds it. It
+// writes nothing, so the write isolation of the workspace must not refuse it;
+// the read scope decides, and a read without an explicit namespace asks in the
+// workspace's own namespace — the one a save lands in — the same rule the door
+// (`mnexis context`) follows. The answer names the namespace it asked about.
+
+/// Save one titled memory through a working directory and return its uuid.
+/// The title is what the topic key derives from, so a suggestion can find the
+/// record that already holds it.
+fn save_titled_in(profile: &Profile, dir: &Path, namespace: &str, title: &str) -> String {
+    let out = profile.run_in_dir(
+        dir,
+        &[
+            "--json",
+            "save",
+            "--namespace",
+            namespace,
+            "--title",
+            title,
+            "el puerto del servicio es 8081",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "save failed ({:?}): {}",
+        out.status.code(),
+        stderr_of(&out)
+    );
+    stdout_json(&out)["uuid"]
+        .as_str()
+        .expect("uuid in save output")
+        .to_string()
+}
+
+#[test]
+fn the_suggestion_asks_in_the_namespace_the_workspace_writes_into() {
+    let p = Profile::new().with_config(&config(&["default"], &["default", BOUND_NAMESPACE]));
+    let seed = tempdir_in("target").expect("tempdir under target/");
+    let uuid = save_titled_in(&p, seed.path(), BOUND_NAMESPACE, "puerto del servicio");
+    p.run_silent(&["project", "bind", BOUND_NAMESPACE, "--key", KEY_RAW]);
+
+    // No `--namespace`: the namespace the workspace writes into is the one a
+    // save lands in, so it is the one whose records the suggestion reads. The
+    // write guard used to refuse this read because the profile's default is
+    // not the workspace's namespace.
+    let out = p.run_in_workspace(
+        REMOTE,
+        &["--json", "suggest-topic-key", "puerto del servicio"],
+    );
+    assert!(
+        out.status.success(),
+        "the suggestion is a read and must answer ({:?}): {}",
+        out.status.code(),
+        stderr_of(&out)
+    );
+    assert_eq!(stderr_of(&out), "", "a read answers without noise");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["namespace"], BOUND_NAMESPACE,
+        "the answer names the namespace it asked about: {json}"
+    );
+    assert_eq!(json["topic_key"], "puerto-del-servicio", "{json}");
+    assert_eq!(
+        json["recorded_by"], uuid,
+        "the record of the workspace's namespace holds the key: {json}"
+    );
+
+    // The text names the namespace it asked about too, so a reader can tell
+    // which project was consulted.
+    let text = p.run_in_workspace(REMOTE, &["suggest-topic-key", "puerto del servicio"]);
+    assert!(text.status.success(), "{}", stderr_of(&text));
+    assert_eq!(
+        stdout_of(&text),
+        format!(
+            "the key `puerto-del-servicio` is already recorded by {uuid} in namespace \
+             `{BOUND_NAMESPACE}`\n"
+        )
+    );
+
+    // And so does the help of the command: the namespace it asks about is the
+    // workspace's, not the profile's default one (S6).
+    let help = p.run_silent(&["suggest-topic-key", "--help"]);
+    assert!(
+        help.status.success(),
+        "{}: {}",
+        help.status,
+        stderr_of(&help)
+    );
+    let help_text = stdout_of(&help);
+    assert!(
+        help_text.contains("the namespace this workspace writes into"),
+        "the help must say which namespace the suggestion asks about: {help_text}"
+    );
+    assert!(
+        !help_text.contains("Namespace (default: the profile's default_namespace)"),
+        "the help must not claim the profile's default namespace: {help_text}"
+    );
+}
+
+#[test]
+fn the_suggestion_is_not_a_write_and_a_write_still_leaves_the_workspace_nowhere() {
+    // `otro` is readable but not writable: the read may ask about it, the
+    // write may not land in it.
+    let p =
+        Profile::new().with_config(&config(&["default", "otro"], &["default", BOUND_NAMESPACE]));
+    p.run_silent(&["project", "bind", BOUND_NAMESPACE, "--key", KEY_RAW]);
+
+    // The refusal S1 replaces is gone: no FORBIDDEN and no instruction to
+    // rebind the workspace to the namespace it is already bound to.
+    let suggested = p.run_in_workspace(
+        REMOTE,
+        &["--json", "suggest-topic-key", "puerto del servicio"],
+    );
+    assert!(
+        suggested.status.success(),
+        "the suggestion must not be refused ({:?}): {}",
+        suggested.status.code(),
+        stderr_of(&suggested)
+    );
+    assert_eq!(stderr_of(&suggested), "");
+    let json = stdout_json(&suggested);
+    assert_eq!(json["namespace"], BOUND_NAMESPACE, "{json}");
+    assert_eq!(
+        json["recorded_by"],
+        serde_json::Value::Null,
+        "nothing records the key yet: {json}"
+    );
+
+    // A write into any other namespace is still refused, with the same code
+    // and the same message, and stores nothing.
+    let refused = p.run_in_workspace(REMOTE, &["save", "--namespace", "otro", "no debe entrar"]);
+    assert_eq!(
+        refused.status.code(),
+        Some(4),
+        "the write guard still applies to save: {}",
+        stderr_of(&refused)
+    );
+    assert_eq!(stdout_of(&refused), "", "a refused write answers nothing");
+    assert_eq!(
+        stderr_of(&refused),
+        format!(
+            "error[FORBIDDEN]: forbidden: write: this workspace writes only into namespace \
+             '{BOUND_NAMESPACE}'; run `mnexis project bind <namespace> --key {KEY_CANONICAL} \
+             --force` to change it\n"
+        )
+    );
+    let after = p.run_in_workspace(REMOTE, &["--json", "list", "--namespace", "otro"]);
+    assert_eq!(
+        stdout_json(&after)["count"],
+        0,
+        "the refused write must store nothing"
+    );
+}
+
+#[test]
+fn a_workspace_that_names_no_namespace_keeps_the_profile_default() {
+    // The behavior the suggestion had before this rule, for the profile that
+    // names no namespace at all.
+    let p = Profile::new().with_config(&config(&["default", "otro"], &["default", "otro"]));
+    let seed = tempdir_in("target").expect("tempdir under target/");
+    let other = save_titled_in(&p, seed.path(), "otro", "otra cosa");
+    let bare = tempdir_in("target").expect("tempdir under target/");
+
+    // No binding and no marker: the profile's default namespace answers.
+    let asked = p.run_in_dir(bare.path(), &["--json", "suggest-topic-key", "otra cosa"]);
+    assert!(asked.status.success(), "{}", stderr_of(&asked));
+    assert_eq!(stderr_of(&asked), "");
+    let json = stdout_json(&asked);
+    assert_eq!(json["topic_key"], "otra-cosa", "{json}");
+    assert_eq!(
+        json["recorded_by"],
+        serde_json::Value::Null,
+        "the default namespace holds nothing for that title: {json}"
+    );
+
+    // An explicit `--namespace` is still the namespace asked about.
+    let explicit = p.run_in_dir(
+        bare.path(),
+        &[
+            "--json",
+            "suggest-topic-key",
+            "--namespace",
+            "otro",
+            "otra cosa",
+        ],
+    );
+    assert!(explicit.status.success(), "{}", stderr_of(&explicit));
+    let json = stdout_json(&explicit);
+    assert_eq!(json["topic_key"], "otra-cosa", "{json}");
+    assert_eq!(
+        json["recorded_by"], other,
+        "the explicit namespace is the one asked about: {json}"
+    );
+
+    // The read scope still decides: a namespace the profile may not read is
+    // refused, exactly as every other read is. A read never widens itself.
+    let denied = p.run_in_dir(
+        bare.path(),
+        &["suggest-topic-key", "--namespace", "ajeno", "otra cosa"],
+    );
+    assert_eq!(
+        denied.status.code(),
+        Some(3),
+        "an unreadable namespace must stay NOT_FOUND: {}",
+        stderr_of(&denied)
+    );
+    assert_eq!(stdout_of(&denied), "");
+}
+
+#[test]
+fn the_suggestion_never_answers_about_a_namespace_the_profile_cannot_read() {
+    // A profile whose `default_namespace` is NOT one of its readable
+    // namespaces. The suggestion falls back to the scope's default when the
+    // workspace names none, and that fallback is a read like any other: the
+    // scope must refuse it, exactly as it refuses `list --namespace` for the
+    // same namespace.
+    let p = Profile::new().with_config(
+        "default_namespace = \"secreto\"\nread_namespaces = [\"default\"]\n\
+         write_namespaces = [\"default\"]\nallow_global = false\nallow_read_all = false\n\
+         existence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n",
+    );
+    let bare = tempdir_in("target").expect("tempdir under target/");
+
+    // The same namespace, read through another command, for the reference.
+    let listed = p.run_in_dir(bare.path(), &["list", "--namespace", "secreto"]);
+    assert_eq!(
+        listed.status.code(),
+        Some(3),
+        "the scope refuses that namespace for every read: {}",
+        stderr_of(&listed)
+    );
+
+    // The suggestion must refuse it too: it must not answer about a
+    // namespace the profile may not read, not even to say the key is free.
+    let denied = p.run_in_dir(bare.path(), &["suggest-topic-key", "puerto del servidor"]);
+    assert_eq!(
+        denied.status.code(),
+        Some(3),
+        "the suggestion must not answer about an unreadable namespace: {}",
+        stderr_of(&denied)
+    );
+    assert_eq!(stdout_of(&denied), "", "a refused read answers nothing");
+    assert!(
+        stderr_of(&denied).contains("not found: namespace:secreto"),
+        "the refusal names the namespace and the route: {}",
+        stderr_of(&denied)
+    );
+}

@@ -1147,6 +1147,13 @@ impl<R: MemoryRepository> MemoryService<R> {
     /// same key, in any language. Whether the namespace already holds that
     /// key is an equality, not a guess — and it is what makes one fact one
     /// record.
+    ///
+    /// A read with no namespace of its own falls back to the scope's default
+    /// namespace, and that fallback is a **read**: it is authorized like any
+    /// other. The scope may name a default namespace it does not allow
+    /// reading, and a profile in that shape must be refused here exactly as
+    /// it is by every other read — never answered, not even to say the key
+    /// is free.
     pub fn topic_for_title(
         &self,
         title: &str,
@@ -1161,7 +1168,11 @@ impl<R: MemoryRepository> MemoryService<R> {
                 self.scope.authorize_read(ns)?;
                 ns.to_string()
             }
-            None => self.scope.default_namespace.clone(),
+            None => {
+                let ns = self.scope.default_namespace.clone();
+                self.scope.authorize_read(&ns)?;
+                ns
+            }
         };
         let occupier = self.repo.topic_key_occupier(&ns, &key)?;
         Ok((key, occupier))
