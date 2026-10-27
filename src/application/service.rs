@@ -187,25 +187,24 @@ impl<R: MemoryRepository> MemoryService<R> {
             .map(|_| hash_save_request(&req));
 
         // Idempotency check (borrow, no moves).
-        if let (Some(idem_key), Some(hash)) = (req.idempotency_key.as_ref(), idem_hash.as_ref()) {
-            if let Some(existing) = self
+        if let (Some(idem_key), Some(hash)) = (req.idempotency_key.as_ref(), idem_hash.as_ref())
+            && let Some(existing) = self
                 .repo
                 .get_idempotency(idem_key.as_str(), &req.namespace)?
-            {
-                if existing.request_hash == *hash {
-                    if let Some(m) = self.repo.get_by_uuid(&existing.result_uuid)? {
-                        return Ok(m);
-                    }
-                    return Err(MnexisError::not_found(format!(
-                        "idempotency result uuid:{}",
-                        existing.result_uuid
-                    )));
-                } else {
-                    return Err(MnexisError::topic_conflict(
-                        idem_key.as_str().to_string(),
-                        req.namespace.clone(),
-                    ));
+        {
+            if existing.request_hash == *hash {
+                if let Some(m) = self.repo.get_by_uuid(&existing.result_uuid)? {
+                    return Ok(m);
                 }
+                return Err(MnexisError::not_found(format!(
+                    "idempotency result uuid:{}",
+                    existing.result_uuid
+                )));
+            } else {
+                return Err(MnexisError::topic_conflict(
+                    idem_key.as_str().to_string(),
+                    req.namespace.clone(),
+                ));
             }
         }
 
@@ -422,17 +421,18 @@ impl<R: MemoryRepository> MemoryService<R> {
         self.scope.authorize_write(&current.namespace)?;
         self.scope.authorize_operation(Operation::Update)?;
 
-        if let Some(new_state) = req.state {
-            if new_state != current.state && !current.state.can_transition_to(new_state) {
-                return Err(MnexisError::invalid_argument(
-                    "state",
-                    format!(
-                        "cannot transition from {} to {}",
-                        current.state.as_str(),
-                        new_state.as_str()
-                    ),
-                ));
-            }
+        if let Some(new_state) = req.state
+            && new_state != current.state
+            && !current.state.can_transition_to(new_state)
+        {
+            return Err(MnexisError::invalid_argument(
+                "state",
+                format!(
+                    "cannot transition from {} to {}",
+                    current.state.as_str(),
+                    new_state.as_str()
+                ),
+            ));
         }
 
         let mut updated = current.clone();

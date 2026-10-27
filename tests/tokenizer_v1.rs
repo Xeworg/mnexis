@@ -26,7 +26,7 @@ fn empty_string_counts_zero() {
 #[test]
 fn upper_bound_property_never_overcounts_per_byte() {
     for n in 0..=512 {
-        let s: String = std::iter::repeat('a').take(n).collect();
+        let s: String = std::iter::repeat_n('a', n).collect();
         let tokens = token_count_v1(&s);
         assert!(
             tokens <= n as i64,

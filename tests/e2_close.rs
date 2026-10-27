@@ -74,7 +74,7 @@ fn persist_after_restart_preserves_every_record() {
         let mut svc = MemoryService::new(repo, permissive_scope(), Default::default());
         svc.save(save_req("u1", "alpha")).unwrap();
         svc.save(save_req("u2", "bravo")).unwrap();
-        let mut req = mnexis_core::application::UpdateRequest {
+        let req = mnexis_core::application::UpdateRequest {
             memory_type: None,
 
             uuid: "u1".into(),
@@ -126,7 +126,7 @@ fn concurrent_update_conflict_one_wins_one_gets_revision_conflict() {
     let mut svc_a = MemoryService::new(repo_a, permissive_scope(), Default::default());
     let mut svc_b = MemoryService::new(repo_b, permissive_scope(), Default::default());
 
-    let mut req_a = mnexis_core::application::UpdateRequest {
+    let _req_a = mnexis_core::application::UpdateRequest {
         memory_type: None,
 
         uuid: "u1".into(),
@@ -380,7 +380,7 @@ fn doctor_detects_missing_fts_and_search_degrades() {
     // Search path: the same FTS drop means search is degraded. We
     // assert the service surfaces an explicit error, not a panic or a
     // false positive.
-    let mut svc = MemoryService::new(
+    let svc = MemoryService::new(
         SqliteMemoryRepository::new(open_sqlite(&db).expect("reopen 3")),
         permissive_scope(),
         Default::default(),
@@ -421,7 +421,7 @@ fn concurrent_update_three_processes_one_winner_two_conflicts() {
 
     // Three independent services (= three SQLite connections).
     let mut svcs: Vec<MemoryService<SqliteMemoryRepository>> = (0..3)
-        .map(|i| {
+        .map(|_i| {
             MemoryService::new(
                 SqliteMemoryRepository::new(open_sqlite(&db).expect("open")),
                 permissive_scope(),

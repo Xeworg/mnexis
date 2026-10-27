@@ -33,6 +33,4 @@ pub use service::{
     ImportSummary, ListFilter, MemoryService, SaveRequest, ServiceConfig, SupersedeRequest,
     UpdateRequest,
 };
-pub use workspace_status::{
-    StatusScope, StatusWorkspace, WorkspaceStatus, workspace_status,
-};
+pub use workspace_status::{StatusScope, StatusWorkspace, WorkspaceStatus, workspace_status};

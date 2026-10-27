@@ -32,33 +32,23 @@ pub enum NamespaceFilter {
 }
 
 /// State predicate. The PRD §9 default excludes proposed/disputed/superseded/archived.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum StateFilter {
     /// Match only `state = 'active'`.
+    #[default]
     ActiveOnly,
     /// Match regardless of `state`.
     Any,
 }
 
-impl Default for StateFilter {
-    fn default() -> Self {
-        Self::ActiveOnly
-    }
-}
-
 /// Deleted predicate.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum DeletedFilter {
     /// Match only `deleted = 0`.
+    #[default]
     NotDeletedOnly,
     /// Match regardless of `deleted`.
     Any,
-}
-
-impl Default for DeletedFilter {
-    fn default() -> Self {
-        Self::NotDeletedOnly
-    }
 }
 
 /// Optional validity window `(valid_from, valid_until)` — both bounds

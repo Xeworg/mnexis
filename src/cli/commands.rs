@@ -1420,7 +1420,7 @@ pub fn import(
     policy: &str,
     input: Option<std::path::PathBuf>,
 ) -> Result<CommandOutcome, MnexisError> {
-    let policy = ConflictPolicy::from_str(policy)?;
+    let policy: ConflictPolicy = policy.parse()?;
     let body = read_input(input.as_deref())?;
     // The workspace boundary applies to a bulk import as well: a record
     // that belongs to another project is not written here. The records

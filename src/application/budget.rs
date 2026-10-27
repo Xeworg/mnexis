@@ -15,20 +15,15 @@ use crate::domain::error::MnexisError;
 pub const SUPPORTED_TOKENIZER_V1: &str = "supported-tokenizer-v1";
 
 /// Budget enforcement mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BudgetMode {
     /// E2 byte-counting proxy (4 bytes per token). The output carries
     /// `budget_enforcement: "estimated"` and a `warnings: ["lexical_estimation"]`.
+    #[default]
     Estimated,
     /// E3 exact mode: tokenize with the supported tokenizer and
     /// enforce the budget on the actual token count.
     Exact,
-}
-
-impl Default for BudgetMode {
-    fn default() -> Self {
-        BudgetMode::Estimated
-    }
 }
 
 /// A budget for `memory_context` output.

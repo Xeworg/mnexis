@@ -28,6 +28,7 @@
 //!   `remap` this is still a hard error.
 
 use std::collections::BTreeMap;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -51,8 +52,10 @@ pub enum ConflictPolicy {
     Remap,
 }
 
-impl ConflictPolicy {
-    pub fn from_str(s: &str) -> Result<Self, MnexisError> {
+impl FromStr for ConflictPolicy {
+    type Err = MnexisError;
+
+    fn from_str(s: &str) -> Result<Self, MnexisError> {
         match s {
             "reject" => Ok(Self::Reject),
             "skip" => Ok(Self::Skip),
@@ -63,7 +66,9 @@ impl ConflictPolicy {
             )),
         }
     }
+}
 
+impl ConflictPolicy {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Reject => "reject",
@@ -310,10 +315,9 @@ pub fn classify(
                 if let Some(occupier) = local
                     .topic_keys
                     .get(&(remapped.namespace.clone(), remapped.topic_key.clone()))
+                    && occupier != &new
                 {
-                    if occupier != &new {
-                        return ImportDecision::Skipped(Conflict::TopicKey);
-                    }
+                    return ImportDecision::Skipped(Conflict::TopicKey);
                 }
                 return ImportDecision::Remapped(Conflict::UuidClash, new);
             }
@@ -321,16 +325,14 @@ pub fn classify(
     }
 
     // uuid is free: only a topic_key conflict can stop us.
-    if !candidate.topic_key.is_empty() {
-        if let Some(occupier) = local
+    if !candidate.topic_key.is_empty()
+        && let Some(occupier) = local
             .topic_keys
             .get(&(candidate.namespace.clone(), candidate.topic_key.clone()))
-        {
-            if occupier != &candidate.uuid {
-                // No policy remaps topic_keys.
-                return ImportDecision::Skipped(Conflict::TopicKey);
-            }
-        }
+        && occupier != &candidate.uuid
+    {
+        // No policy remaps topic_keys.
+        return ImportDecision::Skipped(Conflict::TopicKey);
     }
     ImportDecision::Fresh
 }

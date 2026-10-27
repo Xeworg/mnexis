@@ -19,7 +19,7 @@ use crate::cli::output::snippet;
 use crate::domain::memory::{Memory, MemoryHistory, MemoryLink};
 use crate::retrieval::SearchHit;
 use crate::storage::memory_repo::SqliteMemoryRepository;
-use crate::tui::form::{Form, WriteOutcome};
+use crate::tui::form::{Form, SubmitRejected, WriteOutcome};
 
 /// The concrete service the profile hands to the TUI.
 pub type AppService = MemoryService<SqliteMemoryRepository>;
@@ -896,7 +896,7 @@ impl App {
                 self.mode = Mode::Normal;
                 self.after_write(service, outcome);
             }
-            Err(()) => {
+            Err(SubmitRejected) => {
                 // Keep every entered value; the error also lands in the
                 // status line so it is visible when the form is narrow.
                 self.status = form.error.clone();

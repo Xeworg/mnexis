@@ -828,21 +828,21 @@ impl MemoryRepository for SqliteMemoryRepository {
                 ],
             )
             .map_err(sql_to_domain)?;
-            if let Some(tags) = tags {
-                if !tags.is_empty() {
+            if let Some(tags) = tags
+                && !tags.is_empty()
+            {
+                tx.execute(
+                    "DELETE FROM memory_tags WHERE memory_uuid = ?1",
+                    [history.memory_uuid.as_str()],
+                )
+                .map_err(sql_to_domain)?;
+                for tag in tags {
                     tx.execute(
-                        "DELETE FROM memory_tags WHERE memory_uuid = ?1",
-                        [history.memory_uuid.as_str()],
+                        "INSERT INTO memory_tags (memory_uuid, tag, created_at) \
+                             VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+                        params![history.memory_uuid, tag],
                     )
                     .map_err(sql_to_domain)?;
-                    for tag in tags {
-                        tx.execute(
-                            "INSERT INTO memory_tags (memory_uuid, tag, created_at) \
-                             VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
-                            params![history.memory_uuid, tag],
-                        )
-                        .map_err(sql_to_domain)?;
-                    }
                 }
             }
             let mut stmt = tx

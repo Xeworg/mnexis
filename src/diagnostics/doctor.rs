@@ -556,10 +556,9 @@ fn check_fts_invariant(conn: &Connection) -> Check {
         )
         .unwrap_or(-1);
 
-    let fts: i64 = match conn.query_row("SELECT count(*) FROM memories_fts", [], |r| r.get(0)) {
-        Ok(c) => c,
-        Err(_) => -1,
-    };
+    let fts: i64 = conn
+        .query_row("SELECT count(*) FROM memories_fts", [], |r| r.get(0))
+        .unwrap_or(-1);
 
     if canonical == fts {
         Check::pass(
