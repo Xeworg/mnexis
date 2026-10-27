@@ -1,10 +1,11 @@
 # The board — what is done, what is open, what comes next
 
-**Last updated:** 2026-10-26 (item 9: the call budget measured — one
-complete answer buys the round back, and the block ascends on the door;
-before that: the identity work through #66, the door and its re-measures,
-the trigger, the prefix). Read this first in a new session, then the
-feature document of whatever you pick.
+**Last updated:** 2026-10-27 (item 9 closed twice: the call budget measured —
+one complete answer buys the round back — and the ascension shipped, so the
+door carries the session state and the switch retired; before that: the
+identity work through #66, the door and its re-measures, the trigger, the
+prefix). Read this first in a new session, then the feature document of
+whatever you pick.
 
 ## Where we are
 
@@ -527,8 +528,17 @@ there.** B dominates C on every measured axis, and the agent's own runs
 pick the surface: it opens `(workspace,context)` in round 1 every time and
 answers from the door 9/10 — C's block on workspace never made workspace
 the answer surface (8/10 still door), so workspace keeps its priced shape
-(#56). The ascent itself — ship the `session_state` block as the behavior
-of `mnexis context`/`mnexis_context`, outside the budgeted envelope, with
-the read-scope guard from `feb579a` — is the next product step, with its
-own review. Artifacts: `tmp/bench/calls-{measurement,report}.md`, copy in
+(#56). Artifacts: `tmp/bench/calls-{measurement,report}.md`, copy in
 `/home/xeworg/lab/mnexis-bench/call-budget/`.
+
+**And the ascension shipped.** The block is now what `mnexis context` —
+and therefore the pi tool `mnexis_context` — answers by default: it is
+attached by `MemoryService::context`, so every caller inherits it, outside
+the budgeted envelope. The bench switch and the `status` carrier retired
+with the experiment (setting the old variable changes nothing, pinned by a
+test), and `status` keeps its priced shape. The contract the model reads
+says so: the tool description, the extension README and the skill name the
+state block and its price (nothing — it rides outside the budget). The
+differential against the pre-ascension binary: `status`, `list`,
+`list --full`, `search`, `recall` and the budgeted `context` envelope are
+byte-identical; the door's new key is the whole behaviour change.
