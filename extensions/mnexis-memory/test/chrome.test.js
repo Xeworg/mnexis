@@ -58,6 +58,20 @@ test("every kind of memory has its own icon", () => {
 	assert.equal(new Set(icons).size, TYPES.length, `no two kinds share an icon: ${JSON.stringify(icons)}`);
 });
 
+test("the icons are bright enough to be seen on a dark terminal", () => {
+	// The scales, the compass and the filing cabinet were dark glyphs: on a
+	// dark terminal the human read a blank space where the mark should be.
+	// Every kind now carries a saturated emoji, and the engine carries a
+	// robot so a session with two memory engines stays readable.
+	assert.equal(typeIcon("knowledge"), "📘", "knowledge");
+	assert.equal(typeIcon("decision"), "🎯", "decision");
+	assert.equal(typeIcon("preference"), "⭐", "preference");
+	assert.equal(typeIcon("procedure"), "📋", "procedure");
+	assert.equal(typeIcon("project_state"), "📍", "project_state");
+	assert.equal(typeIcon("episode"), "🎉", "episode");
+	assert.equal(typeIcon("fact"), "🧠", "fact");
+});
+
 test("an unknown kind of memory is drawn as a fact", () => {
 	assert.equal(typeIcon("folklore"), typeIcon("fact"));
 });
@@ -354,11 +368,11 @@ test("the footer carries the status before and after the call", async () => {
 		["t1", params, signal, onUpdate, ctx],
 		"every argument reaches the tool",
 	);
-	assert.equal(events[0], "mnexis:🗃️ mnexis · show…", `the status is set before the call: ${events[0]}`);
+	assert.equal(events[0], "mnexis:🤖 mnexis · show…", `the status is set before the call: ${events[0]}`);
 	assert.equal(events[1], "execute", `and the call runs after it: ${JSON.stringify(events)}`);
 	assert.equal(
 		events[2],
-		"mnexis:🗃️ mnexis · show · ✓",
+		"mnexis:🤖 mnexis · show · ✓",
 		`and it says what the tool answered: ${events[2]}`,
 	);
 });
@@ -373,7 +387,7 @@ test("a tool that throws sets the failure status and rethrows", async () => {
 
 	await assert.rejects(wrapped("t2", {}, undefined, undefined, ctx), (error) => error === boom);
 	assert.equal(events.length, 2, `one status before, one after: ${JSON.stringify(events)}`);
-	assert.equal(events[1], "mnexis:🗃️ mnexis · list · ✗", `the failure is in the footer: ${events[1]}`);
+	assert.equal(events[1], "mnexis:🤖 mnexis · list · ✗", `the failure is in the footer: ${events[1]}`);
 });
 
 test("a tool with no ui still runs", async () => {
@@ -500,7 +514,7 @@ test("the recall panel draws the memories of the window", () => {
 		{ expanded: true },
 	);
 	assert.equal(lines.length, 2, `the window's memories are drawn: ${JSON.stringify(lines)}`);
-	assert.ok(lines[0].startsWith("⚖️ decision"), `the kind leads the line: ${lines[0]}`);
+	assert.ok(lines[0].startsWith("🎯 decision"), `the kind leads the line: ${lines[0]}`);
 });
 
 test("the workspace panel draws the recent memories", () => {

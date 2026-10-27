@@ -53,8 +53,18 @@ of every agent — this extension, opencode, and the codex and claude code
 integrations to come — and a drawing there would be paid by every agent, in
 tokens, for every memory it reads.
 
-The kind of a memory has its own icon: 📘 knowledge, ⚖️ decision, ⭐
-preference, 🧭 procedure, 📍 project_state, 🎞️ episode, 🧠 fact.
+The kind of a memory has its own icon: 📘 knowledge, 🎯 decision, ⭐
+preference, 📋 procedure, 📍 project_state, 🎉 episode, 🧠 fact. The
+engine's own mark is 🤖, so a session with two memory engines stays
+readable.
+
+Every one of them is a bright, saturated emoji on purpose: the marks that
+were dark (the scales, the compass, the filing cabinet) disappeared on a
+dark terminal, and a mark the human cannot see is not a mark.
+
+The icons appear when a memory carries its `type`. A memory the agent wrote
+without one is a `fact` (🧠), so a store where most records are generic
+shows mostly facts.
 
 ## Read across projects, write inside one
 

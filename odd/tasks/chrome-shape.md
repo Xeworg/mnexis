@@ -190,3 +190,20 @@ whole accumulated transcript billed again.
   `memory_context` description promises the session state and no client
   renders it — either the description stops promising it, or the block ships
   as a promise kept rather than as a measured win.
+- L5 (2026-10-27, the human, verbatim): "cambiemos el incono del motor es
+  dificil de ver puede ser por un robot, el de decicion, cambialo tambien
+  por algo distinto con mas color no usemos iconos oscuros ya que casi no
+  se ven, cambia episode por oto tambien, luego los de conocimiento,
+  decicion etc no los he visto durante el uso de la app". The icons S3
+  lists for the shape arm were the ones the chrome drew **at the time of
+  the measurement**; the human then found the dark ones unreadable on a
+  dark terminal, and they were replaced with bright ones (the engine's mark
+  is now a robot, the decision a target, the episode a party, the procedure
+  a clipboard). The measurement is untouched — the icons are the human's
+  decoration and never reached the model — but this list no longer
+  describes the shipped chrome: the set is `📘 knowledge`, `🎯 decision`,
+  `⭐ preference`, `📋 procedure`, `📍 project_state`, `🎉 episode`,
+  `🧠 fact`. The human also noticed they had never seen a kind other than
+  `fact` in use: the engine returns `memory_type` correctly, but the real
+  profile holds 36 of 38 records as the generic `fact`, so the kind icons
+  had nothing to draw.

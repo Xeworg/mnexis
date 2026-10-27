@@ -53,19 +53,25 @@ export const ARG_KEYS = {
 	mnexis_supersede: ["older"],
 };
 
-/** The icon of every kind of memory — the closed set the agent writes. */
+/**
+ * The icon of every kind of memory — the closed set the agent writes.
+ *
+ * Every one of them is a bright, saturated emoji: the dark ones (the scales,
+ * the compass, the filing cabinet) were unreadable on a dark terminal, and a
+ * mark the human cannot see is not a mark.
+ */
 export const TYPE_ICONS = {
 	knowledge: "📘",
-	decision: "⚖️",
+	decision: "🎯",
 	preference: "⭐",
-	procedure: "🧭",
+	procedure: "📋",
 	project_state: "📍",
-	episode: "🎞️",
+	episode: "🎉",
 	fact: "🧠",
 };
 
 /** The engine's own mark, so a session with two memory engines stays readable. */
-const ENGINE_ICON = "🗃️";
+const ENGINE_ICON = "🤖";
 
 /** The longest a quoted argument may be before it is cut. */
 const ARG_MAX = 48;
