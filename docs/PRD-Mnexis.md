@@ -176,7 +176,12 @@ Cada proceso MCP se inicia con configuración de ámbito controlada por el usuar
   ser completable sin el humano. Las escrituras nunca se abren: un
   proyecto escribe sólo en su namespace, y el CLI rechaza con
   `FORBIDDEN` la escritura a otro namespace cuando el
-  workspace actual está vinculado a uno.
+  workspace actual está vinculado a uno. Un workspace dentro de un
+  repositorio git que todavía no está vinculado tampoco cae en el
+  namespace predeterminado del perfil: la escritura sin `--namespace` se
+  rechaza nombrando el namespace candidato y los dos comandos que lo
+  vinculan y lo conceden, y `mnexis status` publica ese candidato sin
+  vincular nada.
 - La lectura de otro namespace se concede sin abrir la escritura:
   `mnexis config allow-read-namespace <ns>` amplía sólo la lista de lectura
   y `mnexis config allow-namespace <ns>` concede ambas. Una lectura
