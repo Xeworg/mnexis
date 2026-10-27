@@ -1061,15 +1061,21 @@ export default function mnexisMemoryExtension(pi) {
 		label: "The context of this task",
 		promptSnippet: "Ask the project what it knows about this task, in one call.",
 		description:
-			"Ask the project a question in one call and get the budgeted answer: the " +
-			"memories this project recorded that matter for the task, trimmed to a token " +
-			"budget instead of the namespace and its rows. Use it as the FIRST call of a " +
-			"session, before you read the code, and whenever the task is shaped like a " +
-			"question ('where did we leave off', 'which port does it listen on', 'what did " +
-			"we decide about X'). It searches this workspace's namespace — the one a save " +
-			"lands in — and the answer declares the namespace it searched, the tokens it " +
-			"spent and how far the read reached, so an empty answer is never another " +
-			"project's silence. It does not replace mnexis_search: the search is the exact " +
+			"Ask the project a question in one call and get the answer: the memories " +
+			"this project recorded that matter for the task, trimmed to a token " +
+			"budget, PLUS the session state — the project_state and decision records " +
+			"with their whole content and the previous session's summary — so one " +
+			"call answers 'where did we leave off' instead of rebuilding it from " +
+			"several surfaces. Use it as the FIRST call of a session, before you read " +
+			"the code, and whenever the task is shaped like a question ('where did we " +
+			"leave off', 'which port does it listen on', 'what did we decide about " +
+			"X'). Read the session state it returns before calling list, search or " +
+			"recall for the same question: the state is already here, and the block " +
+			"is outside the budget, so the first answer costs what the budget costs. " +
+			"It searches this workspace's namespace — the one a save lands in — and " +
+			"the answer declares the namespace it searched, the tokens it spent and " +
+			"how far the read reached, so an empty answer is never another project's " +
+			"silence. It does not replace mnexis_search: the search is the exact " +
 			"query, the context is the project-shaped question.",
 		parameters: {
 			type: "object",

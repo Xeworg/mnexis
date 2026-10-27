@@ -1078,6 +1078,35 @@ test("the answer declares the namespace it searched and the budget it spent", as
 	);
 });
 
+test("the context tool declares the session state it returns", () => {
+	// The block is the door's measured win (call-budget S6): an agent that
+	// does not know the first answer already carries the project's state
+	// rebuilds it by hand over three more calls — the fan-out the experiment
+	// removed. The description is the contract the model reads, so it names
+	// the block and says the only thing that makes it cheap to trust: it is
+	// outside the budget.
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const contextTool = tools.get("mnexis_context");
+	assert.ok(contextTool, "mnexis_context is registered");
+
+	assert.match(
+		contextTool.description,
+		/session state/,
+		`the description names the session state: ${contextTool.description}`,
+	);
+	assert.match(
+		contextTool.description,
+		/outside the budget/,
+		`and says it does not spend the token budget: ${contextTool.description}`,
+	);
+	assert.match(
+		contextTool.description,
+		/project_state and decision/,
+		`and which records it carries: ${contextTool.description}`,
+	);
+});
+
 test("an explicit namespace still wins over the workspace's", async () => {
 	const { log } = setup();
 	const { tools, pi } = fakeHost();

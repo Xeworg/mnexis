@@ -1277,9 +1277,10 @@ fn write_output(path: Option<&std::path::Path>, body: &str) -> Result<(), Mnexis
 
 /// `mnexis context TASK` — the PRD §9 budgeted context pipeline.
 ///
-/// `session_state` is the bench switch, read once at the CLI edge and injected
-/// (call-budget S4): `door` adds the state block to the answer, and every other
-/// value leaves the shipped answer exactly as it was.
+/// The answer carries the project's session-state block (the state records with
+/// their content plus the previous session's summary), added by the service
+/// outside the budgeted envelope — one complete answer instead of the agent's
+/// fan-out over the surfaces (call-budget S6).
 #[allow(clippy::too_many_arguments)]
 pub fn context(
     profile: &Profile,
@@ -1291,7 +1292,6 @@ pub fn context(
     budget_mode: &str,
     match_mode: &str,
     task: String,
-    session_state: crate::application::SessionStateMode,
 ) -> Result<CommandOutcome, MnexisError> {
     use crate::application::budget::BudgetMode;
     use crate::application::{ContextRequest, SearchFilter};
@@ -1338,16 +1338,7 @@ pub fn context(
         now: crate::cli::profile::now_rfc3339(),
     };
     let read_scope = profile.service_ref().scope().read_scope_mode();
-    let mut response = profile.service_ref().context(&req)?;
-    // The block rides the answer, outside the envelope the budget counts: the
-    // budgeted items keep their selection and their order (call-budget S4).
-    if session_state.is_door() {
-        response.session_state = Some(
-            profile
-                .service_ref()
-                .session_state(&response.searched_namespace),
-        );
-    }
+    let response = profile.service_ref().context(&req)?;
     let mut json = serde_json::to_value(&response)
         .map_err(|e| MnexisError::invalid_argument("context", format!("serialise: {e}")))?;
     if let Some(object) = json.as_object_mut() {

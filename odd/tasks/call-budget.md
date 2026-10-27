@@ -74,6 +74,7 @@ before any arm exists.
 | C3 | S4 | the same block in the `status` payload, behind the switch, test-first | feat branch | `913504e` (same unit as C2: one injected switch, two carriers) |
 | C4 | S5 | the batch: 3 arms × 2 phases × N=10, model calls as the primary metric, images and shas recorded before it runs | artifacts: `tmp/bench/calls-measurement.md` (pre-numbers) + `out/` (gitignored), copy in `lab/mnexis-bench/call-budget/` |
 | C5 | S5, S6 | the report: the six rules one by one, the verdict, the one decision | `tmp/bench/calls-report.md` + board §9 (this commit) |
+| C6 | S6 | the ascension: the block becomes the door's answer (no switch), `status` keeps its priced shape, the switch retires | `feat/door-session-state` |
 
 ## Log
 
@@ -115,3 +116,20 @@ before any arm exists.
   disappeared, the `list+recall` verification round survives in every run.
   The ascent itself (ship the block on `mnexis context`/`mnexis_context`)
   is the next product step, with its own review.
+- L6 (2026-10-27): C6, the ascension, done (`feat/door-session-state`).
+  `MemoryService::context` attaches the block (`response.session_state`), so
+  every caller of the door inherits it — the CLI command and the pi tool
+  alike; the branch's carrier and the bench switch
+  (`MNEXIS_BENCH_SESSION_STATE`, `SessionStateMode`) are gone, and
+  `WorkspaceStatus` never gains the field (arm C lost). Test-first: the
+  suite `tests/session_state.rs` was rewritten to the shipped contract and
+  failed 5/6 before the change (the door without the block; the retired
+  switch still steering). The differential against `11b8ea0` in a scratch
+  worktree: `status`, `list`, `list --full`, `search`, `recall` and the
+  budgeted `context` envelope byte-identical; the door's new `session_state`
+  key is the only difference, which is what the experiment asked for. The
+  extension's description, the README and the skill now say the first answer
+  carries the state and that it is outside the budget — the contract the
+  model reads, pinned by a new tools test (74/74). The task doc's own
+  README/SKILL wording was updated with the block, so `assets_fidelity`
+  keeps the shipped copy and the repository copy identical.

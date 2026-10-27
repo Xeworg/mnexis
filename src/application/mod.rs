@@ -26,9 +26,7 @@ pub use context::{ContextItem, ContextRequest, ContextResponse, SearchFilter};
 pub use io::ConflictPolicy;
 pub use opencode_config::{ConfigAction, ConfigOutcome, OpencodeConfig};
 pub use preview::{MemoryPreview, previews};
-pub use service::session_state::{
-    SessionState, SessionStateMode, SessionSummary, StateRecord, resolve_session_state_mode,
-};
+pub use service::session_state::{SessionState, SessionSummary, StateRecord};
 pub use service::{
     ImportSummary, ListFilter, MemoryService, SaveRequest, ServiceConfig, SupersedeRequest,
     UpdateRequest,

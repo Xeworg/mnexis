@@ -1,5 +1,4 @@
-//! One additive block of project state, behind the bench switch (call-budget
-//! S4, arms B and C).
+//! One additive block of project state, carried by the door.
 //!
 //! The control fans out over the surfaces because each of them holds a part of
 //! "where we left off". The block hands one surface the whole of it: the
@@ -8,13 +7,12 @@
 //! recent session summary — the session `mnexis recall --previous` answers
 //! with.
 //!
-//! The switch is a bench switch, not a product surface:
-//! `MNEXIS_BENCH_SESSION_STATE` is `off`/unset (nothing changes anywhere),
-//! `door` (the block rides the `mnexis context` answer) or `workspace` (it
-//! rides the `mnexis status` payload). Any other value reads as unset, and an
-//! explicit value wins over the environment — the `resolveLeanTools` shape:
-//! the switch is read once, at the CLI edge, and injected downward, so a test
-//! never mutates the process environment.
+//! It rides one surface, and the experiment chose which one (call-budget S6):
+//! measured against the shipped surfaces, the block on the door saved a median
+//! round and a quarter of the tokens; the same block on `status` saved less and
+//! never became the surface the agent answers from. So the door carries it and
+//! `status` keeps its priced shape (#56). The bench switch is gone with the
+//! experiment: the variable a bench arm set changes nothing now.
 //!
 //! The block is **outside the token budget**: the budgeted envelope is
 //! `serialise_envelope` (label, tokenizer, items) and the block is not part of
@@ -28,9 +26,6 @@ use crate::domain::memory::Memory;
 use crate::domain::repository::MemoryRepository;
 use crate::domain::scope::NamespaceScope;
 
-/// The variable the bench arms select the surface with.
-pub const BENCH_SWITCH: &str = "MNEXIS_BENCH_SESSION_STATE";
-
 /// The kinds that are project state: where the project is, and what it chose.
 /// Both are values of the closed set in [`crate::domain::memory_type`].
 pub const STATE_TYPES: [&str; 2] = ["project_state", "decision"];
@@ -38,61 +33,6 @@ pub const STATE_TYPES: [&str; 2] = ["project_state", "decision"];
 /// The most records the block carries. One answer, not an archive: the cap
 /// every list command has, applied after the type filter.
 const STATE_RECORD_LIMIT: usize = 100;
-
-/// Which answer carries the block.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum SessionStateMode {
-    /// The shipped behaviour: no surface carries the block.
-    #[default]
-    Off,
-    /// Arm B: `mnexis context` carries the block.
-    Door,
-    /// Arm C: `mnexis status` carries the block.
-    Workspace,
-}
-
-impl SessionStateMode {
-    /// The value of the switch that selects this mode.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Door => "door",
-            Self::Workspace => "workspace",
-        }
-    }
-
-    /// `door` and `workspace`; everything else — `off`, an empty value, a typo
-    /// — is `off`: an unknown value is treated as unset, never as an error.
-    pub fn parse(value: &str) -> Self {
-        match value.trim() {
-            "door" => Self::Door,
-            "workspace" => Self::Workspace,
-            _ => Self::Off,
-        }
-    }
-
-    /// Whether the block rides the `mnexis context` answer.
-    pub fn is_door(self) -> bool {
-        matches!(self, Self::Door)
-    }
-
-    /// Whether the block rides the `mnexis status` payload.
-    pub fn is_workspace(self) -> bool {
-        matches!(self, Self::Workspace)
-    }
-}
-
-/// Resolve the bench switch: an explicit value wins, the environment is only
-/// the default. Called once per process, at the CLI edge.
-pub fn resolve_session_state_mode(explicit: Option<&str>) -> SessionStateMode {
-    match explicit {
-        Some(value) => SessionStateMode::parse(value),
-        None => match std::env::var(BENCH_SWITCH) {
-            Ok(value) => SessionStateMode::parse(&value),
-            Err(_) => SessionStateMode::Off,
-        },
-    }
-}
 
 /// The block: this project's state, with its content.
 ///
@@ -295,53 +235,6 @@ mod tests {
         assert_eq!(block.records[0].uuid, "state-1");
         assert_eq!(block.records[0].memory_type, "project_state");
         assert_eq!(block.records[0].content, "la puerta esta abierta");
-    }
-
-    #[test]
-    fn the_two_states_are_the_two_named_values() {
-        assert_eq!(SessionStateMode::parse("door"), SessionStateMode::Door);
-        assert_eq!(
-            SessionStateMode::parse("workspace"),
-            SessionStateMode::Workspace
-        );
-        assert_eq!(SessionStateMode::parse("off"), SessionStateMode::Off);
-    }
-
-    #[test]
-    fn an_unknown_value_is_treated_as_unset() {
-        for value in ["", "  ", "DOOR", "Door", "turbo", "1", "on"] {
-            assert_eq!(
-                SessionStateMode::parse(value),
-                SessionStateMode::Off,
-                "`{value}` must read as unset"
-            );
-        }
-    }
-
-    #[test]
-    fn an_explicit_value_wins_over_the_environment() {
-        // The injection point: a caller that passes a value never consults the
-        // environment, which is what makes the switch testable without a
-        // mutated process environment.
-        assert_eq!(
-            resolve_session_state_mode(Some("workspace")),
-            SessionStateMode::Workspace
-        );
-        assert_eq!(
-            resolve_session_state_mode(Some("turbo")),
-            SessionStateMode::Off
-        );
-    }
-
-    #[test]
-    fn the_mode_names_the_value_that_selects_it() {
-        for mode in [
-            SessionStateMode::Off,
-            SessionStateMode::Door,
-            SessionStateMode::Workspace,
-        ] {
-            assert_eq!(SessionStateMode::parse(mode.as_str()), mode);
-        }
     }
 
     #[test]

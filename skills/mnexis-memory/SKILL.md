@@ -17,7 +17,7 @@ is the way it is. The memory does. So before you read the code or plan the
 work, load the context of the task:
 
 ```bash
-mnexis context "extend the snake game with a wrap mode"   # budgeted context for this task
+mnexis context "extend the snake game with a wrap mode"   # context for this task + the session state
 mnexis search "wrap mode borde"                            # ranked search, FTS5
 mnexis list                                                # everything this project recorded
 mnexis status                                             # where may I write, and what is there
@@ -30,6 +30,16 @@ save lands in — and the answer names the namespace it searched, so an empty
 answer means this project has nothing, not that the door looked elsewhere. If
 it returns nothing, the project has no memory yet — carry on
 and record what the session produces (see "The loop").
+
+**Its answer already carries the session state.** The `session_state` block
+holds this project's `project_state` and `decision` records **with their
+whole content**, newest first, plus the summary of the most recent finished
+session. Read it before reaching for `list`, `search` or `recall` for the same
+question: it is the measured answer to "where did we leave off" — one call
+instead of the three or four rounds an agent spends rebuilding the same state
+by hand. The block is outside the token budget and belongs to the namespace
+the door searched; when the project has recorded no state it answers with an
+empty list and a null session, not an error.
 
 `mnexis status` answers the other half in one call: the namespace this
 workspace writes into, the read and write allowlists, how many memories the
@@ -69,9 +79,12 @@ this one was in one call — identity and preview by default, the whole
 records with `full`. `mnexis_context` is the **one-call door**: give it
 the task in one line and it answers with the memories this project
 recorded that matter for it, already trimmed to a token budget, naming
-the namespace it searched. It is the cheapest way to ask the project a
-question ("where did we leave off", "which port does it listen on") —
-prefer it over walking the namespace by hand with `list` and `show`.
+the namespace it searched — and with it, the **session state** (the
+`project_state`/`decision` records with their whole content and the
+previous session's summary). It is the cheapest way to ask the project a
+question ("where did we leave off", "which port does it listen on"):
+read the state it returns before walking the namespace by hand with
+`list` and `show`.
 When those tools are available
 in the session, prefer them: the CLI below is the fallback for hosts
 without the extension.

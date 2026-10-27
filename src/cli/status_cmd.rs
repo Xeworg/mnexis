@@ -23,28 +23,12 @@ pub const RECENT_LIMIT: usize = 3;
 /// `mnexis status`: the workspace namespace, the allowlists, the memory
 /// count, and the most recent memories, newest first.
 ///
-/// `session_state` is the bench switch, read once at the CLI edge and injected
-/// (call-budget S4): `workspace` adds the state block to the payload, and every
-/// other value leaves the shipped payload exactly as it was.
-pub fn status(
-    data_dir: PathBuf,
-    session_state: crate::application::SessionStateMode,
-) -> Result<CommandOutcome, MnexisError> {
+pub fn status(data_dir: PathBuf) -> Result<CommandOutcome, MnexisError> {
     // A missing profile is the usual NOT_FOUND (exit 3), exactly like
     // `mnexis list`: the command reports on a profile, it does not create one.
     let profile = Profile::open(data_dir)?;
     let service = profile.service_ref();
-    let mut status = workspace_status(service, &profile.data_dir, RECENT_LIMIT)?;
-    if session_state.is_workspace() {
-        // The block names the project: the workspace's own namespace when the
-        // scope can read it, and otherwise the namespace a write without one
-        // would land in — the same rule the recent list follows above.
-        let namespace = match status.workspace.namespace.as_deref() {
-            Some(namespace) if service.scope().can_read(namespace) => namespace.to_string(),
-            _ => service.scope().default_namespace.clone(),
-        };
-        status.session_state = Some(service.session_state(&namespace));
-    }
+    let status = workspace_status(service, &profile.data_dir, RECENT_LIMIT)?;
     Ok(CommandOutcome::new(json!(status), render_text(&status)))
 }
 
