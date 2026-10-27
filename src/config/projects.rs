@@ -247,7 +247,10 @@ fn validate_key(key: &str) -> Result<(), MnexisError> {
     Ok(())
 }
 
-fn validate_namespace(namespace: &str) -> Result<(), MnexisError> {
+/// The rules a namespace name has to satisfy, in one place: a workspace
+/// candidate (auto-namespace S2) is held to exactly what `project bind`
+/// enforces, so a name the engine would refuse is never offered to a human.
+pub(crate) fn validate_namespace(namespace: &str) -> Result<(), MnexisError> {
     if namespace.trim().is_empty() {
         return Err(MnexisError::invalid_argument(
             "namespace",

@@ -6,12 +6,20 @@
 //! 1 application error, 2 INVALID_ARGUMENT, 3 NOT_FOUND, 4 FORBIDDEN,
 //! 5 REVISION_CONFLICT/TOPIC_CONFLICT, 6 INDEX_UNAVAILABLE,
 //! 7 BUDGET_TOO_SMALL, 8 CURSOR_EXPIRED, 9 UNSUPPORTED_VERSION, 10 BUSY.
+//!
+//! The commands run from a directory outside every git repository unless a
+//! test chooses one with `run_in_dir`: a namespace-less save inside an
+//! unbound repository is refused (auto-namespace S5), and these tests are
+//! about command contracts, not about workspaces.
 
 use std::process::{Command, Output, Stdio};
 use tempfile::tempdir_in;
 
 struct Profile {
     data_dir: std::path::PathBuf,
+    /// Where the binary runs: outside any repository, so the profile's
+    /// allowlist decides the namespace a namespace-less command uses.
+    cwd: tempfile::TempDir,
     #[allow(dead_code)]
     guard: tempfile::TempDir,
 }
@@ -21,6 +29,7 @@ impl Profile {
         let guard = tempdir_in("target").expect("tempdir under target/");
         let profile = Self {
             data_dir: guard.path().to_path_buf(),
+            cwd: no_repository(),
             guard,
         };
         // Every data command requires an initialised profile (the design
@@ -43,6 +52,7 @@ impl Profile {
         let guard = tempdir_in("target").expect("tempdir under target/");
         Self {
             data_dir: guard.path().to_path_buf(),
+            cwd: no_repository(),
             guard,
         }
     }
@@ -85,6 +95,7 @@ impl Profile {
 
     fn run_with(&self, stdin: Stdio, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_mnexis"))
+            .current_dir(self.cwd.path())
             .arg("--data-dir")
             .arg(&self.data_dir)
             .arg("--json")
@@ -98,6 +109,7 @@ impl Profile {
     /// it has to carry the identity too.
     fn run_text(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_mnexis"))
+            .current_dir(self.cwd.path())
             .arg("--data-dir")
             .arg(&self.data_dir)
             .args(args)
@@ -121,6 +133,16 @@ impl Profile {
             .output()
             .expect("spawn mnexis binary")
     }
+}
+
+/// A directory outside every git repository: the tests that do not choose a
+/// working directory run here, so the profile's allowlist decides the
+/// namespace instead of the repository the test binary happens to live in.
+fn no_repository() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("mnexis-no-repo-")
+        .tempdir_in("/tmp")
+        .expect("a directory outside any repository")
 }
 
 fn stdout_json(out: &Output) -> serde_json::Value {

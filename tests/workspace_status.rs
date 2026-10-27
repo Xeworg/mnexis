@@ -555,3 +555,165 @@ fn status_never_writes_to_the_profile() {
         "status only reads: no file in the profile may change or appear"
     );
 }
+
+// --- the candidate namespace (auto-namespace S1, S2, S5) ---
+
+impl Workspace {
+    /// A git repository with an `origin` remote: the key is
+    /// `git:<normalized remote>`, the identity a binding is recorded under,
+    /// and the remote is what a candidate namespace is derived from.
+    fn with_remote(url: &str) -> Self {
+        let workspace = Self::bare();
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(workspace.path())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q", "."]);
+        git(&["remote", "add", "origin", url]);
+        workspace
+    }
+}
+
+#[test]
+fn status_offers_the_candidate_namespace_of_an_unbound_repository() {
+    let p = Profile::new();
+    let ws = Workspace::with_remote("https://github.com/Xeworg/Nodexar.git");
+
+    let before = snapshot(&p.data_dir);
+    let status = status_json(&p, ws.path());
+    let after = snapshot(&p.data_dir);
+
+    assert_eq!(
+        status["workspace"]["key"].as_str(),
+        Some("git:github.com-xeworg-nodexar"),
+        "the key is the git remote: {status}"
+    );
+    assert!(
+        status["workspace"]["namespace"].is_null(),
+        "nothing is bound yet: {status}"
+    );
+    assert_eq!(
+        status["workspace"]["candidate_namespace"].as_str(),
+        Some("nodexar"),
+        "the last segment of the remote is the name to offer: {status}"
+    );
+    assert!(
+        status["workspace"]["candidate_refusal"].is_null(),
+        "a usable name is not a refusal: {status}"
+    );
+    assert_eq!(
+        before, after,
+        "offering a candidate is not binding it: the profile stays byte-identical"
+    );
+}
+
+#[test]
+fn status_offers_no_candidate_outside_a_repository() {
+    let p = Profile::new();
+    // A directory outside every repository: the candidate belongs to a
+    // project, and this is not one.
+    let outside = tempfile::Builder::new()
+        .prefix("mnexis-outside-")
+        .tempdir_in("/tmp")
+        .expect("a directory outside any repository");
+
+    let status = status_json(&p, outside.path());
+
+    assert!(
+        status["workspace"]["candidate_namespace"].is_null(),
+        "no repository, no candidate: {status}"
+    );
+}
+
+#[test]
+fn a_save_without_namespace_in_a_bound_repository_lands_in_its_namespace() {
+    let p = Profile::new();
+    let ws = Workspace::with_remote("https://github.com/Xeworg/Nodexar.git");
+    bind_workspace(&p, ws.path(), "nodexar");
+    p.run_silent(&["config", "allow-namespace", "nodexar"])
+        .unwrap_status("config allow-namespace");
+
+    let out = p.run_in_dir(ws.path(), &["save", "la memoria del repositorio"]);
+    assert!(
+        out.status.success(),
+        "a bound workspace owns the destination ({}): {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let own = p.run_in_dir(ws.path(), &["list", "--namespace", "nodexar", "--full"]);
+    let own = stdout_json(&own);
+    assert_eq!(
+        own["items"].as_array().map(Vec::len),
+        Some(1),
+        "the record is in the workspace's namespace: {own}"
+    );
+    let default = p.run_in_dir(ws.path(), &["list", "--namespace", "default", "--full"]);
+    let default = stdout_json(&default);
+    assert_eq!(
+        default["items"].as_array().map(Vec::len),
+        Some(0),
+        "the shared drawer stays untouched: {default}"
+    );
+}
+
+#[test]
+fn a_save_without_namespace_in_an_unbound_repository_is_refused_with_the_route() {
+    let p = Profile::new();
+    let ws = Workspace::with_remote("https://github.com/Xeworg/Nodexar.git");
+
+    let out = p.run_in_dir(ws.path(), &["save", "una memoria sin namespace"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "a namespace-less save does not pool in `default`: {stderr}"
+    );
+    assert!(
+        stderr.contains("project bind nodexar --key git:github.com-xeworg-nodexar"),
+        "the refusal names the exact binding call: {stderr}"
+    );
+    assert!(
+        stderr.contains("config allow-namespace nodexar"),
+        "the refusal names the grant that must follow: {stderr}"
+    );
+
+    let status = status_json(&p, ws.path());
+    assert_eq!(
+        status["memory_count"].as_i64(),
+        Some(0),
+        "the refused save left no record anywhere: {status}"
+    );
+}
+
+#[test]
+fn a_save_without_namespace_outside_a_repository_keeps_the_profiles_default() {
+    let p = Profile::new();
+    let outside = tempfile::Builder::new()
+        .prefix("mnexis-no-repo-")
+        .tempdir_in("/tmp")
+        .expect("a directory outside any repository");
+
+    let out = p.run_in_dir(outside.path(), &["save", "fuera de todo repositorio"]);
+    assert!(
+        out.status.success(),
+        "outside a repository the allowlist keeps deciding ({}): {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let listed = p.run_in_dir(outside.path(), &["list", "--namespace", "default", "--full"]);
+    let listed = stdout_json(&listed);
+    assert_eq!(
+        listed["items"].as_array().map(Vec::len),
+        Some(1),
+        "the record lands in the profile's default namespace: {listed}"
+    );
+}

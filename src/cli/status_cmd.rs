@@ -41,10 +41,20 @@ fn render_text(status: &WorkspaceStatus) -> String {
     } else {
         workspace.key.as_str()
     };
-    let namespace = workspace
-        .namespace
-        .as_deref()
-        .unwrap_or("(unbound: the profile allowlist decides)");
+    let namespace = match (
+        workspace.namespace.as_deref(),
+        workspace.candidate_namespace.as_deref(),
+    ) {
+        (Some(namespace), _) => namespace.to_string(),
+        // Unbound inside a repository: the candidate is what a human would be
+        // asked to grant (auto-namespace S2), and the save refuses rather
+        // than falling into the profile's default namespace.
+        (None, Some(candidate)) => format!("(unbound; candidate: {candidate})"),
+        (None, None) => match workspace.candidate_refusal.as_deref() {
+            Some(reason) => format!("(unbound; no candidate: {reason})"),
+            None => "(unbound: the profile allowlist decides)".to_string(),
+        },
+    };
     let mut text = format!(
         "workspace: {key} -> {namespace}\n\
          scope: default={}, read={}, write={}, global={}, read_all={}",

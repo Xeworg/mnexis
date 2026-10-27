@@ -41,6 +41,12 @@ struct WorkspaceGuard {
     key: String,
     /// The only namespace this workspace may write into, if any.
     namespace: Option<String>,
+    /// Whether the process runs inside a git repository (auto-namespace S5).
+    in_repo: bool,
+    /// The namespace a human would be asked to grant for this workspace.
+    candidate: Option<String>,
+    /// Why the workspace offers no candidate, when it offers none.
+    candidate_refusal: Option<String>,
 }
 
 impl WorkspaceGuard {
@@ -50,12 +56,61 @@ impl WorkspaceGuard {
             Some(workspace) => Self {
                 key: workspace.key,
                 namespace: workspace.namespace,
+                in_repo: workspace.in_repo,
+                candidate: workspace.candidate_namespace,
+                candidate_refusal: workspace.candidate_refusal,
             },
             None => Self {
                 key: String::new(),
                 namespace: None,
+                in_repo: false,
+                candidate: None,
+                candidate_refusal: None,
             },
         })
+    }
+
+    /// The namespace a save without `--namespace` lands in (auto-namespace S5).
+    ///
+    /// A workspace that names a namespace owns the answer. A repository that
+    /// names none no longer falls through to the profile's default namespace:
+    /// that silent fall-through is how a project's memories ended up pooled in
+    /// a shared drawer while `status` reported the workspace as unbound. The
+    /// refusal names the candidate and the two commands that bind and allow
+    /// it, so the human has the route in hand. Outside a repository the
+    /// allowlist keeps deciding, exactly as it did before this rule.
+    fn default_target(&self, profile: &Profile) -> Result<String, MnexisError> {
+        if let Some(own) = self.namespace.as_deref() {
+            return Ok(own.to_string());
+        }
+        if !self.in_repo {
+            return Ok(profile.default_namespace());
+        }
+        let path = std::env::current_dir()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_else(|_| "<path>".to_string());
+        let message = match self.candidate.as_deref() {
+            Some(candidate) => format!(
+                "this workspace ({}) has no namespace yet, and a save without `--namespace` \
+                 will not fall into the profile's default namespace: run `mnexis project bind \
+                 {candidate} --key {} --path {path}`, and after your ok `mnexis config \
+                 allow-namespace {candidate}`",
+                self.key, self.key
+            ),
+            None => format!(
+                "this workspace ({}) has no namespace yet, and a save without `--namespace` \
+                 will not fall into the profile's default namespace: bind one with `mnexis \
+                 project bind <namespace> --key {} --path {path}`, then `mnexis config \
+                 allow-namespace <namespace>`{}",
+                self.key,
+                self.key,
+                match self.candidate_refusal.as_deref() {
+                    Some(reason) => format!(". No candidate was derived: {reason}"),
+                    None => String::new(),
+                },
+            ),
+        };
+        Err(MnexisError::forbidden("write", message))
     }
 
     /// Refuse a write into any namespace but the workspace's own.
@@ -188,8 +243,12 @@ pub fn save(
     keywords: Option<String>,
     replace_keywords: bool,
 ) -> Result<CommandOutcome, MnexisError> {
-    let namespace = namespace.unwrap_or_else(|| profile.default_namespace());
-    WorkspaceGuard::resolve(profile)?.authorize(&namespace)?;
+    let guard = WorkspaceGuard::resolve(profile)?;
+    let namespace = match namespace {
+        Some(namespace) => namespace,
+        None => guard.default_target(profile)?,
+    };
+    guard.authorize(&namespace)?;
     let mut req = save_request(
         "cli",
         namespace.clone(),
