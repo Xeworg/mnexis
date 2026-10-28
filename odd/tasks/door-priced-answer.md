@@ -119,3 +119,53 @@ against the base commit; only the door's two modes change.
   A defect the test caught: when **nothing** fit, the answer was empty and
   had declared only the first candidate — now every candidate is declared,
   because an empty answer still says why.
+- **L7** — **T3 done** (S5). The CLI's text answer prints the declaration
+  (`not included: N candidates did not fit the budget (the least relevant
+  first)` and one `- [kind] title — uuid (N bytes)` per candidate); the pi
+  tool renders the same in English; the chrome draws it for the human. The
+  order is the contract: the items, what it left out, the state block, the
+  declaration. The tool's description says what the answer is now.
+  An engine that predates the coverage sends none and the extension invents
+  nothing (`MNEXIS_FAKE_NO_COVERAGE`).
+  Node suite: 136 tests, all green. The node suite must be run **from the
+  repository root**: one test asserts the confirmation question names the
+  workspace path, and the path it names is the git root — run from
+  `extensions/mnexis-memory/` that test fails (it also fails on the base
+  commit, so it is not a regression of this feature).
+- **L8** — **The differential (S7)**: `tmp/diff-door-priced.sh`, base
+  `29b7505` (worktree `/tmp/mx-base`), new = the branch. Twelve surfaces
+  **byte-identical** — `status`, `list`, `list --full`, `search`,
+  `recall`, `sessions`, `stats`, `doctor`, `project list --json`,
+  `timeline`, `show`, `suggest-topic-key` — and only the door's two modes
+  moved.
+  What the door's answer shows, and it is the feature paying for itself:
+  with a 300-token budget and one long fact among the candidates, the
+  **base answered nothing** ("even the envelope itself exceeds the
+  estimated byte budget" — the whole content did not fit), and the branch
+  answers with **3 items** (429 tokens), the long one cut at 160
+  characters with the `…` and the uuid in the text line (the handle), and
+  the coverage declaring `candidates: 3, carried: 3, left_out: 0`.
+  The order moved too: the base answered oldest-first (created_at ASC), the
+  branch answers the **most relevant** first (the fact that mentions the
+  port forty times leads).
+- **L9** — **T4 done** (S6, S7). The skill, the extension's README and the
+  root README now say what the door answers: identity and a 160-character
+  preview (never the whole record; `mnexis show <uuid>` is the handle,
+  `--full` asks for it in the same answer), and the answer declares what it
+  left out. Written by a delegated worker (`gentle-ai-worker`), checked by
+  the parent against `src/cli/output.rs`, `src/application/context.rs`
+  (`COVERAGE_ITEM_LIMIT = 10`), `src/application/preview.rs`
+  (`PREVIEW_CHARS = 160`), `src/cli/mod.rs` (`--full`) and the extension's
+  `index.js` / `lib/chrome.js`: every claim in the prose is a fact the code
+  holds.
+  A nuance the worker caught and the prose respects: the CLI's **text**
+  line prints the uuid only when the preview was cut (the JSON always
+  carries it), so the skill says "a preview that was cut carries its uuid"
+  instead of promising a uuid on every line.
+- **L10** — **The native review**: `gentle_review assess` over the committed
+  range (`origin/main`, `committedOnly`) returned **medium** risk,
+  `reviewDue: false` ("under_budget"), and the plan: *no independent
+  verifier* — receipt-driven development is off and no Task Size high-risk
+  item was escalated (the change is a **requested** contract change, and the
+  risk list excludes requested changes). The parent's own verification
+  stands: the Rust suite, the node suite and the differential above.

@@ -25,11 +25,16 @@ mnexis status                                             # where may I write, a
 
 `mnexis context "<the task in one line>"` returns the memories that matter
 for that task, already trimmed to a token budget: use it as the first call of
-a session. It searches the namespace this workspace writes into — the one a
+a session. Each item is the fact's identity and a 160-character preview of
+its content, never the whole record: a preview that was cut carries its
+uuid, and `mnexis show <uuid>` pulls the record whole — `--full` asks for it
+in the same answer. The answer declares what it left out: how many
+candidates the budget could not keep, and the least relevant of them with
+their size. It searches the namespace this workspace writes into — the one a
 save lands in — and the answer names the namespace it searched, so an empty
-answer means this project has nothing, not that the door looked elsewhere. If
-it returns nothing, the project has no memory yet — carry on
-and record what the session produces (see "The loop").
+answer means this project has nothing, not that the door looked elsewhere.
+If it returns nothing, the project has no memory yet — carry on and record
+what the session produces (see "The loop").
 
 **Its answer already carries the session state.** After the items it prints
 `session state: <n> records, <resident> of <budget> tokens`, then one line per
@@ -86,14 +91,18 @@ this one was in one call — identity and preview by default, the whole
 records with `full`. `mnexis_context` is the **one-call door**: give it
 the task in one line and it answers with the memories this project
 recorded that matter for it, already trimmed to a token budget, naming
-the namespace it searched — and with it, the **session state**: the live
-`project_state`/`decision` records with the content that fits the block's
-own budget, the index of the live records that did not fit, and the
-previous session's summary. The index is a list of what exists, not of
-what you lost: an indexed record is one `mnexis_show` away. It is the
-cheapest way to ask the project a question ("where did we leave off",
-"which port does it listen on"): read the state it returns before walking
-the namespace by hand with `list` and `show`.
+the namespace it searched. Its items are priced — identity and a
+160-character preview of the content, never the whole record; the item's
+uuid is the handle `mnexis_show` takes (this tool has no `full` switch). The
+answer declares what it left out: how many candidates the budget could not
+keep, and the least relevant of them with their size. With them comes the
+**session state**: the live `project_state`/`decision` records with the
+content that fits the block's own budget, the index of the live records
+that did not fit, and the previous session's summary. The index is a list of
+what exists, not of what you lost: an indexed record is one `mnexis_show`
+away. It is the cheapest way to ask the project a question ("where did we
+leave off", "which port does it listen on"): read the state it returns
+before walking the namespace by hand with `list` and `show`.
 When those tools are available
 in the session, prefer them: the CLI below is the fallback for hosts
 without the extension.
