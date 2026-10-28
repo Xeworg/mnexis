@@ -1,12 +1,14 @@
 # The board — what is done, what is open, what comes next
 
-**Last updated:** 2026-10-27 (item 12 landed: the re-read metric — the
-number that was missing; before that: item 9 closed twice — the call budget
-measured, one complete answer buys the round back, and the ascension
-shipped, so the door carries the session state and the switch retired; then
-the identity work through #66, the door and its re-measures, the trigger, the
-prefix). Read this first in a new session, then the feature document of
-whatever you pick.
+**Last updated:** 2026-10-28 (item 14 landed: the door's answer is priced
+and declares its coverage — M3 and M4 of the order the re-read metric
+imposes; before that: item 13 landed the budgeted state block, and item 12
+landed the re-read metric — the number that was missing; before that: item 9
+closed twice — the call budget measured, one complete answer buys the round
+back, and the ascension shipped, so the door carries the session state and
+the switch retired; then the identity work through #66, the door and its
+re-measures, the trigger, the prefix). Read this first in a new session, then
+the feature document of whatever you pick.
 
 ## Where we are
 
@@ -53,13 +55,17 @@ default — the call-budget experiment's pre-registered ascension (#68, #70).
 The schema is at version 8 (migration 008 added the anchor of a session) and
 there is no downgrade: an old binary refuses to open a newer store.
 
+**Merged: PR #92** (`feat/door-priced-answer`, 4 commits, ~1 100 authored
+lines) — the door's answer is **priced** and declares its **coverage**
+(item 14). `main` is now **`70d22a8`**, and the installed binary
+(`~/.local/bin/mnexis`, **0.5.0-dev**) and the extension and the skill in
+`~/.gentle-shell/agent/` **and** in `~/.pi/agent/` are byte-identical to it
+— the installed door answers with the preview and the declaration.
+
 **Merged: PR #89** (`feat/state-block-budget`, issue #88, label
 `type:feature`, 8 commits, ~2 100 authored lines) — the state block with a
 budget, an index and the live only, and the door that delivers it (item 13).
-`main` is now **`d844c94`**, and the installed binary
-(`~/.local/bin/mnexis`, **0.5.0-dev**) and the extension and the skill in
-`~/.gentle-shell/agent/` **and** in `~/.pi/agent/` are byte-identical to it
-— the installed door answers with the block. The independent verifier of
+`main` was **`d844c94`** then, and the independent verifier of
 that change was **unavailable** (its own scratch filled the 16 GB tmpfs and
 every write from then on failed — the symptom is an exit 101 with an empty
 stderr, and the scratch is gone); the parent's own verification is in the
@@ -71,9 +77,9 @@ and the agent re-listed them anyway — and the agent's cross-check round is
 a **coverage** problem, not a trust problem, so the door has to declare
 what it did not include. Concretely: **M3** (identity + preview + uuid
 instead of the whole content, the handle being `mnexis show <uuid>`) and
-**M4** (the candidates that did not fit, with their sizes), then **M5**
-(the lean skill, with its own experiment), then item 11 (the door in the
-MCP surface).
+**M4** (the candidates that did not fit, with their sizes) — **both landed
+in PR #92**, item 14 — then **M5** (the lean skill, with its own
+experiment), then item 11 (the door in the MCP surface).
 
 ## The measurement that runs the board
 
@@ -767,3 +773,57 @@ project's state records are, and the first project with long records will
 show the index working (or not). The typed priority that would decide
 *which* state is worth the content is still the unmeasured experiment
 (#55), and the index is the honest fallback until it is measured.
+
+### 14. The door's answer is priced, and declares its coverage — closed (feature `door-priced-answer`)
+
+The re-read metric (item 12) measured where the agent's context is wasted:
+**the door already carried the facts in full and the agent re-listed them
+anyway** — `workspace → context → list --full → search`, and the `list
+--full` re-delivered 8 of the door's 10 records (39.8 %–47.2 % redundant
+deliveries in the steering phase). The waste is in the **door's payload**,
+not in the skill, so the board's M3 and M4 are the door's contract.
+
+**What shipped** (feature doc: `odd/tasks/door-priced-answer.md`; branch
+`feat/door-priced-answer`, PR **#92**, 4 commits, ~1 100 authored lines).
+
+- **The items are priced (M3):** each item carries the identity of the
+  fact and a **preview** of its content — the same 160-character rule every
+  other surface uses, the cut marked with `…` — never a second copy of the
+  whole text. `mnexis context --full` asks for the whole record in the same
+  answer, and the complete record is one `mnexis show <uuid>` away either
+  way. In the **text** answer the uuid rides the line only when the
+  preview was cut: the handle exactly when the reader needs it.
+- **The coverage is declared (M4):** the envelope carries a `coverage`
+  object — `candidates` (what the door saw), `carried` (what it carries),
+  `left_out` (how many the budget cut) and `left_out_items` (up to ten,
+  with their uuid, title, kind and the **size** that explains why they did
+  not fit). The CLI's text mode prints it, the pi tool renders it, the
+  chrome draws it. An engine that predates it sends nothing, and the
+  extension invents nothing.
+- **The door keeps the most relevant facts that fit.** The pipeline dropped
+  the bm25 rank and sorted by `created_at` alone, so the budget filled with
+  the **oldest** facts and the most relevant one could be left out — the
+  opposite of PRD §9 step 6 and of the module's own documented order. The
+  rank now travels with the memory (bm25 ASC, then `created_at` ASC), so
+  what the door leaves out is the *least* relevant.
+- **The doctrine follows:** the skill, the extension's README and the root
+  README say what the door answers now.
+
+**The differential** (base `29b7505`, `tmp/diff-door-priced.sh`): twelve
+surfaces **byte-identical** — `status`, `list`, `list --full`, `search`,
+`recall`, `sessions`, `stats`, `doctor`, `project list --json`,
+`timeline`, `show`, `suggest-topic-key` — and only the door's two modes
+moved. And the door pays for itself: with a 300-token budget and one long
+fact among the candidates, the **base answered nothing** ("even the
+envelope itself exceeds the estimated byte budget" — the whole content did
+not fit) and the branch answers with **3 items** (429 tokens), the long one
+cut at 160 characters with the `…` and the uuid in the text line.
+
+**What it does not settle:** the priced door is a **payload** change, not a
+measured win yet — the re-read metric has to be run again against the
+merged binary to see whether the redundant deliveries actually drop (the
+prediction: they do, because the door's own facts are now previews and the
+agent has less to re-fetch; the risk: the agent calls `mnexis show` more
+often for the facts that were cut). That measurement is the next thing,
+with the criterion written **before** the numbers. Then **M5** (the lean
+skill, with its own experiment) and item 11 (the door in the MCP surface).
