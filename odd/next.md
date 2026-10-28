@@ -1,6 +1,8 @@
 # The board — what is done, what is open, what comes next
 
-**Last updated:** 2026-10-28 (item 16: the pricing was measured, lost and
+**Last updated:** 2026-10-28 (item 17: the lean-skill experiment — the body is
+not read where it counts, and the harness pays 755 tokens a call; before
+that: item 16: the pricing was measured, lost and
 was reverted — the door carries whole facts again, and the door is in the
 MCP surface; before that: item 14 landed: the door's answer is priced
 and declares its coverage — M3 and M4 of the order the re-read metric
@@ -883,3 +885,108 @@ are worth the answer's weight** — the typed priority that would decide it
 the door should carry the facts **when the task is about the facts**, and
 carry less when it is not. And **M5**: the lean skill, with its own
 experiment.
+
+### 17. The lean skill — measured: the body is not read, and the harness costs more than the file
+
+**M5, closed with its numbers** (`odd/tasks/skill-lean.md`; the criterion in
+`tmp/bench/skill-lean-measurement.md`, written before any run; the numbers
+in `tmp/bench/skill-lean-report.md`). Four arms, one image
+(`bench-mem:whole`, mnexis 0.5.0-dev, pi 1.2.0), N = 10, three sessions per
+run, nothing different between them except what is installed in
+`~/.pi/agent` — verified on each arm's **real system prompt** before the
+batch:
+
+| arm | skill file | body | trigger | doctrine channel |
+| --- | --- | --- | --- | --- |
+| `fat` | 18 184 B | 17 447 ch | description | `read` → transcript |
+| `lean` | 4 027 B | 3 362 ch | description | `read` → transcript |
+| `head` | 1 103 B | ~350 ch | description | none |
+| `bare` | **none** | — | extension section | extension section (`before_agent_start`, 3 794 ch) |
+
+**The board's own claim was wrong, and the artifacts say so.** "The agent
+reads the skill in 20 of 20 transcripts" is not true: what appears in every
+prompt is the *description* pi injects (name, description, location), never
+the body. Over the 672 transcripts this bench kept, **110 (16 %)** contain a
+`read` of a SKILL.md, and in the recent batches 1-3 of 21 per arm. In this
+batch the body was read in **7 of 30 write sessions and 1 of 60 measured
+(trap + steering) sessions**; `fat`, with the most to read, read it **0
+times in 30**.
+
+**Behavior is indistinguishable, everywhere.** All four arms, 10 runs each:
+the trap kept 10/10, the three typed state facts stated 10/10, the write
+phase clean 10/10 (5 live records, all titled, no live twin), zero invented
+values. `head` (350 characters of body) equals `fat` (17 447). Two runs
+duplicated a fact and repaired it with `mnexis_supersede` **without reading
+the rule**.
+
+**Only the channel moves the price.** Per model call, `sum(tokens)/sum(calls)`:
+
+| arm | write | trap | steering | prefix |
+| --- | --- | --- | --- | --- |
+| `fat` | 7 136 | 7 843 | 8 620 | 5 269 |
+| `lean` | 7 984 | 7 460 | 8 147 | 5 269 |
+| `head` | 7 110 | 7 358 | 7 990 | 5 269 |
+| `bare` | 8 054 | 8 886 | **9 433** | **6 024** |
+
+**C1 (behavior) holds for all four. C2 (the lean body saves ≥ 5 000 tokens)
+holds on its number — 14 007 — and its mechanism is refuted: no skill was
+read in any of the 40 steering sessions, and the gap is 5.0 against 6.0
+model calls.** C3 (the harness beats the file) **fails**: `bare` forces
++755 tokens on every call and buys zero behavior; a file nobody reads is
+free. C4 holds (zero invented, zero untitled, zero wrong namespace, zero
+live twins).
+
+**The open decision (the human's).** The pre-registered rule says "ship
+`lean` if C2 holds". C2 holds, but its number is the call count, not the
+body — shipping on it would be the same mistake the priced door made. The
+honest options: keep `fat` and record that the body's bytes buy nothing
+(the remaining argument is maintenance, not context); shrink the skill to
+`head` because 350 characters passed everything; or measure the read rate
+in the live host before deciding. **Nothing ships until the human picks.**
+
+**The second batch (the human's idea), finished and scored.** *"Reducir la
+skill y reforzarla con harness"* became a fourth arm, `combo` (1 103 B skill
++ a 678-character section with the four rules), measured on the chains where
+the doctrine decides rather than on the phases where every arm scored
+10/10: `dup` (the same fact saved under a dictated title: one record or two
+twins?) and `cnf` (the value changed 8081 → 9090 with a prompt that hints at
+nothing). The criterion is `tmp/bench/doctrine-measurement.md` (D1-D4,
+written before the run). **80 of 80 chains, zero empty answers:**
+
+| criterion | result | the number |
+| --- | --- | --- |
+| D1 the reinforcement pays | **HOLDS** | `combo` one live record 10/10, answer 8081 10/10 |
+| D2 the insurance is priced | **FAILS** | +244 (dup) and +259 (cnf) tokens per call against `head`, bar was +200 |
+| D3 no better than `head`, no ship | **FAILS** | 10/10 against 10/10 — `head` was already perfect |
+| D4 nothing regresses | **FAILS, both hits are artifacts** | the 15 "live stale records" are all the *same* active row recalling the old value in its own sentence; the 1 "invented" is a hypothetical ("como 8080 o similar") |
+
+**The reinforcement is not adopted**, on two independent grounds: `head`
+with 1 103 B already reached 10/10 in the same chain, so the section could
+at best tie (P1, registered before the run, called exactly this), and the
+section costs more per call than its own ~170 tokens predict. D4 is
+reported against the criterion as written, not corrected to fit: with the
+prose mentions excluded, `cnf`'s one-record column is **10/10 in all four
+arms** and the real stale count is 0, so the artifacts cannot flatter an
+arm — and D2 and D3 fail on their own numbers either way.
+
+Two store-side findings survive the batch. `fat` is the only arm that ended
+with two live rows for the port (`ddup-fat9`, 1/10 — and it marked the
+second one as an unverified user claim rather than overwriting the file's
+value). `bare` is the only arm that wrote a wrong value: 2 of 10 `dup` runs
+saved 9090 where no file says so, and 9090 is the number the doctrine
+section itself uses as its example. `head` is equal or better than `fat` on
+every measure and worse on none: `dup` 10/10 against 9/10, `cnf` equal at
+10/10, and cheaper per call (5 829 / 6 005 against 6 202 / 7 101).
+
+**What is still the human's:** the ship. The two candidates the measurement
+leaves standing are keeping `fat` or shipping `head` — justified by
+maintenance and by not being worse, never by tokens.
+
+**And the direction the human declared at the cut:** the next build is a
+**pi extension**, not more skill text — *"he visto que es mejor hacer una
+extension de pi directamente da mas control"*. This batch sharpens it: the
+harness channel is where the control is, but it is **not** free — a bare
+harness pays +755 tokens on every call and, in the doctrine chains, wrote a
+wrong value twice where the description alone never did. An extension earns
+its place by carrying something a `read` cannot reach, not by restating the
+file.
