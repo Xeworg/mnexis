@@ -36,6 +36,33 @@ listen port`). They are the topic's vocabulary, never a value, and they
 accumulate on the record across sessions, so the tool's answer shows the
 words the memory carries now — read it and prune a word that is wrong.
 
+### One fact, one record
+
+A second save for a fact the store already holds — the same value under a
+title the session made up — would leave two live records for one thing. The
+extension repairs that inside `mnexis_save`, without asking the model and
+without depending on it remembering a rule: when the saved content and a live
+record in the same namespace carry the **same numeric signature** and **share
+at least one keyword**, the older record is superseded onto the one the save
+created, so the fact ends with exactly one live record. Every qualifying twin
+is retired, not just one.
+
+The rule is deliberately narrow. A changed value is a conflict, not a rename,
+and is left alone; a shared number with no shared vocabulary is not one fact;
+records outside the workspace's writable namespace are never touched. Nothing
+is deleted — the superseded record stays visible in `list`, `show` and
+`timeline`, while `mnexis_history` answers that it has no revision, because the
+engine writes no history row on a supersede.
+
+Candidates are found by the value they carry, never by a page of the
+namespace, so a twin cannot hide behind a scan bound; if the ranked answer
+saturates, the repair walks the namespace exhaustively — up to 2 000 records.
+Beyond that ceiling the check does not pretend: the answer the model reads says
+the duplicate check did not finish and that a second live record may remain. A
+repair that fails is journaled through `pi.appendEntry` instead of swallowed.
+The answer the model reads names both records and the shared value, and
+`details.recovery` carries the structured record.
+
 ## What the human sees
 
 The tools draw themselves: pi renders the call and the result with the
@@ -204,4 +231,15 @@ node --test "extensions/mnexis-memory/test/*.test.js"
 ```
 
 The unit tests inject a fake exec, so they need neither the binary nor a
-profile.
+profile. The fake mirrors the engine where it matters — `list` answers oldest
+first, a supersede writes no history row, `supersede` refuses the way the
+engine refuses — because a fake that disagrees with the engine is how a repair
+can pass its tests and do nothing in a real project.
+
+The repair's candidate query and the supersede semantics also have an opt-in
+parity suite against the real binary, which writes only into a temporary data
+directory:
+
+```sh
+MNEXIS_PARITY_BIN=~/.local/bin/mnexis node --test "extensions/mnexis-memory/test/parity.recovery.test.js"
+```
