@@ -109,3 +109,44 @@ speak about a **direction**, never about "the agent now does X".
   transcript — the regression over the ten paired runs gives **+10 574
   tokens per extra model call**. The lever is the number of calls (the
   call-budget experiment), not the size of the answer.
+- **L4** — **T1, T2, T3 done** (S1–S6), implemented by two delegated
+  workers and reviewed by the parent. The item carries the whole fact
+  again; the `preview` field, the `ContextRequest.full` field and the
+  `--full` flag are **gone from the code**, not merely unused; the coverage
+  declaration and the relevance order are untouched (their tests pass
+  before and after). The text answer prints each fact whole, with no uuid
+  handle (nothing is cut any more) and the declaration's entries carry
+  theirs. The documents (the skill, the extension's README, the root
+  README) say what the door answers now; the skill's length did not grow.
+  A doc worker caught that the declaration's own wording still said "the
+  least relevant first" — the truth is the opposite (the omitted
+  candidates are listed in rank order, so the ones that just missed the
+  cut come first), and the string was fixed in the same change, in the CLI,
+  in the extension and in their tests.
+  Suites: 718 Rust tests, 137 node tests, clippy and fmt clean.
+- **L5** — **T4 done** (S7): the differential against the base
+  (`origin/main`, the priced door) leaves **twelve surfaces
+  byte-identical** and moves only the door's two modes. And the
+  **re-measurement** (the criterion written before the batch): the arm
+  `whole` (N = 10, the same fixture, prompts and model) holds **all four
+  points** — the median tokens of the steering phase are **38 902** (under
+  the 40 000 bar, back at the fat arm's 37 290), the `mnexis_show`
+  fan-out appears in **1 of 10** runs (the priced arm: 7/10), the facts
+  are stated in 10/10 with 0 invented values and the trap kept in 10/10,
+  and no run failed to answer. Run by run, the whole door is cheaper than
+  the priced one in **8 of 10** steering runs.
+  The honest caveat, written in the report: the **trigger phase** shows
+  the whole door dearer in 7 of 10 runs against the priced door, with a
+  spread that overlaps the other arms entirely (the difference is inside
+  the noise) — and the direction makes sense: the door's answer rides in
+  the transcript of every later call, so a bigger answer is a tax on the
+  rest of the session. The door's answer has **two prices** — what it
+  carries (the facts the agent would otherwise fetch one by one) and what
+  it weighs — and the pricing bought the second and paid the first.
+  Report: `tmp/bench/whole-content-report.md`.
+- **L6** — **The board's final state comes after the merges**: PR #94 (the
+  door in the MCP surface) and PR #95 (the board with the priced door's
+  negative measurement) are open, and this branch is cut from `main`
+  without them. The board's item 14/15 text has to be rewritten once (the
+  pricing was measured, reverted, and the door carries whole facts); that
+  is a separate docs PR, after the three are merged.
