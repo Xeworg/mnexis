@@ -2473,7 +2473,7 @@ fn context_exact_mode_returns_items_and_pins_a_07_invariant() {
     let items = json["items"].as_array().unwrap();
     for item in items {
         assert!(item["uuid"].is_string());
-        assert!(item["preview"].is_string());
+        assert!(item["content"].is_string());
         assert!(item["revision"].is_i64());
         assert!(item["state"].is_string());
     }
@@ -2550,14 +2550,13 @@ fn context_with_no_candidates_returns_empty_with_reason() {
     assert!(json["empty_reason"].is_string());
 }
 
-// --- context: the priced items (door-priced-answer S1) ---
+// --- context: the whole facts (door-whole-content S1) ---
 
-/// The door's answer carries the identity of each fact and a preview of its
-/// content, never the whole text: the re-read metric measured the agent
-/// re-listing the facts the door had already answered in full (board item
-/// 12). The whole record is one `mnexis show <uuid>` away.
+/// The door carries the whole fact: the item's `content` is the record's
+/// whole text and there is no preview field. The budget decides which facts
+/// fit, never how much of a fact is shown.
 #[test]
-fn the_doors_items_carry_a_preview_and_not_the_whole_content() {
+fn the_doors_items_carry_the_whole_content() {
     let p = namespaced_profile(&["default"]);
     let long = "alpha beta gamma delta epsilon ".repeat(12);
     save(&p, &long, &[]);
@@ -2583,48 +2582,42 @@ fn the_doors_items_carry_a_preview_and_not_the_whole_content() {
         item["uuid"].is_string(),
         "the item carries its identity: {item}"
     );
-    let preview = item["preview"]
-        .as_str()
-        .expect("the item carries a preview of its content");
-    assert!(
-        preview.chars().count() <= 161,
-        "the preview is cut at 160 characters: {preview}"
+    assert_eq!(
+        item["content"], long,
+        "the whole content, never a cut fact: {item}"
     );
-    assert!(preview.ends_with('…'), "the cut is marked: {preview}");
     assert!(
-        item["content"].is_null(),
-        "the whole content is not carried by default: {item}"
+        item.get("preview").is_none(),
+        "the item has no preview field: {item}"
     );
 }
 
-/// The caller can ask for the whole record in the same answer.
+/// There is nothing left to ask for: the door carries whole facts, so the
+/// `--full` flag is gone and the CLI refuses it.
 #[test]
-fn the_door_with_full_carries_the_whole_content() {
+fn the_door_no_longer_has_a_full_flag() {
     let p = namespaced_profile(&["default"]);
-    let long = "alpha beta gamma delta epsilon ".repeat(12);
-    save(&p, &long, &[]);
-    let out = p
-        .run_silent(&[
-            "context",
-            "--namespace",
-            "default",
-            "--token-budget",
-            "4096",
-            "--full",
-            "alpha",
-        ])
-        .unwrap_status("context --full");
-    let json = stdout_json(&out);
-    let items = json["items"].as_array().expect("items");
+    save(&p, "alpha", &[]);
+    let out = p.run_silent(&[
+        "context",
+        "--namespace",
+        "default",
+        "--token-budget",
+        "1024",
+        "--full",
+        "alpha",
+    ]);
     assert_eq!(
-        items.len(),
-        1,
-        "the saved fact must be in the answer: {json}"
+        out.status.code(),
+        Some(2),
+        "--full is gone: {:?}",
+        String::from_utf8_lossy(&out.stderr)
     );
-    let content = items[0]["content"]
-        .as_str()
-        .expect("--full carries the whole content");
-    assert_eq!(content, long, "the whole content, not the preview");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--full"),
+        "the refusal names the flag: {stderr}"
+    );
 }
 
 // --- context: the coverage it declares (door-priced-answer S2) ---
@@ -3615,8 +3608,12 @@ fn a_context_item_carries_the_title() {
         "the context says what its items are: {json}"
     );
     assert_eq!(
-        items[0]["preview"], "el puerto del servicio es 8081",
-        "the item carries a preview of its content: {json}"
+        items[0]["content"], "el puerto del servicio es 8081",
+        "the item carries its whole content: {json}"
+    );
+    assert!(
+        items[0].get("preview").is_none(),
+        "the item has no preview field: {json}"
     );
 }
 
@@ -4012,12 +4009,12 @@ fn a_context_item_carries_the_words() {
         "the context carries the words of its items: {json}"
     );
     assert_eq!(
-        items[0]["preview"], "listen on port 8081",
-        "the item carries a preview of its content: {json}"
+        items[0]["content"], "listen on port 8081",
+        "the item carries its whole content: {json}"
     );
     assert!(
-        items[0]["content"].is_null(),
-        "the whole content is not carried by default: {json}"
+        items[0].get("preview").is_none(),
+        "the item has no preview field: {json}"
     );
 }
 
@@ -4193,6 +4190,43 @@ fn the_door_text_answer_carries_the_items_and_the_state_block() {
     assert!(
         text.contains("read scope:"),
         "the scope line still closes the answer: {text}"
+    );
+}
+
+#[test]
+fn the_door_text_answer_prints_each_fact_whole() {
+    // The text answer prints the item's whole content and the declaration
+    // (door-whole-content S4). Nothing is cut any more, so no uuid rides the
+    // item line: the declaration's entries carry their own.
+    let p = Profile::new();
+    let long = "el servicio escucha en el puerto 8081 y responde con la version del proyecto \
+                cuando se le pregunta por la salud del proceso, y el README dice en que fichero \
+                vive esa respuesta para que nadie la busque dos veces";
+    assert!(
+        long.chars().count() > 160,
+        "the fixture is longer than the preview rule would keep: {} chars",
+        long.chars().count()
+    );
+    let uuid = save(
+        &p,
+        long,
+        &["--type", "knowledge", "--title", "el puerto del servicio"],
+    );
+
+    let out = p
+        .run_text(&["context", "puerto"])
+        .unwrap_status("the door's text answer");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains(&format!(
+            "1. [el-puerto-del-servicio] el puerto del servicio — {long}"
+        )),
+        "the item line carries the whole fact: {text}"
+    );
+    assert!(!text.contains('…'), "nothing is cut: {text}");
+    assert!(
+        !text.contains(&uuid),
+        "the uuid does not ride the item line: {text}"
     );
 }
 

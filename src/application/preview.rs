@@ -77,11 +77,7 @@ pub fn previews(memories: &[Memory]) -> Vec<MemoryPreview> {
 }
 
 /// The first words of a content, with an ellipsis when it was cut.
-///
-/// This is **the** rule for a preview: every surface that answers with one
-/// (the list, the recall, the door) uses this function, so a fact looks the
-/// same everywhere the agent meets it.
-pub fn preview(content: &str) -> String {
+fn preview(content: &str) -> String {
     let mut out: String = content.chars().take(PREVIEW_CHARS).collect();
     if content.chars().count() > PREVIEW_CHARS {
         out.push('…');
