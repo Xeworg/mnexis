@@ -102,16 +102,20 @@ pub trait MemoryRepository {
     ) -> Result<Vec<Memory>, MnexisError>;
 
     /// The most recent memories of a namespace scope, narrowed to the kinds of
-    /// thing the fact is, newest first.
+    /// thing the fact is and to the lifecycle states it may be in, newest
+    /// first.
     ///
-    /// The kinds filter before the limit, so a filtered answer is not a short
-    /// one, and the newest row is the head of the list (the type block of the
-    /// bench arms reads where the project is, not where it started). Same
-    /// namespace filtering as [`MemoryRepository::list_in`].
-    fn list_typed_recent(
+    /// Both filters apply in the SQL and before the limit, so a filtered
+    /// answer is not a short one and the newest row is the head of the list
+    /// (the state block reads where the project is, not where it started).
+    /// Filtering after the query would let the excluded rows crowd the kept
+    /// ones out of the limit. Same namespace filtering as
+    /// [`MemoryRepository::list_in`].
+    fn list_typed_state_recent(
         &self,
         namespaces: &NamespaceScope,
         memory_types: &[String],
+        states: &[String],
         limit: usize,
     ) -> Result<Vec<Memory>, MnexisError>;
 

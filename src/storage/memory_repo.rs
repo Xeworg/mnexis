@@ -85,16 +85,14 @@ impl SqliteMemoryRepository {
     fn list_filtered(
         &self,
         namespaces: &NamespaceScope,
-        state: Option<&str>,
+        states: &[String],
         limit: usize,
         offset: usize,
         deleted: bool,
         newest_first: bool,
         memory_types: &[String],
     ) -> Result<Vec<Memory>, MnexisError> {
-        let state = state.map(String::from);
-        let Some((filter, mut param_refs)) =
-            filter_sql(namespaces, state.as_ref(), deleted, memory_types)
+        let Some((filter, mut param_refs)) = filter_sql(namespaces, states, deleted, memory_types)
         else {
             return Ok(Vec::new());
         };
@@ -131,7 +129,7 @@ impl SqliteMemoryRepository {
 /// `deleted` selects which side of the soft-delete flag the query reads.
 fn filter_sql<'a>(
     namespaces: &'a NamespaceScope,
-    state: Option<&'a String>,
+    states: &'a [String],
     deleted: bool,
     memory_types: &'a [String],
 ) -> Option<(String, Vec<&'a dyn ToSql>)> {
@@ -163,9 +161,13 @@ fn filter_sql<'a>(
             }
         }
     }
-    if let Some(st) = state {
-        sql.push_str(" AND state = ?");
-        param_refs.push(st as &dyn ToSql);
+    // The lifecycle states the caller accepts: the set filters BEFORE the
+    // limit, so the excluded rows can never crowd out the kept ones.
+    if !states.is_empty() {
+        sql.push_str(&format!(" AND state IN ({})", placeholders(states.len())));
+        for state in states {
+            param_refs.push(state as &dyn ToSql);
+        }
     }
     // The kind of thing the fact is: an exact match, and it filters
     // BEFORE the limit, so a filtered answer is not a short answer.
@@ -303,7 +305,8 @@ impl MemoryRepository for SqliteMemoryRepository {
             Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
             None => NamespaceScope::All,
         };
-        self.list_filtered(&scope, state, limit, offset, false, false, &[])
+        let states: Vec<String> = state.map(String::from).into_iter().collect();
+        self.list_filtered(&scope, &states, limit, offset, false, false, &[])
     }
 
     fn list_deleted(
@@ -316,7 +319,7 @@ impl MemoryRepository for SqliteMemoryRepository {
             Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
             None => NamespaceScope::All,
         };
-        self.list_filtered(&scope, None, limit, offset, true, false, &[])
+        self.list_filtered(&scope, &[], limit, offset, true, false, &[])
     }
 
     fn list_in_typed(
@@ -328,9 +331,10 @@ impl MemoryRepository for SqliteMemoryRepository {
         deleted: bool,
         memory_types: &[String],
     ) -> Result<Vec<Memory>, MnexisError> {
+        let states: Vec<String> = state.map(String::from).into_iter().collect();
         self.list_filtered(
             namespaces,
-            state,
+            &states,
             limit,
             offset,
             deleted,
@@ -344,20 +348,21 @@ impl MemoryRepository for SqliteMemoryRepository {
         namespaces: &NamespaceScope,
         limit: usize,
     ) -> Result<Vec<Memory>, MnexisError> {
-        self.list_filtered(namespaces, None, limit, 0, false, true, &[])
+        self.list_filtered(namespaces, &[], limit, 0, false, true, &[])
     }
 
-    fn list_typed_recent(
+    fn list_typed_state_recent(
         &self,
         namespaces: &NamespaceScope,
         memory_types: &[String],
+        states: &[String],
         limit: usize,
     ) -> Result<Vec<Memory>, MnexisError> {
-        self.list_filtered(namespaces, None, limit, 0, false, true, memory_types)
+        self.list_filtered(namespaces, states, limit, 0, false, true, memory_types)
     }
 
     fn count_in(&self, namespaces: &NamespaceScope) -> Result<i64, MnexisError> {
-        let Some((filter, param_refs)) = filter_sql(namespaces, None, false, &[]) else {
+        let Some((filter, param_refs)) = filter_sql(namespaces, &[], false, &[]) else {
             return Ok(0);
         };
         let sql = format!("SELECT count(*){filter}");
