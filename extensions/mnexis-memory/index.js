@@ -115,6 +115,63 @@ export function searchedNamespace(payload) {
 }
 
 /**
+ * What the answer did not include: the candidates the budget could not
+ * keep, with the size that explains why.
+ *
+ * The engine declares it (door-priced-answer S2): the agent's cross-check
+ * round is a coverage problem, not a trust problem, and it needs something
+ * to look for. An older engine does not declare it, and then the answer
+ * says nothing.
+ */
+export function readCoverage(payload) {
+	const coverage = payload && typeof payload === "object" ? payload.coverage : null;
+	if (!coverage || typeof coverage !== "object" || Array.isArray(coverage)) {
+		return null;
+	}
+	const items = Array.isArray(coverage.left_out_items) ? coverage.left_out_items : [];
+	const leftOut = typeof coverage.left_out === "number" ? coverage.left_out : items.length;
+	if (leftOut === 0 && items.length === 0) {
+		return null;
+	}
+	return {
+		candidates: typeof coverage.candidates === "number" ? coverage.candidates : 0,
+		carried: typeof coverage.carried === "number" ? coverage.carried : 0,
+		left_out: leftOut,
+		left_out_items: items,
+	};
+}
+
+/**
+ * The declaration in the answer text: what the answer did not include.
+ *
+ * One line says how many candidates the budget could not keep, and one line
+ * per candidate names it with the size that explains why it did not fit —
+ * the record is one `mnexis_show` away.
+ */
+export function coverageLines(coverage) {
+	if (!coverage || typeof coverage !== "object") {
+		return [];
+	}
+	const items = Array.isArray(coverage.left_out_items) ? coverage.left_out_items : [];
+	const leftOut = typeof coverage.left_out === "number" ? coverage.left_out : items.length;
+	if (leftOut === 0 && items.length === 0) {
+		return [];
+	}
+	const plural = (count) => `${count} candidate${count === 1 ? "" : "s"}`;
+	const lines = [
+		`Not included: ${plural(leftOut)} did not fit the budget (the least relevant first).`,
+	];
+	for (const item of items) {
+		const kind = item?.memory_type ?? "fact";
+		const title = item?.title ?? "";
+		const uuid = item?.uuid ?? "";
+		const bytes = typeof item?.bytes === "number" ? item.bytes : 0;
+		lines.push(`- [${kind}] ${title} — ${uuid} (${bytes} bytes)`);
+	}
+	return lines;
+}
+
+/**
  * The relations between the memories a payload holds: which one replaced
  * which.
  *
@@ -1323,7 +1380,12 @@ export default function mnexisMemoryExtension(pi) {
 		description:
 			"Ask the project a question in one call and get the answer: the memories " +
 			"this project recorded that matter for the task, trimmed to a token " +
-			"budget, PLUS the session state — the live project_state and decision " +
+			"budget, each as identity and preview — the uuid, the title and the " +
+			"first words of the fact, never the whole record, which is one " +
+			"mnexis_show away — PLUS the declaration of what the answer did not " +
+			"include: the candidates the budget could not keep, with their size, " +
+			"so a cross-check round has something to look for. It also carries the " +
+			"session state — the live project_state and decision " +
 			"records with the content that fits the block's budget, newest first, " +
 			"the index of the live records that did not fit (kind, title, uuid and " +
 			"date, no content — pull one with mnexis_show), and the previous " +
@@ -1400,6 +1462,10 @@ export default function mnexisMemoryExtension(pi) {
 				});
 			}
 			const items = readItems(result.data);
+			// What the answer did not include: the candidates the budget
+			// could not keep. Optional and additive: an engine that does
+			// not declare it leaves the answer exactly as it always was.
+			const coverage = readCoverage(result.data);
 			// The block the engine rides along with the items. Optional, and
 			// additive: an engine that does not send it, and a block with
 			// nothing to say, leave the answer exactly as it always was.
@@ -1422,8 +1488,13 @@ export default function mnexisMemoryExtension(pi) {
 			]
 				.filter(Boolean)
 				.join(" ");
-			// The order is the contract: the items, the block, the declaration.
-			const answer = state ? `${text}\n${stateBlockLines(state).join("\n")}` : text;
+			// The order is the contract: the items, what it left out, the
+			// block, the declaration.
+			const answer = [
+				text,
+				...coverageLines(coverage),
+				...(state ? stateBlockLines(state) : []),
+			].join("\n");
 			return ok(`${answer}\n${declaration}`, {
 				namespace: namespace ?? null,
 				searched_namespace: searched,
@@ -1431,6 +1502,7 @@ export default function mnexisMemoryExtension(pi) {
 				tokens_used: tokens,
 				memories: items,
 				read_scope: readScope(result.data),
+				...(coverage ? { coverage } : {}),
 				...(state ? { session_state: state } : {}),
 			});
 		},

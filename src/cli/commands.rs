@@ -1392,6 +1392,7 @@ pub fn context(
     max_items: usize,
     budget_mode: &str,
     match_mode: &str,
+    full: bool,
     task: String,
 ) -> Result<CommandOutcome, MnexisError> {
     use crate::application::budget::BudgetMode;
@@ -1421,6 +1422,7 @@ pub fn context(
         tokenizer_id,
         max_items: Some(max_items),
         budget_mode: mode,
+        full,
         search: SearchFilter {
             memory_types: parse_memory_types(memory_type.as_deref())?,
             ..SearchFilter::default()
