@@ -1,6 +1,9 @@
 # The board — what is done, what is open, what comes next
 
-**Last updated:** 2026-10-28 (item 14 landed: the door's answer is priced
+**Last updated:** 2026-10-28 (item 15: the priced door was measured again
+and the trade is on the table — the redundancy rate fell but the session
+grew 35 % in tokens and doubled its memory calls; PR #94 has the door in
+the MCP surface; before that: item 14 landed: the door's answer is priced
 and declares its coverage — M3 and M4 of the order the re-read metric
 imposes; before that: item 13 landed the budgeted state block, and item 12
 landed the re-read metric — the number that was missing; before that: item 9
@@ -805,7 +808,9 @@ not in the skill, so the board's M3 and M4 are the door's contract.
   the **oldest** facts and the most relevant one could be left out — the
   opposite of PRD §9 step 6 and of the module's own documented order. The
   rank now travels with the memory (bm25 ASC, then `created_at` ASC), so
-  what the door leaves out is the *least* relevant.
+  what the door leaves out is the *least* relevant — and the declaration
+  names the ones that **just missed the cut** first (verified on the
+  binary).
 - **The doctrine follows:** the skill, the extension's README and the root
   README say what the door answers now.
 
@@ -819,11 +824,65 @@ envelope itself exceeds the estimated byte budget" — the whole content did
 not fit) and the branch answers with **3 items** (429 tokens), the long one
 cut at 160 characters with the `…` and the uuid in the text line.
 
-**What it does not settle:** the priced door is a **payload** change, not a
-measured win yet — the re-read metric has to be run again against the
-merged binary to see whether the redundant deliveries actually drop (the
-prediction: they do, because the door's own facts are now previews and the
-agent has less to re-fetch; the risk: the agent calls `mnexis show` more
-often for the facts that were cut). That measurement is the next thing,
-with the criterion written **before** the numbers. Then **M5** (the lean
-skill, with its own experiment) and item 11 (the door in the MCP surface).
+**What it does not settle:** the priced door was a **payload** change, and a
+payload change is not a measured win — the re-read metric had to run again
+against the merged binary. **It ran** (item 15), and the answer is
+**negative**: the pricing does not pay for itself.
+
+### 15. The priced door, measured again — the trade, and the decision it opens
+
+The plan and the criterion: `tmp/bench/reread-priced-measurement.md`
+(written **before** the numbers). The arm: `priced` — the merged tree
+(`main` = `70d22a8`, PR #92), the same container family, the same fixture,
+the same prompts, the same model, N = 10. The baseline: the **shape-b**
+arm of the shape experiment — the door with the state block and the fat
+items, which is the door PR #92 replaces. The metric: `score-reread.py`,
+unchanged (it still reproduces the baseline exactly).
+
+| steering phase | the fat door (shape-b) | the priced door | |
+| --- | --- | --- | --- |
+| **re-read rate** | 47.2 % | **31.6 %** | ↓ |
+| median redundant bytes | 6 418 | 6 484 | ≈ |
+| wasted calls | 8 | 26 | ↑ |
+| **median memory calls** | 4.5 | **9.0** | ↑↑ |
+| **median tokens** | 37 290 | **50 464** | **+35 %** |
+| the `mnexis_show` fan-out | 2/10 runs | **7/10 runs** | ↑ |
+| ≥2 state facts stated | 10/10 | 10/10 | = |
+| invented values | 0 | 0 | = |
+| the trap kept | 10/10 | 10/10 | = |
+
+**The criterion, applied.** P2 (the door still answers) **holds**: 10/10
+runs stated the facts, nothing was invented, the trap held, no run failed
+to answer. P1 (the redundancy drops) holds **only in part**: the *rate* fell
+but the redundant **bytes** did not, and the wasted calls tripled. P3 (the
+saving is not paid back in calls) **fails**: the median memory calls
+doubled and the session's tokens grew 35 %.
+
+**The mechanism, and it is not noise.** The fixture's facts are 105–323
+characters (median 160) and the preview is **160** — so the preview cut five
+of the six knowledge facts, and the agent fetched what it needed: one
+`mnexis_show` per fact, where the fat door's enumeration was **one**
+`list --full` that delivered all of them at once. The pricing traded one
+cheap fat call for several expensive ones.
+
+**What it does not settle:** the fixture's facts sit at the upper end of
+what the board measured in the wild (70–181 characters) — a 160-character
+preview cuts about half of *those* too, so the mechanism is not an
+artifact of the fixture, but a variant with a **generous** preview (the
+typical fact whole, only the huge ones cut) is a different arm and is not
+measured. And the **coverage declaration** (M4) rode along in this arm and
+cost nothing measurable; it was not measured alone.
+
+**The decision this opens** (the human's, not the implementer's): keep the
+pricing as it is and record the trade; **enlarge the preview** (or let the
+door carry the whole fact and cut only the huge ones) and measure that arm
+— the mechanism says the cut is what provokes the fan-out; or **revert the
+pricing** and keep the coverage declaration, which costs nothing
+measurable.
+
+**Also open: PR #94** (`feat/mcp-door`, issue to open) — the door in the
+**MCP surface** (item 11): the server shipped sixteen tools and
+`memory_context` was not one of them, so the agent in opencode rebuilt the
+answer by hand. The tool calls the same `MemoryService::context` the CLI
+calls; the differential leaves the other six read tools' answers
+byte-identical. Then **M5** (the lean skill, with its own experiment).
