@@ -254,9 +254,12 @@ not reach the agent** in the surfaces the agent actually reads.
   item 3 because the shared SQL helper changed) returned **high risk** and
   a plan with two parts: the writer self-verifies and **an independent
   verifier runs**. The independent verifier **failed on infrastructure**
-  — the pi process died with a stream write error, not with a finding — so
-  it is reported as **unavailable** and was not relaunched. The parent's
-  own verification took its place, question by question:
+  — and the cause is known, because the symptom was loud: its own scratch
+  (a cargo target directory under /tmp) filled the 16 GB tmpfs, every
+  write from then on failed, and the pi process died with a stream write
+  error. The scratch is gone and /tmp is at 1%, but the verifier is
+  reported as **unavailable** and was not relaunched. The parent's own
+  verification took its place, question by question:
   1. **The shared helper.** `filter_sql`'s `state: Option<&String>`
      became `states: &[String]`, and every caller was checked:
      `list_in` and `list_in_typed` pass the one state they were given
@@ -288,3 +291,11 @@ not reach the agent** in the surfaces the agent actually reads.
   cargo, 133 node) and clippy clean, the criterion holds. **Risk: item 3**
   — the shared SQL helper changed — and the verification above is what
   answers it.
+- L10 (2026-10-28): the block, measured against this repository's own
+  store (the `mnexis` namespace, the door asked "where did we leave off"):
+  the base carried **11 records and 16 299 characters of content — 4 911
+  tokens** of block, with no budget and no index; the change carries **4
+  records resident (5 685 characters, 1 845 tokens) and names the other 7
+  live records in the index**, for a whole block of **2 431 tokens**. The
+  door's items are the same items, in the same order, with the same
+  `tokens_used` (947) on both sides.
