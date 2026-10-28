@@ -196,6 +196,52 @@ if (args[0] === "project" && args[1] === "list") {
 	if (scope) {
 		payload.read_scope = scope;
 	}
+	// The session-state block the door carries (state-block-budget S5):
+	// the live records with the content that fits the block's budget, the
+	// index of what did not fit, and the previous session. An older engine
+	// sends no block at all (MNEXIS_FAKE_NO_STATE), and a namespace with
+	// nothing to say sends an empty one (MNEXIS_FAKE_EMPTY_STATE).
+	if (!process.env.MNEXIS_FAKE_NO_STATE) {
+		payload.session_state = process.env.MNEXIS_FAKE_EMPTY_STATE
+			? {
+					records: [],
+					index: [],
+					budget: 2048,
+					resident_tokens: 0,
+					tokens: 0,
+					session: null,
+				}
+			: {
+					records: [
+						{
+							uuid: "7f5561f7-7493-44c9-b594-3ea1c8c5519e",
+							memory_type: "project_state",
+							title: "el board",
+							content: "the board is in odd/next.md",
+							created_at: "2026-10-20T02:08:58Z",
+							state: "active",
+						},
+					],
+					index: [
+						{
+							uuid: "aaaa1111-2222-3333-4444-555566667777",
+							memory_type: "decision",
+							title: "usamos postgres",
+							created_at: "2026-09-01T00:00:00Z",
+							state: "active",
+						},
+					],
+					budget: 2048,
+					resident_tokens: 1922,
+					tokens: 2104,
+					session: {
+						id: "01JX",
+						namespace: workspace,
+						ended_at: "2026-10-27T00:00:00Z",
+						summary: "el puerto del servicio",
+					},
+				};
+	}
 	process.stdout.write(JSON.stringify(payload));
 } else if (args[0] === "history") {
 	if (process.env.MNEXIS_FAKE_HISTORY_FAIL) {
@@ -1341,12 +1387,12 @@ test("the answer declares the namespace it searched and the budget it spent", as
 });
 
 test("the context tool declares the session state it returns", () => {
-	// The block is the door's measured win (call-budget S6): an agent that
-	// does not know the first answer already carries the project's state
-	// rebuilds it by hand over three more calls — the fan-out the experiment
-	// removed. The description is the contract the model reads, so it names
-	// the block and says the only thing that makes it cheap to trust: it is
-	// outside the budget.
+	// The block reaches the model through the tool, and its contract has to
+	// say what it now is (state-block-budget S7.4): the live state with the
+	// content that fits the block's budget, and the index of what did not
+	// fit. The old promise — every project_state and decision record with
+	// its whole content — is one the tool can no longer keep, so the
+	// description must not make it.
 	const { tools, pi } = fakeHost();
 	mnexisMemory(pi);
 	const contextTool = tools.get("mnexis_context");
@@ -1359,13 +1405,28 @@ test("the context tool declares the session state it returns", () => {
 	);
 	assert.match(
 		contextTool.description,
-		/outside the budget/,
-		`and says it does not spend the token budget: ${contextTool.description}`,
+		/the live project_state and decision records/,
+		`and says which records it carries: ${contextTool.description}`,
 	);
 	assert.match(
 		contextTool.description,
-		/project_state and decision/,
-		`and which records it carries: ${contextTool.description}`,
+		/the content that fits the block's budget/,
+		`and that the content is bounded: ${contextTool.description}`,
+	);
+	assert.match(
+		contextTool.description,
+		/index of the live records that did not fit/,
+		`and that what did not fit is indexed: ${contextTool.description}`,
+	);
+	assert.match(
+		contextTool.description,
+		/outside the door's budget/,
+		`and that the block does not spend the door's budget: ${contextTool.description}`,
+	);
+	assert.doesNotMatch(
+		contextTool.description,
+		/records with their whole content/,
+		`the promise the block cannot keep is gone: ${contextTool.description}`,
 	);
 });
 
@@ -1438,4 +1499,188 @@ test("the context tool binds nothing: a read does not write", async () => {
 		0,
 		`asking a question does not bind a namespace: ${JSON.stringify(binds)}`,
 	);
+});
+
+/** The one item the fake door answers with, in the order the engine writes it. */
+const DOOR_ITEM = {
+	uuid: "m1",
+	title: "puerto del servicio",
+	keywords: ["puerto"],
+	namespace: "mnexis",
+	content: "el puerto es 8081",
+	memory_type: "fact",
+	state: "active",
+	revision: 1,
+	topic_key: "puerto-del-servicio",
+	assertion_basis: "user_stated",
+	created_at: "2026-01-01T00:00:00Z",
+};
+
+/** What the door answered before the block existed: items, then the declaration. */
+const ANSWER_WITHOUT_BLOCK = `1. ${JSON.stringify(DOOR_ITEM)}\nNamespace searched: mnexis. Tokens: 147.`;
+
+test("the door's answer carries the session state between the items and the declaration", async () => {
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const contextTool = tools.get("mnexis_context");
+	assert.ok(contextTool, "mnexis_context is registered");
+
+	const result = await contextTool.execute(
+		"t-context-state",
+		{ task: "el puerto del servicio" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.notEqual(result.isError, true);
+	const text = String(result.content?.[0]?.text ?? "");
+	const lines = text.split("\n");
+
+	assert.ok(lines[0].startsWith("1. {"), `the items come first: ${JSON.stringify(lines[0])}`);
+	const stateAt = lines.indexOf("session state: 1 record, 1922 of 2048 tokens");
+	assert.ok(
+		stateAt > 0,
+		`the block says how many records it holds and what they cost: ${text}`,
+	);
+	assert.deepEqual(
+		JSON.parse(lines[stateAt + 1]),
+		{
+			uuid: "7f5561f7-7493-44c9-b594-3ea1c8c5519e",
+			memory_type: "project_state",
+			title: "el board",
+			content: "the board is in odd/next.md",
+			created_at: "2026-10-20T02:08:58Z",
+			state: "active",
+		},
+		`a resident record is one JSON line with its content: ${lines[stateAt + 1]}`,
+	);
+
+	const indexAt = lines.indexOf(
+		"indexed: 1 record did not fit the budget (pull one with mnexis show <uuid>)",
+	);
+	assert.ok(indexAt > stateAt, `the index follows the resident records: ${text}`);
+	assert.deepEqual(
+		JSON.parse(lines[indexAt + 1]),
+		{
+			uuid: "aaaa1111-2222-3333-4444-555566667777",
+			memory_type: "decision",
+			title: "usamos postgres",
+			created_at: "2026-09-01T00:00:00Z",
+			state: "active",
+		},
+		`an indexed record is one JSON line with no content: ${lines[indexAt + 1]}`,
+	);
+
+	const sessionAt = lines.findIndex((line) => line.startsWith("session: "));
+	assert.ok(sessionAt > indexAt, `the previous session rides with the block: ${text}`);
+	assert.deepEqual(
+		JSON.parse(lines[sessionAt].slice("session: ".length)),
+		{
+			id: "01JX",
+			namespace: "mnexis",
+			ended_at: "2026-10-27T00:00:00Z",
+			summary: "el puerto del servicio",
+		},
+		`the session is one JSON line: ${lines[sessionAt]}`,
+	);
+
+	assert.match(
+		lines[lines.length - 1],
+		/^Namespace searched: mnexis\./,
+		`the declaration still closes the answer: ${text}`,
+	);
+	assert.match(
+		lines[lines.length - 1],
+		/Tokens: 147\./,
+		`with the tokens the door spent: ${text}`,
+	);
+
+	assert.equal(
+		result.details?.session_state?.records?.[0]?.content,
+		"the board is in odd/next.md",
+		`the details carry the block for the chrome: ${JSON.stringify(result.details?.session_state)}`,
+	);
+	assert.equal(
+		result.details?.session_state?.budget,
+		2048,
+		`with the budget it declares: ${JSON.stringify(result.details?.session_state)}`,
+	);
+	assert.equal(
+		result.details?.session_state?.resident_tokens,
+		1922,
+		`and what the resident part cost: ${JSON.stringify(result.details?.session_state)}`,
+	);
+	assert.equal(
+		result.details?.session_state?.index?.length,
+		1,
+		`and the index: ${JSON.stringify(result.details?.session_state)}`,
+	);
+});
+
+test("an answer without a session state renders exactly as the door always did", async () => {
+	// The extension is installed independently of the binary: an engine that
+	// predates the block sends no `session_state`, and the answer must be
+	// byte-identical to the one the tool gave before (bridge, no error, no
+	// empty block, no null).
+	process.env.MNEXIS_FAKE_NO_STATE = "1";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const contextTool = tools.get("mnexis_context");
+
+		const result = await contextTool.execute(
+			"t-context-no-state",
+			{ task: "el puerto" },
+			undefined,
+			undefined,
+			context(),
+		);
+		assert.notEqual(result.isError, true);
+		const text = String(result.content?.[0]?.text ?? "");
+		assert.equal(
+			text,
+			ANSWER_WITHOUT_BLOCK,
+			`an older engine's answer is the one the tool always gave: ${JSON.stringify(text)}`,
+		);
+		assert.equal(
+			result.details?.session_state,
+			undefined,
+			`no block is invented for the chrome: ${JSON.stringify(result.details)}`,
+		);
+	} finally {
+		delete process.env.MNEXIS_FAKE_NO_STATE;
+	}
+});
+
+test("an empty session state draws no block", async () => {
+	// A namespace with nothing to say is not an error and not an empty
+	// heading: the answer is the one the door always gave.
+	process.env.MNEXIS_FAKE_EMPTY_STATE = "1";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const contextTool = tools.get("mnexis_context");
+
+		const result = await contextTool.execute(
+			"t-context-empty-state",
+			{ task: "el puerto" },
+			undefined,
+			undefined,
+			context(),
+		);
+		assert.notEqual(result.isError, true);
+		const text = String(result.content?.[0]?.text ?? "");
+		assert.equal(
+			text,
+			ANSWER_WITHOUT_BLOCK,
+			`an empty block says nothing: ${JSON.stringify(text)}`,
+		);
+		assert.equal(
+			result.details?.session_state,
+			undefined,
+			`and the chrome is given nothing to draw: ${JSON.stringify(result.details)}`,
+		);
+	} finally {
+		delete process.env.MNEXIS_FAKE_EMPTY_STATE;
+	}
 });

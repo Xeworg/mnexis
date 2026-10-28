@@ -148,6 +148,74 @@ export function relationLines(relations) {
 }
 
 /**
+ * The session-state block a door's answer carries, when it says something.
+ *
+ * The block is additive and optional: an engine that predates it sends no
+ * `session_state`, and a namespace with nothing to say sends an empty one.
+ * Both answer exactly as the door always did — a block with nothing in it is
+ * not worth the lines the agent pays for, and `null` is not a fact.
+ *
+ * @param {unknown} payload
+ * @returns {{ records: unknown[], index: unknown[], session: object | null } | null}
+ */
+export function readSessionState(payload) {
+	const block = payload && typeof payload === "object" ? payload.session_state : null;
+	if (!block || typeof block !== "object" || Array.isArray(block)) {
+		return null;
+	}
+	const records = Array.isArray(block.records) ? block.records : [];
+	const index = Array.isArray(block.index) ? block.index : [];
+	const session =
+		block.session && typeof block.session === "object" && !Array.isArray(block.session)
+			? block.session
+			: null;
+	if (records.length === 0 && index.length === 0 && session === null) {
+		return null;
+	}
+	return { ...block, records, index, session };
+}
+
+/**
+ * The block in the answer text, in the items' own style: a JSON object per
+ * line.
+ *
+ * The two heading lines are what makes the block readable at a glance: the
+ * first says how many records ride resident and what they cost, the second
+ * says that some live state is *indexed* — it exists, it did not fit, and
+ * `mnexis_show` pulls it. What the budget left out is never silent even
+ * though its content is not here (state-block-budget S2, S5, S7.2).
+ */
+export function stateBlockLines(block) {
+	if (!block || typeof block !== "object") {
+		return [];
+	}
+	const records = Array.isArray(block.records) ? block.records : [];
+	const index = Array.isArray(block.index) ? block.index : [];
+	const session = block.session && typeof block.session === "object" ? block.session : null;
+	const plural = (count) => `${count} record${count === 1 ? "" : "s"}`;
+
+	const budget = typeof block.budget === "number" ? block.budget : null;
+	const resident = typeof block.resident_tokens === "number" ? block.resident_tokens : null;
+	const lines = [
+		budget === null || resident === null
+			? `session state: ${plural(records.length)}`
+			: `session state: ${plural(records.length)}, ${resident} of ${budget} tokens`,
+	];
+	lines.push(...records.map((record) => JSON.stringify(record)));
+	if (index.length > 0) {
+		lines.push(
+			`indexed: ${plural(index.length)} did not fit the budget ` +
+				"(pull one with mnexis show <uuid>)",
+		);
+		lines.push(...index.map((entry) => JSON.stringify(entry)));
+	}
+	if (session) {
+		lines.push(`session: ${JSON.stringify(session)}`);
+	}
+	return lines;
+}
+
+/**
  * The namespace a read tool targets.
  *
  * Reads are open across projects: without an explicit namespace the tool
@@ -1255,20 +1323,24 @@ export default function mnexisMemoryExtension(pi) {
 		description:
 			"Ask the project a question in one call and get the answer: the memories " +
 			"this project recorded that matter for the task, trimmed to a token " +
-			"budget, PLUS the session state — the project_state and decision records " +
-			"with their whole content and the previous session's summary — so one " +
-			"call answers 'where did we leave off' instead of rebuilding it from " +
-			"several surfaces. Use it as the FIRST call of a session, before you read " +
-			"the code, and whenever the task is shaped like a question ('where did we " +
-			"leave off', 'which port does it listen on', 'what did we decide about " +
-			"X'). Read the session state it returns before calling list, search or " +
-			"recall for the same question: the state is already here, and the block " +
-			"is outside the budget, so the first answer costs what the budget costs. " +
-			"It searches this workspace's namespace — the one a save lands in — and " +
-			"the answer declares the namespace it searched, the tokens it spent and " +
-			"how far the read reached, so an empty answer is never another project's " +
-			"silence. It does not replace mnexis_search: the search is the exact " +
-			"query, the context is the project-shaped question.",
+			"budget, PLUS the session state — the live project_state and decision " +
+			"records with the content that fits the block's budget, newest first, " +
+			"the index of the live records that did not fit (kind, title, uuid and " +
+			"date, no content — pull one with mnexis_show), and the previous " +
+			"session's summary — so one call answers 'where did we leave off' " +
+			"instead of rebuilding it from several surfaces. The block has a budget " +
+			"of its own and is outside the door's budget, so it never moves which " +
+			"memories the door picks; a record the block could not fit is still " +
+			"named, never dropped. Use it as the FIRST call of a session, before " +
+			"you read the code, and whenever the task is shaped like a question " +
+			"('where did we leave off', 'which port does it listen on', 'what did " +
+			"we decide about X'). Read the session state it returns before calling " +
+			"list, search or recall for the same question: the state is already " +
+			"here. It searches this workspace's namespace — the one a save lands in " +
+			"— and the answer declares the namespace it searched, the tokens it " +
+			"spent and how far the read reached, so an empty answer is never " +
+			"another project's silence. It does not replace mnexis_search: the " +
+			"search is the exact query, the context is the project-shaped question.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -1328,6 +1400,10 @@ export default function mnexisMemoryExtension(pi) {
 				});
 			}
 			const items = readItems(result.data);
+			// The block the engine rides along with the items. Optional, and
+			// additive: an engine that does not send it, and a block with
+			// nothing to say, leave the answer exactly as it always was.
+			const state = readSessionState(result.data);
 			// What the engine says it searched — not what we asked for: the
 			// engine is the one that decided.
 			const searched = searchedNamespace(result.data) ?? namespace ?? null;
@@ -1346,13 +1422,16 @@ export default function mnexisMemoryExtension(pi) {
 			]
 				.filter(Boolean)
 				.join(" ");
-			return ok(text + `\n${declaration}`, {
+			// The order is the contract: the items, the block, the declaration.
+			const answer = state ? `${text}\n${stateBlockLines(state).join("\n")}` : text;
+			return ok(`${answer}\n${declaration}`, {
 				namespace: namespace ?? null,
 				searched_namespace: searched,
 				count: items.length,
 				tokens_used: tokens,
 				memories: items,
 				read_scope: readScope(result.data),
+				...(state ? { session_state: state } : {}),
 			});
 		},
 	});
