@@ -170,7 +170,7 @@ pub fn with_read_scope(text: impl Into<String>, mode: ReadScopeMode) -> String {
 /// The CLI's stdout is the machine channel of every agent that has no tool
 /// (this extension, opencode, and the codex and claude code integrations
 /// still to come), so the text is the answer and not a header: the items
-/// with their preview, and the block with the live state that fits its
+/// with their content, and the block with the live state that fits its
 /// budget and the index of the live records that did not fit.
 ///
 /// One physical line per fact, always: the identity before the text, the
@@ -213,29 +213,18 @@ pub fn context_answer(response: &ContextResponse, mode: ReadScopeMode) -> String
 
 /// One line per item of the door's answer: the identity, then the text.
 ///
-/// The item is priced: the text is the **preview** of the fact's content,
-/// and the whole record is one `mnexis show <uuid>` away. When the preview
-/// was cut, the line carries the uuid — the handle is exactly what the
-/// reader needs and nothing more (the identity of a record before its text).
+/// The text is the fact whole: the door never cuts one, so the line needs no
+/// handle to pull the rest — the declaration in [`coverage_lines`] is where a
+/// record the budget could not keep names its uuid.
 pub fn context_item_line(position: usize, item: &ContextItem) -> String {
     let mut line = format!("{position}. ");
     if !item.topic_key.is_empty() {
         line.push_str(&format!("[{}] ", item.topic_key));
     }
-    // The fact was cut: the reader needs the handle to pull it whole, and
-    // only then is the uuid worth its price.
-    let cut = item.content.is_none() && item.preview.ends_with('…');
     if !item.title.is_empty() {
-        line.push_str(&format!("{} ", item.title));
-        if cut {
-            line.push_str(&format!("({}) ", item.uuid));
-        }
-        line.push_str("— ");
-    } else if cut {
-        line.push_str(&format!("({}) ", item.uuid));
+        line.push_str(&format!("{} — ", item.title));
     }
-    let text = item.content.as_deref().unwrap_or(&item.preview);
-    line.push_str(&one_line(text));
+    line.push_str(&one_line(&item.content));
     line
 }
 

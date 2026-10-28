@@ -174,7 +174,7 @@ if (args[0] === "project" && args[1] === "list") {
 				title: "puerto del servicio",
 				keywords: ["puerto"],
 				namespace: workspace,
-				preview: "el puerto es 8081",
+				content: "el puerto es 8081",
 				memory_type: "fact",
 				state: "active",
 				revision: 1,
@@ -1404,6 +1404,44 @@ test("the answer declares the namespace it searched and the budget it spent", as
 	);
 });
 
+test("the context tool's description says the facts come whole", () => {
+	// The door carries whole facts again (door-whole-content S5): the
+	// description says what the answer is — the facts that match the task,
+	// whole, the session state, and the declaration of what the budget could
+	// not keep. The old promise, a preview per fact, is one the tool no
+	// longer keeps, so the description must not make it.
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const contextTool = tools.get("mnexis_context");
+	assert.ok(contextTool, "mnexis_context is registered");
+
+	assert.match(
+		contextTool.description,
+		/match the task, whole/,
+		`the description says the facts come whole: ${contextTool.description}`,
+	);
+	assert.match(
+		contextTool.description,
+		/the budget decides which facts fit/,
+		`and that the budget decides what fits, not how much is shown: ${contextTool.description}`,
+	);
+	assert.match(
+		contextTool.description,
+		/declaration of what the answer did not include/,
+		`and that it declares what it left out: ${contextTool.description}`,
+	);
+	assert.doesNotMatch(
+		contextTool.description,
+		/identity and preview/,
+		`the preview the door no longer answers with is gone: ${contextTool.description}`,
+	);
+	assert.doesNotMatch(
+		contextTool.description,
+		/first words of the fact/,
+		`the cut fact the door no longer answers with is gone: ${contextTool.description}`,
+	);
+});
+
 test("the context tool declares the session state it returns", () => {
 	// The block reaches the model through the tool, and its contract has to
 	// say what it now is (state-block-budget S7.4): the live state with the
@@ -1525,7 +1563,7 @@ const DOOR_ITEM = {
 	title: "puerto del servicio",
 	keywords: ["puerto"],
 	namespace: "mnexis",
-	preview: "el puerto es 8081",
+	content: "el puerto es 8081",
 	memory_type: "fact",
 	state: "active",
 	revision: 1,

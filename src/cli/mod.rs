@@ -101,9 +101,6 @@ pub enum Command {
         /// How the task's words are matched: any (default) | all | phrase
         #[arg(long = "match", default_value = "any", value_name = "MODE")]
         match_mode: String,
-        /// Carry each fact's whole content, not only its preview
-        #[arg(long)]
-        full: bool,
         /// Task / query (positional)
         task: String,
     },
@@ -596,7 +593,6 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             max_items,
             budget_mode,
             match_mode,
-            full,
             task,
         } => {
             let profile = Profile::open(data_dir)?;
@@ -609,7 +605,6 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 *max_items,
                 budget_mode,
                 match_mode,
-                *full,
                 task.clone(),
             )
         }

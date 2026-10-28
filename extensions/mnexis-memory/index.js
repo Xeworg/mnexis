@@ -1378,13 +1378,14 @@ export default function mnexisMemoryExtension(pi) {
 		label: "The context of this task",
 		promptSnippet: "Ask the project what it knows about this task, in one call.",
 		description:
-			"Ask the project a question in one call and get the answer: the memories " +
-			"this project recorded that matter for the task, trimmed to a token " +
-			"budget, each as identity and preview — the uuid, the title and the " +
-			"first words of the fact, never the whole record, which is one " +
-			"mnexis_show away — PLUS the declaration of what the answer did not " +
-			"include: the candidates the budget could not keep, with their size, " +
-			"so a cross-check round has something to look for. It also carries the " +
+			"Ask the project a question in one call and get the answer: the facts " +
+			"this project recorded that match the task, whole — the uuid, the title " +
+			"and the entire content of each memory, never a cut one, because the " +
+			"budget decides which facts fit, not how much of a fact you see — PLUS " +
+			"the declaration of what the answer did not include: the candidates the " +
+			"budget could not keep, with their size, so a cross-check round has " +
+			"something to look for, and a fact that did not fit is one " +
+			"mnexis_show away. It also carries the " +
 			"session state — the live project_state and decision " +
 			"records with the content that fits the block's budget, newest first, " +
 			"the index of the live records that did not fit (kind, title, uuid and " +
