@@ -990,3 +990,17 @@ harness pays +755 tokens on every call and, in the doctrine chains, wrote a
 wrong value twice where the description alone never did. An extension earns
 its place by carrying something a `read` cannot reach, not by restating the
 file.
+
+**One correction to that number, checked against `pi` 1.3.0's
+`docs/extensions.md`:** both harness arms were injected through
+`systemPromptOptions.appendSystemPrompt` (`patch_extension_with_section` in
+`tmp/bench/run/run-all.sh`), which is the system prompt itself — a permanent
+prefix, and a changed prefix is a provider cache miss. The docs recommend
+`sections` / `promptGuidelines`, which pi diffs into **one patch message**
+while keeping the cached prefix. So the +755 and the +244/+259 are the price
+of **that injection point**, not of extensions: the cheaper path was never
+measured. And the extension mnexis ships today
+(`extensions/mnexis-memory/index.js`) has no `before_agent_start` at all — it
+registers tools and a `session_start` handler — so the arms measured a hook
+the product does not have. Neither correction revives the combo: D3 failed
+on behavior, and `head` needed no section to reach 10/10.
