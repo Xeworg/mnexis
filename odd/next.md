@@ -51,8 +51,29 @@ records without a title (#65, #71, #72), the type of a memory as a closed set
 the agent writes (#66), and the session state riding the door's answer by
 default — the call-budget experiment's pre-registered ascension (#68, #70).
 The schema is at version 8 (migration 008 added the anchor of a session) and
-there is no downgrade: an old binary refuses to open a newer store. The
-branch in flight carries **0.5.0-dev**: the chrome for pi (item 10).
+there is no downgrade: an old binary refuses to open a newer store.
+
+**Merged: PR #89** (`feat/state-block-budget`, issue #88, label
+`type:feature`, 8 commits, ~2 100 authored lines) — the state block with a
+budget, an index and the live only, and the door that delivers it (item 13).
+`main` is now **`d844c94`**, and the installed binary
+(`~/.local/bin/mnexis`, **0.5.0-dev**) and the extension and the skill in
+`~/.gentle-shell/agent/` **and** in `~/.pi/agent/` are byte-identical to it
+— the installed door answers with the block. The independent verifier of
+that change was **unavailable** (its own scratch filled the 16 GB tmpfs and
+every write from then on failed — the symptom is an exit 101 with an empty
+stderr, and the scratch is gone); the parent's own verification is in the
+feature document's log (L9).
+
+**The order the re-read metric imposes** (item 12): the door first, then
+the skill. The waste is in the door — it already carried the facts in full
+and the agent re-listed them anyway — and the agent's cross-check round is
+a **coverage** problem, not a trust problem, so the door has to declare
+what it did not include. Concretely: **M3** (identity + preview + uuid
+instead of the whole content, the handle being `mnexis show <uuid>`) and
+**M4** (the candidates that did not fit, with their sizes), then **M5**
+(the lean skill, with its own experiment), then item 11 (the door in the
+MCP surface).
 
 ## The measurement that runs the board
 
