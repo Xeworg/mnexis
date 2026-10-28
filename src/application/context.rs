@@ -19,6 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::application::budget::{Budget, BudgetMode, SUPPORTED_TOKENIZER_V1, token_count_v1};
+use crate::application::preview::preview;
 use crate::domain::error::MnexisError;
 use crate::domain::memory::Memory;
 use crate::domain::query::MatchMode;
@@ -48,6 +49,15 @@ pub struct ContextRequest {
     pub tokenizer_id: Option<String>,
     pub max_items: Option<usize>,
     pub budget_mode: BudgetMode,
+    /// Whether the answer carries each fact's **whole** content or only its
+    /// preview.
+    ///
+    /// The door answers with a preview by default: the re-read metric
+    /// measured the agent re-listing the facts the door had already answered
+    /// in full (board item 12), so the door's own answer is priced. The
+    /// caller that wants the whole record asks for it (`--full`), and the
+    /// complete record is one `mnexis show <uuid>` away either way.
+    pub full: bool,
     pub search: SearchFilter,
     /// Used to validate temporal windows; not part of the public wire
     /// shape (the harness provides it).
@@ -68,7 +78,19 @@ pub struct ContextItem {
     pub keywords: Vec<String>,
     pub revision: i32,
     pub namespace: String,
-    pub content: String,
+    /// The first words of the fact's content: the same 160-character preview
+    /// every other surface answers with, the cut marked with `…`.
+    ///
+    /// The door is priced: it carries the identity of each fact and a glimpse
+    /// of it, never a second copy of the whole text (the re-read metric
+    /// measured the agent re-listing the facts the door had already answered
+    /// in full — board item 12).
+    pub preview: String,
+    /// The **whole** content, when the caller asked for it (`--full`).
+    /// `None` otherwise: the record is one `mnexis show <uuid>` away, and the
+    /// answer never carries a copy it was not asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
     pub memory_type: String,
     pub state: String,
     pub topic_key: String,
@@ -148,7 +170,7 @@ fn warnings_for(budget: &Budget) -> Vec<&'static str> {
 
 /// Project a (hit, memory) into the public item shape, ordered by
 /// bm25 ASC then `created_at` ASC.
-fn project(out: &mut Vec<ContextItem>, mems: Vec<Memory>) {
+fn project(out: &mut Vec<ContextItem>, mems: Vec<Memory>, full: bool) {
     for mem in mems {
         out.push(ContextItem {
             uuid: mem.uuid,
@@ -156,7 +178,8 @@ fn project(out: &mut Vec<ContextItem>, mems: Vec<Memory>) {
             keywords: mem.keywords,
             revision: mem.revision,
             namespace: mem.namespace,
-            content: mem.content,
+            preview: preview(&mem.content),
+            content: if full { Some(mem.content) } else { None },
             memory_type: mem.memory_type,
             state: mem.state.as_str().to_string(),
             topic_key: mem.topic_key,
@@ -171,6 +194,7 @@ pub fn select_response(
     budget: &Budget,
     tokenizer_id: &str,
     selected: Vec<Memory>,
+    full: bool,
 ) -> Result<ContextResponse, MnexisError> {
     if selected.is_empty() {
         return Ok(ContextResponse::empty(
@@ -187,7 +211,7 @@ pub fn select_response(
     for mem in selected {
         accepted.push(mem);
         let mut tentative: Vec<ContextItem> = Vec::new();
-        project(&mut tentative, accepted.clone());
+        project(&mut tentative, accepted.clone(), full);
         let serialised = serialise_envelope(&tentative, budget);
         let tokens = token_count_v1(&serialised);
         if budget.mode() == BudgetMode::Exact {
@@ -287,6 +311,7 @@ pub fn build_response(
     candidates: Vec<(SearchHit, Memory)>,
     filter: &SearchFilter,
     now: &str,
+    full: bool,
 ) -> Result<ContextResponse, MnexisError> {
     let mut eligible_pairs: Vec<Memory> = Vec::new();
     for (_hit, mem) in candidates {
@@ -315,7 +340,7 @@ pub fn build_response(
     // Determinism: created_at ASC.
     let mut selected = deduped;
     selected.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-    select_response(budget, tokenizer_id, selected)
+    select_response(budget, tokenizer_id, selected, full)
 }
 
 fn dedup(mems: Vec<Memory>) -> Vec<Memory> {
@@ -389,7 +414,7 @@ mod tests {
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let m1 = memory("u1", "alpha alpha alpha", "fact", MemoryState::Active);
         let m2 = memory("u2", "beta", "fact", MemoryState::Active);
-        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m1, m2]).unwrap();
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m1, m2], false).unwrap();
         assert_eq!(out.items.len(), 2);
         // The token count the response claims equals what the
         // serialised envelope produces.
@@ -401,11 +426,50 @@ mod tests {
     fn a_context_item_carries_the_title_of_its_memory() {
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let m = memory("u1", "alpha", "fact", MemoryState::Active);
-        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m]).unwrap();
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m], false).unwrap();
         assert_eq!(out.items.len(), 1);
         assert_eq!(out.items[0].title, "titulo de u1");
-        // Additive: the content the item already carried stays.
-        assert_eq!(out.items[0].content, "alpha");
+        // The preview carries the text the item used to carry whole.
+        assert_eq!(out.items[0].preview, "alpha");
+        assert_eq!(out.items[0].content, None);
+    }
+
+    /// The caller that wants the whole record asks for it, and then the item
+    /// carries it — the preview stays, so the shape does not change.
+    #[test]
+    fn the_full_answer_carries_the_whole_content_too() {
+        let budget = Budget::new(10_000, BudgetMode::Exact);
+        let m = memory("u1", "alpha", "fact", MemoryState::Active);
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m], true).unwrap();
+        assert_eq!(out.items[0].preview, "alpha");
+        assert_eq!(out.items[0].content.as_deref(), Some("alpha"));
+    }
+
+    /// The door's item is priced: it carries the identity of the fact and a
+    /// preview of its content, never a second copy of the whole text. The
+    /// re-read metric measured the agent re-listing the facts the door had
+    /// already answered in full (board item 12).
+    #[test]
+    fn an_item_carries_a_preview_and_not_the_whole_content() {
+        let budget = Budget::new(10_000, BudgetMode::Exact);
+        let long = "alpha beta gamma delta ".repeat(20);
+        let out = select_response(
+            &budget,
+            SUPPORTED_TOKENIZER_V1,
+            vec![memory("u1", &long, "fact", MemoryState::Active)],
+            false,
+        )
+        .unwrap();
+        assert_eq!(out.items.len(), 1);
+        let item = serde_json::to_value(&out.items[0]).expect("serialise item");
+        assert!(
+            item.get("preview").is_some(),
+            "the item carries a preview: {item}"
+        );
+        assert!(
+            item["content"].is_null(),
+            "the whole content is not carried by default: {item}"
+        );
     }
 
     #[test]
@@ -413,7 +477,7 @@ mod tests {
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let mut m = memory("u1", "listen on port 8081", "fact", MemoryState::Active);
         m.keywords = vec!["puerto".into(), "port".into()];
-        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m]).unwrap();
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m], false).unwrap();
         assert_eq!(out.items.len(), 1);
         assert_eq!(
             out.items[0].keywords,
@@ -426,7 +490,7 @@ mod tests {
     fn a_context_item_with_no_words_reports_the_empty_list() {
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let m = memory("u1", "sin palabras", "fact", MemoryState::Active);
-        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m]).unwrap();
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m], false).unwrap();
         let json = serde_json::to_value(&out.items[0]).expect("serialise item");
         assert_eq!(
             json["keywords"],
@@ -440,7 +504,7 @@ mod tests {
         // A budget so small that even the envelope prelude doesn't fit.
         let budget = Budget::new(2, BudgetMode::Exact);
         let m1 = memory("u1", "alpha", "fact", MemoryState::Active);
-        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m1]).unwrap();
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m1], false).unwrap();
         assert!(out.items.is_empty());
         assert!(out.empty_reason.is_some());
     }

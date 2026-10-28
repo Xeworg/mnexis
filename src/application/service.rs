@@ -689,7 +689,14 @@ impl<R: MemoryRepository> MemoryService<R> {
         }
 
         // Steps 5+6: build the response through the pipeline.
-        let mut response = build_response(&budget, tokenizer_id, pairs, &req.search, &req.now)?;
+        let mut response = build_response(
+            &budget,
+            tokenizer_id,
+            pairs,
+            &req.search,
+            &req.now,
+            req.full,
+        )?;
         // The envelope says where the door looked (#57): an answer that
         // names no namespace cannot be told apart from an answer that
         // looked in the wrong one.

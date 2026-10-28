@@ -2473,7 +2473,7 @@ fn context_exact_mode_returns_items_and_pins_a_07_invariant() {
     let items = json["items"].as_array().unwrap();
     for item in items {
         assert!(item["uuid"].is_string());
-        assert!(item["content"].is_string());
+        assert!(item["preview"].is_string());
         assert!(item["revision"].is_i64());
         assert!(item["state"].is_string());
     }
@@ -2548,6 +2548,83 @@ fn context_with_no_candidates_returns_empty_with_reason() {
     let json = stdout_json(&out);
     assert_eq!(json["items"].as_array().expect("items").len(), 0);
     assert!(json["empty_reason"].is_string());
+}
+
+// --- context: the priced items (door-priced-answer S1) ---
+
+/// The door's answer carries the identity of each fact and a preview of its
+/// content, never the whole text: the re-read metric measured the agent
+/// re-listing the facts the door had already answered in full (board item
+/// 12). The whole record is one `mnexis show <uuid>` away.
+#[test]
+fn the_doors_items_carry_a_preview_and_not_the_whole_content() {
+    let p = namespaced_profile(&["default"]);
+    let long = "alpha beta gamma delta epsilon ".repeat(12);
+    save(&p, &long, &[]);
+    let out = p
+        .run_silent(&[
+            "context",
+            "--namespace",
+            "default",
+            "--token-budget",
+            "1024",
+            "alpha",
+        ])
+        .unwrap_status("context");
+    let json = stdout_json(&out);
+    let items = json["items"].as_array().expect("items");
+    assert_eq!(
+        items.len(),
+        1,
+        "the saved fact must be in the answer: {json}"
+    );
+    let item = &items[0];
+    assert!(
+        item["uuid"].is_string(),
+        "the item carries its identity: {item}"
+    );
+    let preview = item["preview"]
+        .as_str()
+        .expect("the item carries a preview of its content");
+    assert!(
+        preview.chars().count() <= 161,
+        "the preview is cut at 160 characters: {preview}"
+    );
+    assert!(preview.ends_with('…'), "the cut is marked: {preview}");
+    assert!(
+        item["content"].is_null(),
+        "the whole content is not carried by default: {item}"
+    );
+}
+
+/// The caller can ask for the whole record in the same answer.
+#[test]
+fn the_door_with_full_carries_the_whole_content() {
+    let p = namespaced_profile(&["default"]);
+    let long = "alpha beta gamma delta epsilon ".repeat(12);
+    save(&p, &long, &[]);
+    let out = p
+        .run_silent(&[
+            "context",
+            "--namespace",
+            "default",
+            "--token-budget",
+            "4096",
+            "--full",
+            "alpha",
+        ])
+        .unwrap_status("context --full");
+    let json = stdout_json(&out);
+    let items = json["items"].as_array().expect("items");
+    assert_eq!(
+        items.len(),
+        1,
+        "the saved fact must be in the answer: {json}"
+    );
+    let content = items[0]["content"]
+        .as_str()
+        .expect("--full carries the whole content");
+    assert_eq!(content, long, "the whole content, not the preview");
 }
 
 // --- context: the namespace it searched (#57) ---
@@ -3457,8 +3534,8 @@ fn a_context_item_carries_the_title() {
         "the context says what its items are: {json}"
     );
     assert_eq!(
-        items[0]["content"], "el puerto del servicio es 8081",
-        "additive: the content stays: {json}"
+        items[0]["preview"], "el puerto del servicio es 8081",
+        "the item carries a preview of its content: {json}"
     );
 }
 
@@ -3854,8 +3931,12 @@ fn a_context_item_carries_the_words() {
         "the context carries the words of its items: {json}"
     );
     assert_eq!(
-        items[0]["content"], "listen on port 8081",
-        "additive: the content stays: {json}"
+        items[0]["preview"], "listen on port 8081",
+        "the item carries a preview of its content: {json}"
+    );
+    assert!(
+        items[0]["content"].is_null(),
+        "the whole content is not carried by default: {json}"
     );
 }
 
