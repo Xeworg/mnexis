@@ -76,10 +76,12 @@ mnexis search "wrap mode borde"                            # ranked search
 mnexis status                                             # namespace, allowlists, recent
 ```
 
-The door is priced: each item is the fact's identity and a 160-character
-preview of its content — `mnexis show <uuid>` pulls the whole record, and
-`--full` asks for it in the same answer — and the answer declares what it
-left out, naming the candidates that just missed the cut, with their size.
+The door carries whole facts: each item is the fact's identity and its
+entire content, never a cut one — the budget decides which facts fit, not
+how much of a fact you see, and the door keeps the most relevant ones — and
+the answer declares what it left out, naming up to ten of the candidates the
+budget could not keep, with their size, the ones closest to the cut first. A
+fact that did not fit is one `mnexis show <uuid>` away.
 
 The engine also keeps what a repository cannot: the session the agent runs
 in, and what the user said.

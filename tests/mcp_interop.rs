@@ -2552,22 +2552,22 @@ async fn memory_context_answers_the_door_with_its_items_state_and_coverage()
     .await?;
     let door: serde_json::Value = serde_json::from_str(&text)?;
 
-    // The priced items: identity and a 160-character preview, never a second
-    // copy of the whole text.
+    // The whole facts: the item carries the record's whole text, never a cut
+    // one (the budget decides which facts fit, not how much of a fact).
     let items = door["items"].as_array().expect("items array");
     assert_eq!(items.len(), 1, "only the fact of the task: {door}");
     let item = &items[0];
     assert_eq!(item["uuid"], uuid.as_str(), "{door}");
     assert_eq!(item["title"], "donde estamos", "{door}");
     assert_eq!(
-        item["preview"], "el puerto del servicio es 8081",
-        "the item carries the preview of the fact: {door}"
+        item["content"], "el puerto del servicio es 8081",
+        "the item carries the whole fact: {door}"
     );
     assert_eq!(item["namespace"], "default", "{door}");
     assert_eq!(item["revision"], 1, "{door}");
     assert!(
-        item.get("content").is_none(),
-        "the door is priced: the whole record is one memory_get away: {door}"
+        item.get("preview").is_none(),
+        "the door never cuts a fact: {door}"
     );
 
     // The declarations of the namespace it searched, the tokens it spent and

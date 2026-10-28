@@ -307,7 +307,7 @@ fn the_door_carries_the_full_state_records_with_nothing_set() {
         "the state records only, newest first: {block}"
     );
 
-    // The whole content, not the priced preview the other surfaces return.
+    // The whole content: the state block never prices a record.
     let state = records
         .iter()
         .find(|record| record["memory_type"] == "project_state")
