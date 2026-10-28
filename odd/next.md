@@ -1,9 +1,10 @@
 # The board — what is done, what is open, what comes next
 
-**Last updated:** 2026-10-27 (item 9 closed twice: the call budget measured —
-one complete answer buys the round back — and the ascension shipped, so the
-door carries the session state and the switch retired; before that: the
-identity work through #66, the door and its re-measures, the trigger, the
+**Last updated:** 2026-10-27 (item 12 landed: the re-read metric — the
+number that was missing; before that: item 9 closed twice — the call budget
+measured, one complete answer buys the round back, and the ascension
+shipped, so the door carries the session state and the switch retired; then
+the identity work through #66, the door and its re-measures, the trigger, the
 prefix). Read this first in a new session, then the feature document of
 whatever you pick.
 
@@ -642,3 +643,58 @@ it**. Either the description stops promising it, or the block ships as a
 promise kept rather than as a measured win — and the docs would have to say
 exactly that. After that, item 11 (the door in the MCP surface) is what the
 multi-host goal needs.
+
+### 12. The re-read metric — the number that was missing
+
+The bench measured calls, tokens, quality, invented values and the write
+path. It never counted the **redundancy**: the facts the agent is handed
+twice. The competitor's metric set carries *re-fetch* as a first-class
+number, and the reading of `billion-context` (2026-10-27) showed why it
+matters: re-fetch is the interaction cost of every failure mode the
+compression work targets.
+
+**The metric** (`odd/tasks/reread-metric.md`, S4/S5; the scorer
+`tmp/bench/run/score-reread.py`, the report `tmp/bench/reread-report.md`):
+a *delivery* is a memory in a tool result; a delivery whose fact was
+already delivered in the same run is **redundant**; a call whose every
+delivery was redundant is a **wasted call**. The definition and the
+criterion were written before any transcript was read; the criterion holds
+on all five points, with three hand-checks and nine self-test cases.
+
+**The baseline** (six batches of earlier runs, no model call: 620
+transcripts already on disk).
+
+| | deliveries | redundant | rate | median redundant bytes/run |
+|---|---|---|---|---|
+| shape-a, steering | 186 | 74 | **39.8 %** | 5 469 |
+| shape-b, steering | 212 | 100 | **47.2 %** | 6 418 |
+| shape-c, steering | 214 | 99 | **46.3 %** | 3 821 |
+| mnexis, the old recall phase | 161 | 5 | 3.1 % | 1 327 |
+| **engram**, the same phase | 36 | 12 | **33.3 %** | 110 |
+
+**What it says, and it changes the order of the work.**
+
+- **The redundancy is a recall phenomenon.** The write phase has **zero**
+  redundant deliveries in every arm; the trap phase runs at 22–36 %; the
+  "where did we leave off" phase — the question that makes the agent
+  enumerate — runs at **40–47 %**.
+- **The door and the enumeration are the same machine.** `workspace →
+  context → list --full → search`, and the `list --full` re-delivered the
+  facts the door had already answered in full: 8 of its 10 records were
+  repeats. The verification round the shape experiment measured surviving
+  10/10 is priced here: **a median of 5.5 KB of pure repetition per run**,
+  and a wasted call in 6 of 10 runs.
+- **The `show` fan-out is mostly a no-op.** The preview is 160 chars
+  (`src/application/preview.rs`) and the facts are 70–181 chars, so for
+  most of them the preview *is* the whole fact: in the old batch, **3 of 5
+  `show` calls added nothing**.
+- **It is not our disease alone.** The competitor's door answers truncated
+  and its agent then enumerated: **33.3 %**, as high as ours.
+- **The cross-check round is a coverage problem, not a trust problem.** The
+  door already carried the facts in full and the agent re-fetched them
+  anyway — so the door should **declare what it did not include**, and the
+  round that looks for the missing facts has something to look for.
+
+**So the plan moves:** the door's answer (what it carries, what it declares
+as missing, the state block) comes **before** the skill — the doctrine is
+worth its own experiment, but the measured waste is in the door.
