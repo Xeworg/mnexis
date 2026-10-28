@@ -135,6 +135,76 @@ pub struct ContextResponse {
     /// which governs [`crate::application::SessionState::records`] alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_state: Option<crate::application::service::session_state::SessionState>,
+    /// What the answer covered, and what it left out.
+    ///
+    /// The agent's cross-check round is a **coverage** problem, not a trust
+    /// problem: the door already carried the facts and the agent re-read
+    /// them anyway. An answer that says what it left out gives that round
+    /// something to look for (board item 12, M4).
+    pub coverage: Coverage,
+}
+
+/// How many candidates the answer may name as left out. The real number is
+/// in [`Coverage::left_out`]; this keeps the declaration cheap.
+pub const COVERAGE_ITEM_LIMIT: usize = 10;
+
+/// What the answer covered, and what it left out.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Coverage {
+    /// The candidates the door saw.
+    pub candidates: usize,
+    /// How many of them the answer carries.
+    pub carried: usize,
+    /// How many the budget left out. The list below is capped, so this is
+    /// the real number.
+    pub left_out: usize,
+    /// The candidates the budget left out: identity, title, and the size that
+    /// explains why they did not fit. Capped at [`COVERAGE_ITEM_LIMIT`].
+    pub left_out_items: Vec<OmittedItem>,
+}
+
+/// A candidate the budget left out.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OmittedItem {
+    /// The memory's stable identifier, as `mnexis show` expects it.
+    pub uuid: String,
+    /// What the fact *is*. Empty when it has no title.
+    pub title: String,
+    /// The kind of thing the fact is.
+    pub memory_type: String,
+    /// The length of the fact's content in bytes: the number that explains
+    /// why it did not fit the budget.
+    pub bytes: usize,
+}
+
+impl OmittedItem {
+    fn of(memory: &Memory) -> Self {
+        Self {
+            uuid: memory.uuid.clone(),
+            title: memory.title.clone(),
+            memory_type: memory.memory_type.clone(),
+            bytes: memory.content.len(),
+        }
+    }
+}
+
+impl Coverage {
+    /// The coverage of an answer: what it saw, what it carries, what it left
+    /// out and by how much.
+    fn of(candidates: usize, carried: usize, left_out: Vec<Memory>) -> Self {
+        let count = left_out.len();
+        let items = left_out
+            .iter()
+            .take(COVERAGE_ITEM_LIMIT)
+            .map(OmittedItem::of)
+            .collect();
+        Self {
+            candidates,
+            carried,
+            left_out: count,
+            left_out_items: items,
+        }
+    }
 }
 
 const RETRIEVAL_MODE: &str = "textual";
@@ -145,6 +215,12 @@ impl ContextResponse {
     /// `empty_reason`. Used when the pipeline produces no items (either
     /// no candidates or the budget is too small for the envelope).
     pub fn empty(reason: impl Into<String>, budget: &Budget) -> Self {
+        Self::empty_with(reason, budget, Coverage::default())
+    }
+
+    /// The empty answer, with what it saw and what it left out: an answer
+    /// that carries nothing still says why.
+    pub fn empty_with(reason: impl Into<String>, budget: &Budget, coverage: Coverage) -> Self {
         Self {
             items: Vec::new(),
             searched_namespace: String::new(),
@@ -157,6 +233,7 @@ impl ContextResponse {
             warnings: warnings_for(budget),
             empty_reason: Some(reason.into()),
             session_state: None,
+            coverage,
         }
     }
 }
@@ -189,13 +266,19 @@ fn project(out: &mut Vec<ContextItem>, mems: Vec<Memory>, full: bool) {
     }
 }
 
-/// Compute the final response from the selected memories and the budget.
+/// Compute the final response from the selected candidates and the budget.
+///
+/// The candidates arrive in the door's order — bm25 ASC (the most relevant
+/// first), then `created_at` ASC — and the fill is greedy: the budget keeps
+/// the most relevant facts that fit, and the ones it could not keep are
+/// **declared**, not dropped in silence (S2).
 pub fn select_response(
     budget: &Budget,
     tokenizer_id: &str,
-    selected: Vec<Memory>,
+    selected: Vec<(f64, Memory)>,
     full: bool,
 ) -> Result<ContextResponse, MnexisError> {
+    let candidates = selected.len();
     if selected.is_empty() {
         return Ok(ContextResponse::empty(
             "no candidates passed the eligibility and diversity filters",
@@ -203,43 +286,55 @@ pub fn select_response(
         ));
     }
 
-    // Greedy fill: take memories in deterministic order until the
-    // serialised envelope does not fit. Determinism is bm25 ASC then
-    // created_at ASC.
-    let mut items: Vec<ContextItem> = Vec::with_capacity(selected.len().min(20));
+    // Greedy fill: take the candidates in the door's order until the
+    // serialised envelope does not fit.
+    let mut items: Vec<ContextItem> = Vec::with_capacity(candidates.min(20));
     let mut accepted: Vec<Memory> = Vec::new();
-    for mem in selected {
-        accepted.push(mem);
+    let mut left_out: Vec<Memory> = Vec::new();
+    let mut exhausted = false;
+    let mut empty_reason: Option<&'static str> = None;
+    for (_, mem) in selected.iter() {
+        if exhausted {
+            // The budget is spent: this one and every one after it are
+            // declared as left out.
+            left_out.push(mem.clone());
+            continue;
+        }
+        accepted.push(mem.clone());
         let mut tentative: Vec<ContextItem> = Vec::new();
         project(&mut tentative, accepted.clone(), full);
         let serialised = serialise_envelope(&tentative, budget);
         let tokens = token_count_v1(&serialised);
-        if budget.mode() == BudgetMode::Exact {
-            if tokens > budget.token_budget() {
-                // Drop the last item we just appended.
-                accepted.pop();
-                if accepted.is_empty() {
-                    return Ok(ContextResponse::empty(
-                        "even the envelope itself exceeds the token budget",
-                        budget,
-                    ));
-                }
-                break;
-            }
-        } else {
+        let over_budget = match budget.mode() {
+            BudgetMode::Exact => tokens > budget.token_budget(),
             // Estimated: byte proxy on the serialised envelope.
-            if serialised.len() as i64 > budget.byte_budget() {
-                accepted.pop();
-                if accepted.is_empty() {
-                    return Ok(ContextResponse::empty(
-                        "even the envelope itself exceeds the estimated byte budget",
-                        budget,
-                    ));
-                }
-                break;
+            BudgetMode::Estimated => serialised.len() as i64 > budget.byte_budget(),
+        };
+        if over_budget {
+            // Drop the last item we just appended.
+            accepted.pop();
+            left_out.push(mem.clone());
+            exhausted = true;
+            if accepted.is_empty() {
+                empty_reason = Some(match budget.mode() {
+                    BudgetMode::Exact => "even the envelope itself exceeds the token budget",
+                    BudgetMode::Estimated => {
+                        "even the envelope itself exceeds the estimated byte budget"
+                    }
+                });
             }
+            continue;
         }
         items = tentative;
+    }
+    if let Some(reason) = empty_reason {
+        // Nothing fits: the empty answer, and every candidate is declared
+        // as left out — the answer says why it is empty.
+        return Ok(ContextResponse::empty_with(
+            reason,
+            budget,
+            Coverage::of(candidates, 0, left_out),
+        ));
     }
 
     let tokens_used = token_count_v1(&serialise_envelope(&items, budget));
@@ -263,6 +358,7 @@ pub fn select_response(
         BudgetMode::Estimated => SUPPORTED_TOKENIZER_V1,
     };
 
+    let carried = items.len();
     Ok(ContextResponse {
         items,
         searched_namespace: String::new(),
@@ -275,6 +371,7 @@ pub fn select_response(
         warnings: warnings_for(budget),
         empty_reason: None,
         session_state: None,
+        coverage: Coverage::of(candidates, carried, left_out),
     })
 }
 
@@ -313,8 +410,8 @@ pub fn build_response(
     now: &str,
     full: bool,
 ) -> Result<ContextResponse, MnexisError> {
-    let mut eligible_pairs: Vec<Memory> = Vec::new();
-    for (_hit, mem) in candidates {
+    let mut eligible_pairs: Vec<(f64, Memory)> = Vec::new();
+    for (hit, mem) in candidates {
         if mem.deleted {
             continue;
         }
@@ -334,28 +431,34 @@ pub fn build_response(
             continue;
         }
         let _ = now;
-        eligible_pairs.push(mem);
+        // The rank travels with the memory: the door's order is bm25 ASC
+        // (the most relevant first), then created_at ASC (PRD §9 step 6).
+        eligible_pairs.push((hit.rank, mem));
     }
     let deduped = dedup(eligible_pairs);
-    // Determinism: created_at ASC.
+    // Determinism: bm25 ASC, then created_at ASC.
     let mut selected = deduped;
-    selected.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    selected.sort_by(|a, b| {
+        a.0.partial_cmp(&b.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.created_at.cmp(&b.1.created_at))
+    });
     select_response(budget, tokenizer_id, selected, full)
 }
 
-fn dedup(mems: Vec<Memory>) -> Vec<Memory> {
+fn dedup(candidates: Vec<(f64, Memory)>) -> Vec<(f64, Memory)> {
     use std::collections::HashSet;
     let mut seen_topics: HashSet<String> = HashSet::new();
     let mut seen_content: HashSet<String> = HashSet::new();
-    let mut out: Vec<Memory> = Vec::with_capacity(mems.len());
-    for mem in mems {
+    let mut out: Vec<(f64, Memory)> = Vec::with_capacity(candidates.len());
+    for (rank, mem) in candidates {
         if !mem.topic_key.is_empty() && !seen_topics.insert(mem.topic_key.clone()) {
             continue;
         }
         if !seen_content.insert(mem.content.clone()) {
             continue;
         }
-        out.push(mem);
+        out.push((rank, mem));
     }
     out
 }
@@ -401,7 +504,7 @@ mod tests {
         m2.topic_key = "shared".into();
         let mut m3 = memory("u3", "gamma", "fact", MemoryState::Active);
         m3.topic_key = "shared".into();
-        let out = dedup(vec![m1, m2, m3]);
+        let out = dedup(vec![(0.0, m1), (0.0, m2), (0.0, m3)]);
         assert_eq!(
             out.len(),
             2,
@@ -414,7 +517,13 @@ mod tests {
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let m1 = memory("u1", "alpha alpha alpha", "fact", MemoryState::Active);
         let m2 = memory("u2", "beta", "fact", MemoryState::Active);
-        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m1, m2], false).unwrap();
+        let out = select_response(
+            &budget,
+            SUPPORTED_TOKENIZER_V1,
+            vec![(0.0, m1), (1.0, m2)],
+            false,
+        )
+        .unwrap();
         assert_eq!(out.items.len(), 2);
         // The token count the response claims equals what the
         // serialised envelope produces.
@@ -426,7 +535,7 @@ mod tests {
     fn a_context_item_carries_the_title_of_its_memory() {
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let m = memory("u1", "alpha", "fact", MemoryState::Active);
-        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m], false).unwrap();
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![(0.0, m)], false).unwrap();
         assert_eq!(out.items.len(), 1);
         assert_eq!(out.items[0].title, "titulo de u1");
         // The preview carries the text the item used to carry whole.
@@ -440,7 +549,7 @@ mod tests {
     fn the_full_answer_carries_the_whole_content_too() {
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let m = memory("u1", "alpha", "fact", MemoryState::Active);
-        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m], true).unwrap();
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![(0.0, m)], true).unwrap();
         assert_eq!(out.items[0].preview, "alpha");
         assert_eq!(out.items[0].content.as_deref(), Some("alpha"));
     }
@@ -456,7 +565,7 @@ mod tests {
         let out = select_response(
             &budget,
             SUPPORTED_TOKENIZER_V1,
-            vec![memory("u1", &long, "fact", MemoryState::Active)],
+            vec![(0.0, memory("u1", &long, "fact", MemoryState::Active))],
             false,
         )
         .unwrap();
@@ -472,12 +581,91 @@ mod tests {
         );
     }
 
+    /// The door keeps the **most relevant** facts that fit the budget: bm25
+    /// ASC, then created_at ASC (PRD §9 step 6). The implementation used to
+    /// sort by `created_at` alone and drop the rank, so the budget filled
+    /// with the oldest facts and the most relevant one could be left out.
+    #[test]
+    fn the_door_keeps_the_most_relevant_first() {
+        let budget = Budget::new(10_000, BudgetMode::Exact);
+        let mut relevant = memory("u-relevant", "alpha", "fact", MemoryState::Active);
+        relevant.created_at = "2026-01-01T00:00:00Z".into();
+        let mut other = memory("u-other", "beta", "fact", MemoryState::Active);
+        other.created_at = "2026-06-01T00:00:00Z".into();
+        let hit = |uuid: &str, rank: f64| SearchHit {
+            uuid: uuid.into(),
+            rank,
+            namespace: "default".into(),
+            memory_type: "fact".into(),
+            state: "active".into(),
+            revision: 1,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            valid_from: None,
+            valid_until: None,
+        };
+        let out = build_response(
+            &budget,
+            SUPPORTED_TOKENIZER_V1,
+            vec![
+                (hit("u-relevant", -2.0), relevant),
+                (hit("u-other", -1.0), other),
+            ],
+            &SearchFilter::default(),
+            "2026-01-01T00:00:00Z",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            out.items[0].uuid, "u-relevant",
+            "the most relevant fact comes first, even when it is the oldest"
+        );
+    }
+
+    /// The answer declares what it did not include: the candidates the
+    /// budget left out, with the size that explains why they did not fit.
+    /// The agent's cross-check round needs something to look for.
+    #[test]
+    fn the_answer_declares_what_the_budget_left_out() {
+        let m1 = memory("u1", "alpha alpha alpha", "fact", MemoryState::Active);
+        let m2 = memory("u2", "beta beta beta", "fact", MemoryState::Active);
+        let out = select_response(
+            &Budget::new(120, BudgetMode::Exact),
+            SUPPORTED_TOKENIZER_V1,
+            vec![(0.0, m1), (1.0, m2)],
+            false,
+        )
+        .unwrap();
+        assert_eq!(out.coverage.candidates, 2, "the door saw two candidates");
+        assert_eq!(
+            out.coverage.carried,
+            out.items.len(),
+            "the answer says how many it carries"
+        );
+        assert_eq!(
+            out.coverage.left_out,
+            2 - out.coverage.carried,
+            "the answer says how many it left out"
+        );
+        for entry in &out.coverage.left_out_items {
+            assert!(!entry.uuid.is_empty(), "the entry names the record");
+            assert!(
+                entry.bytes > 0,
+                "the entry says how big the fact is: {entry:?}"
+            );
+        }
+        assert_eq!(
+            out.coverage.left_out_items.len(),
+            out.coverage.left_out.min(COVERAGE_ITEM_LIMIT),
+            "the list is the count, up to the limit"
+        );
+    }
+
     #[test]
     fn a_context_item_carries_the_words_of_its_memory() {
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let mut m = memory("u1", "listen on port 8081", "fact", MemoryState::Active);
         m.keywords = vec!["puerto".into(), "port".into()];
-        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m], false).unwrap();
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![(0.0, m)], false).unwrap();
         assert_eq!(out.items.len(), 1);
         assert_eq!(
             out.items[0].keywords,
@@ -490,7 +678,7 @@ mod tests {
     fn a_context_item_with_no_words_reports_the_empty_list() {
         let budget = Budget::new(10_000, BudgetMode::Exact);
         let m = memory("u1", "sin palabras", "fact", MemoryState::Active);
-        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m], false).unwrap();
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![(0.0, m)], false).unwrap();
         let json = serde_json::to_value(&out.items[0]).expect("serialise item");
         assert_eq!(
             json["keywords"],
@@ -504,7 +692,7 @@ mod tests {
         // A budget so small that even the envelope prelude doesn't fit.
         let budget = Budget::new(2, BudgetMode::Exact);
         let m1 = memory("u1", "alpha", "fact", MemoryState::Active);
-        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![m1], false).unwrap();
+        let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, vec![(0.0, m1)], false).unwrap();
         assert!(out.items.is_empty());
         assert!(out.empty_reason.is_some());
     }

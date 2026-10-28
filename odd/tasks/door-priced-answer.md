@@ -102,3 +102,20 @@ against the base commit; only the door's two modes change.
   contract (`a_context_item_carries_the_title`,
   `a_context_item_carries_the_words`,
   `context_exact_mode_returns_items_and_pins_a_07_invariant`).
+- **L6** — **T2 done** (S2, S3). The envelope carries a `coverage` object:
+  `candidates` (what the door saw), `carried` (what it carries), `left_out`
+  (how many the budget cut) and `left_out_items` (up to 10 of them, with
+  `uuid`, `title`, `memory_type` and `bytes` — the size that explains why
+  the fact did not fit). The order fix: the rank now travels with the
+  memory, and the door sorts **bm25 ASC, then created_at ASC** (PRD §9 step
+  6), so the budget keeps the most relevant facts and the declaration names
+  the *least* relevant ones.
+  RED observed first (the field did not exist: nine compile errors naming
+  `coverage` and `COVERAGE_ITEM_LIMIT`). GREEN: 10 context unit tests, the
+  whole Rust suite (710 tests), and the new CLI test
+  `the_doors_answer_declares_what_it_left_out` (4 facts, a 400-token
+  budget: the answer accounts for every candidate and names the ones it
+  cut).
+  A defect the test caught: when **nothing** fit, the answer was empty and
+  had declared only the first candidate — now every candidate is declared,
+  because an empty answer still says why.

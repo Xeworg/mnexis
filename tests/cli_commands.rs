@@ -2627,6 +2627,52 @@ fn the_door_with_full_carries_the_whole_content() {
     assert_eq!(content, long, "the whole content, not the preview");
 }
 
+// --- context: the coverage it declares (door-priced-answer S2) ---
+
+/// The answer says what it did not include: the candidates the budget left
+/// out, with the size that explains why. The agent's cross-check round is a
+/// coverage problem (board item 12), and it needs something to look for.
+#[test]
+fn the_doors_answer_declares_what_it_left_out() {
+    let p = namespaced_profile(&["default"]);
+    let long = "alpha beta gamma delta epsilon zeta eta theta ";
+    for i in 0..4 {
+        save(&p, &format!("{long}the fact number {i}"), &[]);
+    }
+    let out = p
+        .run_silent(&[
+            "context",
+            "--namespace",
+            "default",
+            "--token-budget",
+            "400",
+            "--budget-mode",
+            "exact",
+            "alpha",
+        ])
+        .unwrap_status("context");
+    let json = stdout_json(&out);
+    let coverage = &json["coverage"];
+    let candidates = coverage["candidates"].as_u64().expect("candidates") as usize;
+    let carried = coverage["carried"].as_u64().expect("carried") as usize;
+    let left_out = coverage["left_out"].as_u64().expect("left_out") as usize;
+    assert_eq!(
+        candidates,
+        carried + left_out,
+        "the answer accounts for every candidate: {json}"
+    );
+    assert!(left_out > 0, "the budget cut something: {json}");
+    let entry = &coverage["left_out_items"][0];
+    assert!(
+        entry["uuid"].is_string(),
+        "the entry names the record: {json}"
+    );
+    assert!(
+        entry["bytes"].as_u64().expect("bytes") > 0,
+        "the entry says how big the fact is: {json}"
+    );
+}
+
 // --- context: the namespace it searched (#57) ---
 
 /// The remote of a bound workspace: a fixed identity, so the key the engine
