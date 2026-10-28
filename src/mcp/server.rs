@@ -1,6 +1,6 @@
 //! MCP server implementation (T20; e2-core §3, §8).
 //!
-//! McpServer wraps MemoryService and exposes the 9 memory_* tools via the
+//! McpServer wraps MemoryService and exposes the 17 memory_* tools via the
 //! rmcp ServerHandler interface. Every tool call maps domain errors to
 //! JSON-RPC code -32050 with data.error_code set to the stable label.
 
@@ -86,7 +86,7 @@ pub struct RecallArgs {
     pub full: Option<bool>,
 }
 
-/// The MCP server — owns the MemoryService and exposes 15 tools.
+/// The MCP server — owns the MemoryService and exposes 17 tools.
 ///
 /// All tool functions take `&self`; the Arc<Mutex> provides interior
 /// mutability so the service can be mutated without needing `&mut self`.
@@ -826,7 +826,7 @@ impl McpServer {
 
     #[tool(
         name = "memory_context",
-        description = "Call this FIRST when you are about to work: give it the task in one line and it answers the context in one call — the facts that task needs, each with its identity and a preview of 160 characters, plus the session state of this project (the live project_state and decision records with the content that fits their own budget, the index of the live records that did not fit, and the previous session's summary) and the declaration of what the answer did not include. It searches the namespace this workspace writes into — the one a save lands in — unless you name another one you may read, and the answer names the namespace it searched."
+        description = "Call this FIRST when you are about to work: give it the task in one line and it answers the context in one call — the memories that match the task, best first, each with its identity and a preview of at most 160 characters, never the whole content (open one with memory_get(uuid) when it is the one you need), plus the session state of this project (the live project_state and decision records with the content that fits the block's own budget, the index of the live records that did not fit, and the previous session's summary) and the declaration of what the answer did not include: how many candidates the budget could not keep, and up to ten of them with the size that kept them out. It searches the namespace this workspace writes into — the one a save lands in — unless you name another one you may read, and the answer names the namespace it searched."
     )]
     fn memory_context(
         &self,

@@ -85,3 +85,27 @@ before and after; the CLI's surfaces are untouched.
   (`tmp/bench/reread-report.md`) measured the door and the enumeration as
   the same machine — the agent rebuilds the answer by hand because the
   surface it has does not carry it.
+- **L3** — **T1 done** (S1, S2, S3), implemented by a delegated worker and
+  reviewed by the parent. `memory_context` calls the same
+  `MemoryService::context` the CLI calls and serialises the typed envelope
+  as it is (the only addition is `read_scope`, inserted exactly the way
+  `src/cli/commands.rs::context` inserts it), so the two surfaces cannot
+  drift into two projections of the same facts. The namespace is the
+  workspace's own, resolved with the same `workspace_status` call
+  `memory_workspace` makes.
+  RED: the three new tests failed with `tool not found` and the tool list
+  showed exactly sixteen tools. GREEN: 34 mcp_interop, 1 mcp_harness,
+  clippy and fmt clean.
+  Two review points the worker raised and the parent accepted: the
+  namespace is resolved **fresh per call** (the server also caches it at
+  startup; the fresh resolution matches the CLI's semantics and costs one
+  query plus a workspace probe per door call — once per session), and the
+  four CLI door options the tool does not expose (`memory_type`,
+  `budget_mode`, `full`, `tokenizer_id`) are fixed to the CLI's defaults so
+  the parity test compares like with like.
+- **L4** — **T3 done** (S6): the differential (`tmp/diff-mcp-door.sh`, base
+  `origin/main`, the MCP stdio transport, the same seeded profile) — the
+  **tool list moved** (`memory_context` appears, and it is the only
+  difference) and the six read tools' answers are **byte-identical**:
+  `memory_workspace`, `memory_list`, `memory_search`,
+  `memory_search_prompts`, `memory_suggest_topic_key`, `memory_recall`.

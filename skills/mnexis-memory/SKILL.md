@@ -29,8 +29,8 @@ a session. Each item is the fact's identity and a 160-character preview of
 its content, never the whole record: a preview that was cut carries its
 uuid, and `mnexis show <uuid>` pulls the record whole — `--full` asks for it
 in the same answer. The answer declares what it left out: how many
-candidates the budget could not keep, and the least relevant of them with
-their size. It searches the namespace this workspace writes into — the one a
+candidates the budget could not keep, and the ones that just missed the cut
+with their size. It searches the namespace this workspace writes into — the one a
 save lands in — and the answer names the namespace it searched, so an empty
 answer means this project has nothing, not that the door looked elsewhere.
 If it returns nothing, the project has no memory yet — carry on and record
@@ -95,7 +95,8 @@ the namespace it searched. Its items are priced — identity and a
 160-character preview of the content, never the whole record; the item's
 uuid is the handle `mnexis_show` takes (this tool has no `full` switch). The
 answer declares what it left out: how many candidates the budget could not
-keep, and the least relevant of them with their size. With them comes the
+keep, and the ones that just missed the cut with their size. With them comes
+the
 **session state**: the live `project_state`/`decision` records with the
 content that fits the block's own budget, the index of the live records
 that did not fit, and the previous session's summary. The index is a list of
@@ -283,4 +284,8 @@ with `mnexis restore <uuid>`.
   resolution above still applies — the MCP tools take the namespace as an
   argument. The server also exposes `memory_workspace`, the tool that
   answers "where may I write, and what is already there?" with the same
-  payload as `mnexis status`.
+  payload as `mnexis status`, and `memory_context`, the door: the task in
+  one line, and the answer carries the priced items, the session state and
+  the declaration of what it left out — the same answer `mnexis context`
+  gives. Read that answer before walking the namespace by hand with `list`
+  and `show`.

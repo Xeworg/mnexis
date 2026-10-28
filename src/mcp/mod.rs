@@ -1,7 +1,7 @@
 //! MCP server module (T20; e2-core §3, §8).
 //!
 //! Implements the Model Context Protocol over stdio. Wraps
-//! [`MemoryService`] to expose the 9 memory_* tools to MCP clients.
+//! [`MemoryService`] to expose the 17 memory_* tools to MCP clients.
 //!
 //! Module layout (e2-core §3):
 //! ```text
