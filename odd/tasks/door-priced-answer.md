@@ -120,7 +120,7 @@ against the base commit; only the door's two modes change.
   had declared only the first candidate — now every candidate is declared,
   because an empty answer still says why.
 - **L7** — **T3 done** (S5). The CLI's text answer prints the declaration
-  (`not included: N candidates did not fit the budget (the least relevant
+  (`not included: N candidates did not fit the budget (the closest to the cut
   first)` and one `- [kind] title — uuid (N bytes)` per candidate); the pi
   tool renders the same in English; the chrome draws it for the human. The
   order is the contract: the items, what it left out, the state block, the

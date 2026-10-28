@@ -3,7 +3,8 @@
 //! The argument shapes of the MCP tools: memory_save, memory_get,
 //! memory_list, memory_update, memory_history, memory_supersede,
 //! memory_delete, memory_restore, memory_search, memory_session_start,
-//! memory_session_end, memory_save_prompt and memory_search_prompts.
+//! memory_session_end, memory_save_prompt, memory_search_prompts and
+//! memory_context (the one-call door).
 //!
 //! MCP-required field requirements per e2-core §8:
 //! - memory_supersede: older_uuid, newer_uuid, expected_old_revision,
@@ -178,8 +179,33 @@ pub struct SearchPromptsArgs {
     pub limit: usize,
 }
 
+/// Arguments for `memory_context`: the one-call door.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ContextArgs {
+    /// The task in one line: what you are about to do.
+    pub task: String,
+    /// Namespace to search within (default: the namespace this workspace
+    /// writes into — the one a save lands in).
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Token budget for the response envelope (default 1024).
+    #[serde(default = "default_token_budget")]
+    pub token_budget: i64,
+    /// Maximum items to consider (default 20, capped at 100).
+    #[serde(default = "default_limit")]
+    pub max_items: usize,
+    /// How the task's words are matched: any (default) | all | phrase.
+    #[serde(default)]
+    pub r#match: Option<String>,
+}
+
 pub(crate) fn default_limit() -> usize {
     20
+}
+
+/// The door's default budget, the same one the CLI's `--token-budget` has.
+pub(crate) fn default_token_budget() -> i64 {
+    1024
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -284,6 +310,7 @@ pub const TOOL_MEMORY_SESSION_END: &str = "memory_session_end";
 pub const TOOL_MEMORY_SAVE_PROMPT: &str = "memory_save_prompt";
 pub const TOOL_MEMORY_SEARCH_PROMPTS: &str = "memory_search_prompts";
 pub const TOOL_MEMORY_SUGGEST_TOPIC_KEY: &str = "memory_suggest_topic_key";
+pub const TOOL_MEMORY_CONTEXT: &str = "memory_context";
 
 // ---------------------------------------------------------------------------
 // Helpers

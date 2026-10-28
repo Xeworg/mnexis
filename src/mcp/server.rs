@@ -1,6 +1,6 @@
 //! MCP server implementation (T20; e2-core §3, §8).
 //!
-//! McpServer wraps MemoryService and exposes the 9 memory_* tools via the
+//! McpServer wraps MemoryService and exposes the 17 memory_* tools via the
 //! rmcp ServerHandler interface. Every tool call maps domain errors to
 //! JSON-RPC code -32050 with data.error_code set to the stable label.
 
@@ -19,10 +19,10 @@ use crate::application::ListFilter;
 use crate::domain::idempotency::IdempotencyKey;
 use crate::domain::memory::MemoryLink;
 use crate::mcp::tools::{
-    DeleteArgs, GetArgs, HistoryArgs, ListArgs, McpError, RestoreArgs, SaveArgs, SavePromptArgs,
-    SearchArgs, SearchPromptsArgs, SessionEndArgs, SessionStartArgs, SuggestTopicKeyArgs,
-    SupersedeArgs, UpdateArgs, clamp_limit, parse_keywords, parse_memory_types, parse_state,
-    parse_tags,
+    ContextArgs, DeleteArgs, GetArgs, HistoryArgs, ListArgs, McpError, RestoreArgs, SaveArgs,
+    SavePromptArgs, SearchArgs, SearchPromptsArgs, SessionEndArgs, SessionStartArgs,
+    SuggestTopicKeyArgs, SupersedeArgs, UpdateArgs, clamp_limit, parse_keywords,
+    parse_memory_types, parse_state, parse_tags,
 };
 use crate::mcp::transport::stdio;
 use crate::storage::memory_repo::SqliteMemoryRepository;
@@ -86,7 +86,7 @@ pub struct RecallArgs {
     pub full: Option<bool>,
 }
 
-/// The MCP server — owns the MemoryService and exposes 15 tools.
+/// The MCP server — owns the MemoryService and exposes 17 tools.
 ///
 /// All tool functions take `&self`; the Arc<Mutex> provides interior
 /// mutability so the service can be mutated without needing `&mut self`.
@@ -474,6 +474,77 @@ impl McpServer {
         Ok(serde_json::to_string_pretty(&status).unwrap_or_default())
     }
 
+    /// The one-call door: the task in one line, and one answer with the priced
+    /// facts, the project's state and what the answer left out.
+    ///
+    /// The answer **is** the door's answer: the same `MemoryService::context`
+    /// the CLI calls, serialised as the typed envelope it returns, so the two
+    /// surfaces cannot drift into two projections of the same facts (S2). The
+    /// namespace is the workspace's own — the one a save lands in, resolved by
+    /// the same rule `memory_workspace` answers with — unless the caller names
+    /// one the scope may read (S3). The answer declares the namespace it
+    /// searched, so an empty one cannot read as "this project knows nothing"
+    /// when it looked in another project (#57).
+    fn do_context(&self, args: ContextArgs) -> Result<String, McpError> {
+        use crate::application::budget::BudgetMode;
+        use crate::application::{ContextRequest, SearchFilter};
+
+        let mode = match args.r#match.as_deref() {
+            Some(name) => crate::domain::query::MatchMode::parse(name)?,
+            None => crate::domain::query::MatchMode::default(),
+        };
+        let svc = self
+            .service
+            .lock()
+            .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
+        // The namespace the door searches when the caller names none: the
+        // workspace's own, the one a save lands in (#57). A workspace that
+        // names none leaves the choice to the service's default, exactly like
+        // the CLI's door.
+        let namespace = match args.namespace {
+            Some(namespace) => Some(namespace),
+            None => {
+                crate::application::workspace_status::workspace_status(
+                    &svc,
+                    &self.data_dir,
+                    WORKSPACE_RECENT_LIMIT,
+                )?
+                .workspace
+                .namespace
+            }
+        };
+        // The scope this read is bounded by: the answer declares it, so a
+        // short answer never reads as "there is nothing" (read-scope-disclosure
+        // S4).
+        let read_scope = svc.scope().read_scope_mode();
+        let request = ContextRequest {
+            task: args.task,
+            namespace,
+            match_mode: mode,
+            token_budget: args.token_budget,
+            tokenizer_id: None,
+            max_items: Some(args.max_items.clamp(1, 100)),
+            budget_mode: BudgetMode::Estimated,
+            full: false,
+            search: SearchFilter::default(),
+            now: now_rfc3339_mcp(),
+        };
+        let response = svc.context(&request)?;
+        drop(svc);
+        // The envelope is a typed contract, so it travels as it is: the only
+        // addition is the read scope, inserted exactly the way the CLI inserts
+        // it, so both surfaces answer with one shape.
+        let mut json = serde_json::to_value(&response)
+            .map_err(|e| MnexisError::invalid_argument("context", format!("serialise: {e}")))?;
+        if let Some(object) = json.as_object_mut() {
+            object.insert(
+                "read_scope".to_string(),
+                serde_json::to_value(read_scope).unwrap_or(serde_json::Value::Null),
+            );
+        }
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
+    }
+
     fn do_update(&self, args: UpdateArgs) -> Result<String, McpError> {
         let now = now_rfc3339_mcp();
         let state = args
@@ -751,6 +822,17 @@ impl McpServer {
         Parameters(args): Parameters<SuggestTopicKeyArgs>,
     ) -> Result<String, McpError> {
         self.do_suggest_topic_key(args)
+    }
+
+    #[tool(
+        name = "memory_context",
+        description = "Call this FIRST when you are about to work: give it the task in one line and it answers the context in one call — the memories that match the task, best first, each with its identity and a preview of at most 160 characters, never the whole content (open one with memory_get(uuid) when it is the one you need), plus the session state of this project (the live project_state and decision records with the content that fits the block's own budget, the index of the live records that did not fit, and the previous session's summary) and the declaration of what the answer did not include: how many candidates the budget could not keep, and up to ten of them with the size that kept them out. It searches the namespace this workspace writes into — the one a save lands in — unless you name another one you may read, and the answer names the namespace it searched."
+    )]
+    fn memory_context(
+        &self,
+        Parameters(args): Parameters<ContextArgs>,
+    ) -> Result<String, McpError> {
+        self.do_context(args)
     }
 
     #[tool(

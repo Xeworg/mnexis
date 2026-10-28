@@ -100,10 +100,35 @@ async fn tools_list_contains_all_the_memory_tools_and_no_ping()
         "memory_save_prompt",
         "memory_search_prompts",
         "memory_recall",
+        "memory_context",
     ] {
         assert!(
             names.contains(&tool),
             "tools/list must contain '{tool}', got: {names:?}"
+        );
+    }
+
+    // The door's schema names the arguments the agent has to send, so the
+    // tool is callable without guessing.
+    let context_tool = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "memory_context")
+        .expect("memory_context present in the tool list");
+    let arguments = context_tool
+        .input_schema
+        .get("properties")
+        .and_then(|props| props.as_object())
+        .unwrap_or_else(|| {
+            panic!(
+                "memory_context must declare its arguments: {:?}",
+                context_tool.input_schema
+            )
+        });
+    for argument in ["task", "namespace", "token_budget", "max_items", "match"] {
+        assert!(
+            arguments.contains_key(argument),
+            "memory_context must declare '{argument}', got: {:?}",
+            arguments.keys().collect::<Vec<_>>()
         );
     }
 
@@ -2455,6 +2480,387 @@ async fn memory_recall_is_priced_preview_by_default_full_on_request()
     assert_eq!(
         memories[0]["content"], "el servicio escucha en 8081",
         "the full record is one argument away: {full}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// memory_context: the door in the MCP surface (mcp-door S1, S2, S3)
+// ---------------------------------------------------------------------------
+
+/// The door's answer is the one the CLI prints with `--json`: the priced
+/// items, the session-state block, the coverage declaration and the
+/// declarations of the namespace it searched, the tokens it spent and how far
+/// the read reached (mcp-door S1).
+#[tokio::test]
+async fn memory_context_answers_the_door_with_its_items_state_and_coverage()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile_with_scope(data_dir, "default", "default", true, false)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // A live state record, a fact that does not match the task, and a
+    // finished session: the block has something to carry.
+    let saved = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": "el puerto del servicio es 8081",
+            "title": "donde estamos",
+            "memory_type": "project_state",
+        }),
+    )
+    .await?;
+    let saved: serde_json::Value = serde_json::from_str(&saved)?;
+    let uuid = saved["uuid"].as_str().expect("uuid").to_string();
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": "el despliegue corre en docker",
+            "title": "despliegue",
+        }),
+    )
+    .await?;
+    call_tool_text(
+        &client,
+        "memory_session_start",
+        serde_json::json!({ "session_id": "S1" }),
+    )
+    .await?;
+    call_tool_text(
+        &client,
+        "memory_session_end",
+        serde_json::json!({ "session_id": "S1", "summary": "el puerto del servicio" }),
+    )
+    .await?;
+
+    let text = call_tool_text(
+        &client,
+        "memory_context",
+        serde_json::json!({ "task": "puerto" }),
+    )
+    .await?;
+    let door: serde_json::Value = serde_json::from_str(&text)?;
+
+    // The priced items: identity and a 160-character preview, never a second
+    // copy of the whole text.
+    let items = door["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "only the fact of the task: {door}");
+    let item = &items[0];
+    assert_eq!(item["uuid"], uuid.as_str(), "{door}");
+    assert_eq!(item["title"], "donde estamos", "{door}");
+    assert_eq!(
+        item["preview"], "el puerto del servicio es 8081",
+        "the item carries the preview of the fact: {door}"
+    );
+    assert_eq!(item["namespace"], "default", "{door}");
+    assert_eq!(item["revision"], 1, "{door}");
+    assert!(
+        item.get("content").is_none(),
+        "the door is priced: the whole record is one memory_get away: {door}"
+    );
+
+    // The declarations of the namespace it searched, the tokens it spent and
+    // how far the read reached (#57, read-scope-disclosure S4).
+    assert_eq!(door["searched_namespace"], "default", "{door}");
+    assert_eq!(door["read_scope"], "except_global", "{door}");
+    assert!(
+        door["tokens_used"].as_i64().is_some(),
+        "the answer declares the tokens it spent: {door}"
+    );
+    assert!(
+        door["bytes_used"].as_i64().is_some(),
+        "the answer declares the bytes it spent: {door}"
+    );
+    assert!(
+        door["tokenizer_id"].is_string(),
+        "the answer names its tokenizer: {door}"
+    );
+    assert_eq!(door["budget_enforcement"], "estimated", "{door}");
+    assert!(door["retrieval_mode"].is_string(), "{door}");
+    assert!(door["index_status"].is_string(), "{door}");
+    assert!(door["warnings"].is_array(), "{door}");
+
+    // The session-state block rides the same answer: the live records with
+    // their whole content, the index of what did not fit, the previous
+    // session's summary (call-budget S6).
+    let block = door["session_state"]
+        .as_object()
+        .unwrap_or_else(|| panic!("the door carries the block: {door}"));
+    let records = block["records"].as_array().expect("records array");
+    assert_eq!(records.len(), 1, "the live record of the namespace: {door}");
+    assert_eq!(records[0]["uuid"], uuid.as_str(), "{door}");
+    assert_eq!(
+        records[0]["content"], "el puerto del servicio es 8081",
+        "the block carries the whole content, not the preview: {door}"
+    );
+    assert_eq!(records[0]["memory_type"], "project_state", "{door}");
+    assert_eq!(
+        block["index"],
+        serde_json::json!([]),
+        "nothing was left out of the block: {door}"
+    );
+    assert_eq!(block["session"]["id"], "S1", "{door}");
+    assert_eq!(
+        block["session"]["summary"], "el puerto del servicio",
+        "{door}"
+    );
+
+    // The coverage declaration: what it saw, what it carries, what it left
+    // out (board item 12, M4).
+    assert_eq!(door["coverage"]["candidates"], 1, "{door}");
+    assert_eq!(door["coverage"]["carried"], 1, "{door}");
+    assert_eq!(door["coverage"]["left_out"], 0, "{door}");
+    assert_eq!(
+        door["coverage"]["left_out_items"],
+        serde_json::json!([]),
+        "{door}"
+    );
+
+    // A budget that cannot carry the candidates declares them, with the size
+    // that explains why they did not fit.
+    let text = call_tool_text(
+        &client,
+        "memory_context",
+        serde_json::json!({ "task": "el", "token_budget": 60 }),
+    )
+    .await?;
+    let tight: serde_json::Value = serde_json::from_str(&text)?;
+    let coverage = &tight["coverage"];
+    assert!(
+        coverage["candidates"].as_u64().unwrap_or(0) >= 2,
+        "the door saw both facts: {tight}"
+    );
+    assert!(
+        coverage["left_out"].as_u64().unwrap_or(0) >= 1,
+        "the budget left something out and the answer says so: {tight}"
+    );
+    let left_out = coverage["left_out_items"]
+        .as_array()
+        .expect("left_out_items array");
+    assert!(
+        !left_out.is_empty(),
+        "the declaration names what it left out: {tight}"
+    );
+    assert!(left_out[0]["uuid"].is_string(), "{tight}");
+    assert!(
+        left_out[0]["bytes"].as_u64().is_some_and(|bytes| bytes > 0),
+        "the entry says how big the fact was: {tight}"
+    );
+
+    // The `match` argument decides how the task's words are matched, and an
+    // answer that carries nothing still declares where it looked (#57).
+    let text = call_tool_text(
+        &client,
+        "memory_context",
+        serde_json::json!({ "task": "docker 8081", "match": "all" }),
+    )
+    .await?;
+    let strict: serde_json::Value = serde_json::from_str(&text)?;
+    assert!(
+        strict["items"].as_array().expect("items array").is_empty(),
+        "no single fact carries both words: {strict}"
+    );
+    assert_eq!(strict["searched_namespace"], "default", "{strict}");
+    let text = call_tool_text(
+        &client,
+        "memory_context",
+        serde_json::json!({ "task": "docker 8081" }),
+    )
+    .await?;
+    let loose: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(
+        loose["items"].as_array().expect("items array").len(),
+        2,
+        "the default match counts every term: {loose}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+/// One implementation, two surfaces: the tool calls the same
+/// `MemoryService::context` the CLI calls, so the two answers are the same
+/// envelope, not two projections of the same facts (mcp-door S2).
+#[tokio::test]
+async fn memory_context_answers_the_same_envelope_as_the_cli()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": "el puerto del servicio es 8081",
+            "title": "donde estamos",
+            "memory_type": "project_state",
+        }),
+    )
+    .await?;
+
+    let text = call_tool_text(
+        &client,
+        "memory_context",
+        serde_json::json!({ "task": "puerto" }),
+    )
+    .await?;
+    let door: serde_json::Value = serde_json::from_str(&text)?;
+
+    // The same question through the CLI's `--json` envelope.
+    let cli = std::process::Command::new(&binary)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .args(["--json", "context", "puerto"])
+        .output()?;
+    assert!(
+        cli.status.success(),
+        "context failed: {}",
+        String::from_utf8_lossy(&cli.stderr)
+    );
+    let cli_door: serde_json::Value = serde_json::from_slice(&cli.stdout)?;
+
+    assert_eq!(
+        door, cli_door,
+        "the door answers the same envelope in both surfaces"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+/// The namespace is the workspace's own — the one a save lands in — never
+/// another project's; a caller may still name one the scope may read
+/// (mcp-door S3).
+#[tokio::test]
+async fn memory_context_searches_the_workspaces_own_namespace()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    // The profile's default namespace is not the one the workspace writes
+    // into: only the workspace's own namespace holds the record below, and
+    // only the binding opens it for reading.
+    bootstrap_profile_with_scope(data_dir, "default", "mnexis", false, false)?;
+
+    // A workspace bound to `mnexis`, exactly like a real project.
+    let workspace = tempfile::tempdir_in("target")?;
+    let git = |args: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(workspace.path())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()?;
+        assert!(status.success(), "git {args:?} failed");
+        Ok(())
+    };
+    git(&["init", "-q", "."])?;
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/Xeworg/mnexis.git",
+    ])?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let bound = std::process::Command::new(&binary)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .args([
+            "project",
+            "bind",
+            "mnexis",
+            "--key",
+            "git:github.com/Xeworg/mnexis",
+        ])
+        .output()?;
+    assert!(
+        bound.status.success(),
+        "bind failed: {}",
+        String::from_utf8_lossy(&bound.stderr)
+    );
+
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir")
+                .arg(data_dir)
+                .arg("mcp")
+                .arg("serve")
+                .current_dir(workspace.path());
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // One record, in the namespace the workspace writes into.
+    let saved = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({
+            "content": "el puerto del servicio es 8081",
+            "namespace": "mnexis",
+        }),
+    )
+    .await?;
+    let saved: serde_json::Value = serde_json::from_str(&saved)?;
+    let uuid = saved["uuid"].as_str().expect("uuid").to_string();
+
+    // Without a namespace the door searches the workspace's own namespace —
+    // the one a save lands in — and the answer names it. Before this rule the
+    // engine searched the profile's default namespace and answered another
+    // project's memories, in silence (#57).
+    let text = call_tool_text(
+        &client,
+        "memory_context",
+        serde_json::json!({ "task": "puerto" }),
+    )
+    .await?;
+    let door: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(
+        door["searched_namespace"], "mnexis",
+        "the door names the namespace it searched: {door}"
+    );
+    let items = door["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "the record of the workspace: {door}");
+    assert_eq!(items[0]["uuid"], uuid.as_str(), "{door}");
+    assert_eq!(items[0]["namespace"], "mnexis", "{door}");
+    assert_eq!(
+        door["read_scope"], "restricted",
+        "the read scope still bounds the answer: {door}"
+    );
+
+    // A namespace the caller names is the one searched, and the answer names
+    // it too: the other project holds nothing with this task.
+    let text = call_tool_text(
+        &client,
+        "memory_context",
+        serde_json::json!({ "task": "puerto", "namespace": "default" }),
+    )
+    .await?;
+    let door: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(
+        door["searched_namespace"], "default",
+        "the caller's namespace wins over the workspace's: {door}"
+    );
+    assert!(
+        door["items"].as_array().expect("items array").is_empty(),
+        "the other project has no record of this task: {door}"
     );
 
     client.cancel().await?;

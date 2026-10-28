@@ -101,7 +101,7 @@ reports `candidates` (what the door saw), `carried` (what it carries) and
 `left_out_items` — `uuid`, `title`, `memory_type` and `bytes`, the content's
 size that explains why it did not fit. The door keeps the most relevant
 facts that fit (bm25 ASC, then created_at ASC), so what it names as left out
-is the least relevant.
+are the ones that just missed the cut.
 
 Its answer also carries the **session state**, in a budget of its own: the
 block holds the namespace's **live** `project_state` and `decision` records
@@ -123,6 +123,14 @@ which is the property the call-budget experiment measured. An empty block —
 a project that recorded no state, or a namespace the profile may write but
 not read — draws nothing at all: that answer is exactly what the door always
 answered, never an error and never a `null`.
+
+The MCP server the binary ships exposes the same door as `memory_context`:
+the task in one line, an optional `namespace`, the token budget and how the
+task's words are matched, and the same answer — the priced items, the
+session state and the coverage declaration, from the same engine call. A
+host without the extension (opencode, and the codex and claude code
+integrations to come) meets one shape, not a second projection of the same
+facts.
 
 Writes are not: `mnexis_save` always targets the workspace namespace, and
 `mnexis_supersede` refuses a memory that lives in another project. The

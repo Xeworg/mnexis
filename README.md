@@ -79,8 +79,7 @@ mnexis status                                             # namespace, allowlist
 The door is priced: each item is the fact's identity and a 160-character
 preview of its content — `mnexis show <uuid>` pulls the whole record, and
 `--full` asks for it in the same answer — and the answer declares what it
-left out, naming the least relevant candidates the budget could not keep
-with their size.
+left out, naming the candidates that just missed the cut, with their size.
 
 The engine also keeps what a repository cannot: the session the agent runs
 in, and what the user said.
@@ -272,19 +271,29 @@ command line. Example `mcp.json` entry:
 }
 ```
 
-The server exposes 14 tools (`memory_save`, `memory_get`,
+The server exposes 17 tools (`memory_save`, `memory_get`,
 `memory_list`, `memory_update`, `memory_history`, `memory_supersede`,
 `memory_delete`, `memory_restore`, `memory_search`, `memory_workspace`,
 `memory_session_start`, `memory_session_end`, `memory_save_prompt`,
-`memory_search_prompts`).
+`memory_search_prompts`, `memory_suggest_topic_key`, `memory_recall`,
+`memory_context`).
 `memory_save` takes the same identity the CLI takes: `title`, `keywords`
 (the comma-separated words of the fact) and `replace_keywords`.
 `memory_workspace` answers "where may I write, and what is already there?"
 with the same payload as `mnexis status`: the bound namespace, the read and
 write allowlists, the memory count and the most recent memories — each with
-its identity and a preview, never the whole record (#53). All errors
-map to JSON-RPC code `-32050` with `data.error_code` carrying the stable
-label.
+its identity and a preview, never the whole record (#53).
+`memory_context` is the door: give it the task in one line and the answer is
+the one `mnexis context --json` prints — the memories that match the task,
+best first, each with its identity and a 160-character preview, never the
+whole content; the session state (the live `project_state`/`decision`
+records with the content that fits the block's budget, the index of what did
+not fit, and the previous session's summary); the coverage declaration (how
+many candidates the budget left out, and up to ten of them with the size that
+kept them out) and the namespace it searched. It searches the namespace this
+workspace writes into — the one a save lands in — unless the caller names
+another one it may read. All errors map to JSON-RPC code `-32050` with
+`data.error_code` carrying the stable label.
 
 ## Testing
 
