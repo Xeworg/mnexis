@@ -159,7 +159,7 @@ export function coverageLines(coverage) {
 	}
 	const plural = (count) => `${count} candidate${count === 1 ? "" : "s"}`;
 	const lines = [
-		`Not included: ${plural(leftOut)} did not fit the budget (the least relevant first).`,
+		`Not included: ${plural(leftOut)} did not fit the budget (the closest to the cut first).`,
 	];
 	for (const item of items) {
 		const kind = item?.memory_type ?? "fact";

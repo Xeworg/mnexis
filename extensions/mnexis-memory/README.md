@@ -18,7 +18,7 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 | Tool | Purpose |
 | --- | --- |
 | `mnexis_workspace` | First call of a session: the namespace this workspace writes into, the allowlists, and the most recent memories — each with its title and a preview, never the whole record. |
-| `mnexis_context` | The one-call door: the task in one line, and the memories this project recorded that matter for it, trimmed to a token budget — plus the **session state** (the live `project_state`/`decision` records with the content that fits the block's own 2048-token budget, the index of the live records that did not fit, and the previous session's summary), so one call answers "where did we leave off". Each item is identity and a preview — `mnexis_show` is the handle — and the answer declares the namespace it searched, the tokens it spent, and the candidates the budget could not keep, with their size. |
+| `mnexis_context` | The one-call door: the task in one line, and the memories this project recorded that matter for it, trimmed to a token budget — whole facts, never a cut one — plus the **session state** (the live `project_state`/`decision` records with the content that fits the block's own 2048-token budget, the index of the live records that did not fit, and the previous session's summary), so one call answers "where did we leave off". Each item is the fact whole — identity and entire content — and the answer declares the namespace it searched, the tokens it spent, and the candidates the budget could not keep, with their size. |
 | `mnexis_save` | Store a durable, self-contained memory about the project, with the `type` of fact it is when the agent knows it: one of `knowledge`, `decision`, `preference`, `procedure`, `project_state`, `episode`, `fact` (optional, so the engine decides otherwise). |
 | `mnexis_search` | Full-text search over the stored memories (ranked), narrowed by `type` when only some kinds matter. |
 | `mnexis_list` | List what is already stored, narrowed by `type` when only some kinds matter. |
@@ -92,16 +92,17 @@ then never another project's silence. It takes `namespace` when the
 question is about another project, and `token_budget` when the default
 budget is not the one wanted.
 
-Its answer is priced and its coverage is declared: each item carries the
-fact's identity (`uuid`, `title`, `keywords`, `memory_type` and the rest)
-and a 160-character preview of its content, never the whole record, which
-is one `mnexis_show` away — this tool has no `full` switch. `coverage`
-reports `candidates` (what the door saw), `carried` (what it carries) and
-`left_out` (what the budget cut), with up to ten of the left-out records in
+Its answer carries whole facts, and its coverage is declared: each item
+carries the fact's identity (`uuid`, `title`, `keywords`, `memory_type` and
+the rest) and its entire content, never a cut one — the budget decides which
+facts fit, not how much of a fact you see, and this tool has no `full`
+switch because there is nothing left to ask for. `coverage` reports
+`candidates` (what the door saw), `carried` (what it carries) and `left_out`
+(what the budget cut), with up to ten of the left-out records in
 `left_out_items` — `uuid`, `title`, `memory_type` and `bytes`, the content's
-size that explains why it did not fit. The door keeps the most relevant
-facts that fit (bm25 ASC, then created_at ASC), so what it names as left out
-is the least relevant.
+size that explains why it did not fit, the ones closest to the cut first.
+The door keeps the most relevant facts that fit (bm25 ASC, then created_at
+ASC), so what it names as left out is the least relevant.
 
 Its answer also carries the **session state**, in a budget of its own: the
 block holds the namespace's **live** `project_state` and `decision` records

@@ -246,7 +246,7 @@ pub fn coverage_lines(coverage: &Coverage) -> Vec<String> {
         }
     };
     let mut lines = vec![format!(
-        "not included: {} {} did not fit the budget (the least relevant first)",
+        "not included: {} {} did not fit the budget (the closest to the cut first)",
         coverage.left_out,
         plural(coverage.left_out)
     )];

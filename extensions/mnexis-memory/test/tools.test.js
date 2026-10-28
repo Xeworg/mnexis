@@ -1578,7 +1578,7 @@ const ANSWER_WITHOUT_BLOCK = `1. ${JSON.stringify(DOOR_ITEM)}\nNamespace searche
 
 /** What the door declares about what it left out (door-priced-answer S2). */
 const COVERAGE_TEXT =
-	"Not included: 2 candidates did not fit the budget (the least relevant first).\n" +
+	"Not included: 2 candidates did not fit the budget (the closest to the cut first).\n" +
 	"- [fact] el puerto viejo — m2 (412 bytes)";
 
 /** The door's answer with the coverage it declares and no state block. */
