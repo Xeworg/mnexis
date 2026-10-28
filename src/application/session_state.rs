@@ -123,7 +123,7 @@ fn serialise_records(records: &[StateRecord]) -> String {
     serde_json::to_string(records).expect("the resident part serialises")
 }
 
-/// One state record, with the content the priced preview would have cut.
+/// One state record, with the whole content: the block never cuts a record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StateRecord {
     /// The memory's stable identifier, as `mnexis show` expects it.

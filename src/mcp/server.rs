@@ -525,7 +525,6 @@ impl McpServer {
             tokenizer_id: None,
             max_items: Some(args.max_items.clamp(1, 100)),
             budget_mode: BudgetMode::Estimated,
-            full: false,
             search: SearchFilter::default(),
             now: now_rfc3339_mcp(),
         };

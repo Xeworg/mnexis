@@ -173,7 +173,6 @@ fn context_returns_items_in_budget_with_exact_enforcement() {
         tokenizer_id: Some(SUPPORTED_TOKENIZER_V1.into()),
         max_items: Some(10),
         budget_mode: BudgetMode::Exact,
-        full: false,
         search: SearchFilter::default(),
         now: "2026-01-01T00:00:00Z".into(),
     };
@@ -207,7 +206,6 @@ fn context_estimated_mode_keeps_estimated_label() {
         tokenizer_id: None,
         max_items: Some(10),
         budget_mode: BudgetMode::Estimated,
-        full: false,
         search: SearchFilter::default(),
         now: "2026-01-01T00:00:00Z".into(),
     };
@@ -236,7 +234,6 @@ fn context_refuses_to_exceed_budget_in_exact_mode() {
         tokenizer_id: Some(SUPPORTED_TOKENIZER_V1.into()),
         max_items: Some(10),
         budget_mode: BudgetMode::Exact,
-        full: false,
         search: SearchFilter::default(),
         now: "2026-01-01T00:00:00Z".into(),
     };
@@ -266,7 +263,6 @@ fn context_dedupes_same_topic_key() {
         tokenizer_id: Some(SUPPORTED_TOKENIZER_V1.into()),
         max_items: Some(10),
         budget_mode: BudgetMode::Exact,
-        full: false,
         search: SearchFilter::default(),
         now: "2026-01-01T00:00:00Z".into(),
     };
