@@ -6,6 +6,7 @@
 
 use serde_json::{Value, to_string_pretty};
 
+use crate::application::{ContextItem, ContextResponse, SessionState};
 use crate::domain::error::MnexisError;
 use crate::domain::memory::{Memory, MemoryHistory};
 use crate::domain::scope::ReadScopeMode;
@@ -162,6 +163,113 @@ pub fn read_scope_line(mode: ReadScopeMode) -> String {
 /// never reads like a complete one.
 pub fn with_read_scope(text: impl Into<String>, mode: ReadScopeMode) -> String {
     format!("{}\n{}", text.into(), read_scope_line(mode))
+}
+
+/// The door's text answer: the items, then the session-state block.
+///
+/// The CLI's stdout is the machine channel of every agent that has no tool
+/// (this extension, opencode, and the codex and claude code integrations
+/// still to come), so the text is the answer and not a header: the items
+/// with their content, and the block with the live state that fits its
+/// budget and the index of the live records that did not fit.
+///
+/// One physical line per fact, always: the identity before the text, the
+/// text folded with [`one_line`].
+pub fn context_answer(response: &ContextResponse, mode: ReadScopeMode) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    // The text says where the door looked, the same way the envelope
+    // does: a human reading "no items selected" has to know whether the
+    // project has no memories or the search looked elsewhere.
+    let searched = if response.searched_namespace.is_empty() {
+        "none".to_string()
+    } else {
+        response.searched_namespace.clone()
+    };
+    if response.items.is_empty() {
+        lines.push(format!("no items selected (namespace={searched})"));
+    } else {
+        lines.push(format!(
+            "selected {} items (tokens={}, namespace={searched})",
+            response.items.len(),
+            response.tokens_used
+        ));
+    }
+    for (index, item) in response.items.iter().enumerate() {
+        lines.push(context_item_line(index + 1, item));
+    }
+    if let Some(state) = &response.session_state {
+        // A block with nothing in it is not worth the lines the agent
+        // pays for: a project that recorded no state answers exactly what
+        // the door always answered.
+        if !state.records.is_empty() || !state.index.is_empty() || state.session.is_some() {
+            lines.extend(session_state_lines(state));
+        }
+    }
+    with_read_scope(lines.join("\n"), mode)
+}
+
+/// One line per item of the door's answer: the identity, then the text.
+pub fn context_item_line(position: usize, item: &ContextItem) -> String {
+    let mut line = format!("{position}. ");
+    if !item.topic_key.is_empty() {
+        line.push_str(&format!("[{}] ", item.topic_key));
+    }
+    if !item.title.is_empty() {
+        line.push_str(&format!("{} — ", item.title));
+    }
+    line.push_str(&one_line(&item.content));
+    line
+}
+
+/// The block's lines: the live records that fit the budget, the index of
+/// the ones that did not, and the session before this one.
+///
+/// The index is what the budget left out, and it is never silent: the
+/// agent sees that the state exists and pulls one with `mnexis show <uuid>`.
+pub fn session_state_lines(state: &SessionState) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let plural = |count: usize| if count == 1 { "record" } else { "records" };
+    lines.push(format!(
+        "session state: {} {}, {} of {} tokens",
+        state.records.len(),
+        plural(state.records.len()),
+        state.resident_tokens,
+        state.budget
+    ));
+    for record in &state.records {
+        lines.push(format!(
+            "- [{}] {} — {}",
+            record.memory_type,
+            record.title,
+            one_line(&record.content)
+        ));
+    }
+    if !state.index.is_empty() {
+        lines.push(format!(
+            "indexed: {} {} did not fit the budget (pull one with mnexis show <uuid>)",
+            state.index.len(),
+            plural(state.index.len())
+        ));
+        for entry in &state.index {
+            lines.push(format!(
+                "- [{}] {} — {} ({})",
+                entry.memory_type, entry.title, entry.uuid, entry.created_at
+            ));
+        }
+    }
+    if let Some(session) = &state.session {
+        let mut line = format!("session: {}", session.id);
+        if let Some(ended) = &session.ended_at {
+            line.push_str(&format!(" ended {ended}"));
+        }
+        if let Some(summary) = &session.summary
+            && !summary.is_empty()
+        {
+            line.push_str(&format!(" — {}", one_line(summary)));
+        }
+        lines.push(line);
+    }
+    lines
 }
 
 /// One line per memory, matching the e2-core §7 sample:
