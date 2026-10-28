@@ -174,7 +174,7 @@ if (args[0] === "project" && args[1] === "list") {
 				title: "puerto del servicio",
 				keywords: ["puerto"],
 				namespace: workspace,
-				content: "el puerto es 8081",
+				preview: "el puerto es 8081",
 				memory_type: "fact",
 				state: "active",
 				revision: 1,
@@ -193,6 +193,24 @@ if (args[0] === "project" && args[1] === "list") {
 		warnings: ["lexical_estimation"],
 		empty_reason: null,
 	};
+	// The coverage the door declares: what it did not include. An engine
+	// that predates it sends no coverage (MNEXIS_FAKE_NO_COVERAGE), and
+	// then the answer says nothing.
+	if (!process.env.MNEXIS_FAKE_NO_COVERAGE) {
+		payload.coverage = {
+			candidates: 3,
+			carried: 1,
+			left_out: 2,
+			left_out_items: [
+				{
+					uuid: "m2",
+					title: "el puerto viejo",
+					memory_type: "fact",
+					bytes: 412,
+				},
+			],
+		};
+	}
 	if (scope) {
 		payload.read_scope = scope;
 	}
@@ -1507,7 +1525,7 @@ const DOOR_ITEM = {
 	title: "puerto del servicio",
 	keywords: ["puerto"],
 	namespace: "mnexis",
-	content: "el puerto es 8081",
+	preview: "el puerto es 8081",
 	memory_type: "fact",
 	state: "active",
 	revision: 1,
@@ -1516,8 +1534,18 @@ const DOOR_ITEM = {
 	created_at: "2026-01-01T00:00:00Z",
 };
 
-/** What the door answered before the block existed: items, then the declaration. */
+/** What the door answered before the block and the coverage existed: the
+ * items, then the declaration. */
 const ANSWER_WITHOUT_BLOCK = `1. ${JSON.stringify(DOOR_ITEM)}\nNamespace searched: mnexis. Tokens: 147.`;
+
+/** What the door declares about what it left out (door-priced-answer S2). */
+const COVERAGE_TEXT =
+	"Not included: 2 candidates did not fit the budget (the least relevant first).\n" +
+	"- [fact] el puerto viejo — m2 (412 bytes)";
+
+/** The door's answer with the coverage it declares and no state block. */
+const ANSWER_WITH_COVERAGE =
+	`1. ${JSON.stringify(DOOR_ITEM)}\n${COVERAGE_TEXT}\nNamespace searched: mnexis. Tokens: 147.`;
 
 test("the door's answer carries the session state between the items and the declaration", async () => {
 	const { tools, pi } = fakeHost();
@@ -1619,10 +1647,12 @@ test("the door's answer carries the session state between the items and the decl
 
 test("an answer without a session state renders exactly as the door always did", async () => {
 	// The extension is installed independently of the binary: an engine that
-	// predates the block sends no `session_state`, and the answer must be
+	// predates the block sends no `session_state`, and an engine that
+	// predates the coverage sends no `coverage`; the answer must be
 	// byte-identical to the one the tool gave before (bridge, no error, no
 	// empty block, no null).
 	process.env.MNEXIS_FAKE_NO_STATE = "1";
+	process.env.MNEXIS_FAKE_NO_COVERAGE = "1";
 	try {
 		const { tools, pi } = fakeHost();
 		mnexisMemory(pi);
@@ -1649,6 +1679,80 @@ test("an answer without a session state renders exactly as the door always did",
 		);
 	} finally {
 		delete process.env.MNEXIS_FAKE_NO_STATE;
+		delete process.env.MNEXIS_FAKE_NO_COVERAGE;
+	}
+});
+
+test("the answer declares what it left out", async () => {
+	// The door's answer says what it did not include: the candidates the
+	// budget could not keep, with the size that explains why. The agent's
+	// cross-check round is a coverage problem, and it needs something to
+	// look for (door-priced-answer S2).
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const contextTool = tools.get("mnexis_context");
+
+	const result = await contextTool.execute(
+		"t-context-coverage",
+		{ task: "el puerto" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.notEqual(result.isError, true);
+	const text = String(result.content?.[0]?.text ?? "");
+	assert.match(
+		text,
+		/Not included: 2 candidates did not fit the budget/,
+		`the answer declares what it left out: ${text}`,
+	);
+	assert.match(
+		text,
+		/el puerto viejo — m2 \(412 bytes\)/,
+		`and names the record with its size: ${text}`,
+	);
+	assert.equal(
+		result.details?.coverage?.left_out,
+		2,
+		`the payload carries the coverage: ${JSON.stringify(result.details)}`,
+	);
+	assert.equal(
+		result.details?.coverage?.left_out_items?.[0]?.uuid,
+		"m2",
+		`and the record it left out: ${JSON.stringify(result.details)}`,
+	);
+});
+
+test("an answer without a coverage declares nothing", async () => {
+	// An engine that predates the coverage sends none: the answer says
+	// nothing about what it left out, and the chrome is given nothing to
+	// draw.
+	process.env.MNEXIS_FAKE_NO_COVERAGE = "1";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const contextTool = tools.get("mnexis_context");
+
+		const result = await contextTool.execute(
+			"t-context-no-coverage",
+			{ task: "el puerto" },
+			undefined,
+			undefined,
+			context(),
+		);
+		assert.notEqual(result.isError, true);
+		const text = String(result.content?.[0]?.text ?? "");
+		assert.ok(
+			!text.includes("Not included:"),
+			`an older engine's answer says nothing: ${text}`,
+		);
+		assert.equal(
+			result.details?.coverage,
+			undefined,
+			`and the chrome is given nothing to draw: ${JSON.stringify(result.details)}`,
+		);
+	} finally {
+		delete process.env.MNEXIS_FAKE_NO_COVERAGE;
 	}
 });
 
@@ -1672,7 +1776,7 @@ test("an empty session state draws no block", async () => {
 		const text = String(result.content?.[0]?.text ?? "");
 		assert.equal(
 			text,
-			ANSWER_WITHOUT_BLOCK,
+			ANSWER_WITH_COVERAGE,
 			`an empty block says nothing: ${JSON.stringify(text)}`,
 		);
 		assert.equal(

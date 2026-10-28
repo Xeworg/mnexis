@@ -205,6 +205,7 @@ export function resultLines(toolName, result, options = {}) {
 			break;
 		case "mnexis_context":
 			lines.push(...itemLines(details.memories ?? details.hits ?? []));
+			lines.push(...coverageLines(details.coverage));
 			lines.push(...stateLines(details.session_state));
 			break;
 		case "mnexis_recall":
@@ -520,6 +521,31 @@ function stateLines(block) {
 		if (typeof session.summary === "string" && session.summary !== "") {
 			lines.push(...indentLines(session.summary));
 		}
+	}
+	return lines;
+}
+
+/**
+ * What the answer did not include: the candidates the budget could not keep.
+ *
+ * The human reads the same coverage the agent reads: the count, and the
+ * records with the size that explains why they did not fit.
+ */
+function coverageLines(coverage) {
+	if (!coverage || typeof coverage !== "object") return [];
+	const items = Array.isArray(coverage.left_out_items) ? coverage.left_out_items : [];
+	const leftOut = typeof coverage.left_out === "number" ? coverage.left_out : items.length;
+	if (leftOut === 0 && items.length === 0) return [];
+
+	const lines = [`not included · ${counted(leftOut, "candidate")} did not fit the budget`];
+	for (const entry of items) {
+		const type = entry?.memory_type ?? "fact";
+		const uuid = shortUuid(entry?.uuid);
+		const bytes = typeof entry?.bytes === "number" ? entry.bytes : 0;
+		const said = [entry?.title, uuid ? `· ${uuid}` : "", `· ${bytes} bytes`]
+			.filter((part) => typeof part === "string" && part !== "")
+			.join(" ");
+		lines.push(said === "" ? typeIcon(type) : `${typeIcon(type)} ${truncate(said, PREVIEW_MAX)}`);
 	}
 	return lines;
 }

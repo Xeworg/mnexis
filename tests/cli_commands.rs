@@ -2673,6 +2673,41 @@ fn the_doors_answer_declares_what_it_left_out() {
     );
 }
 
+// --- context: the coverage the text answer declares (door-priced-answer S5) ---
+
+/// The text answer is the machine channel of every agent that has no tool,
+/// so it declares what it left out too: the agent's cross-check round is a
+/// coverage problem and it needs something to look for.
+#[test]
+fn the_text_of_the_door_declares_what_it_left_out() {
+    let p = namespaced_profile(&["default"]);
+    let long = "alpha beta gamma delta epsilon zeta eta theta ";
+    for i in 0..4 {
+        save(&p, &format!("{long}the fact number {i}"), &[]);
+    }
+    let out = p
+        .run_text(&[
+            "context",
+            "--namespace",
+            "default",
+            "--token-budget",
+            "400",
+            "--budget-mode",
+            "exact",
+            "alpha",
+        ])
+        .unwrap_status("context text");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("not included:"),
+        "the text declares what it left out: {text}"
+    );
+    assert!(
+        text.contains("bytes)"),
+        "the entry says how big the fact was: {text}"
+    );
+}
+
 // --- context: the namespace it searched (#57) ---
 
 /// The remote of a bound workspace: a fixed identity, so the key the engine

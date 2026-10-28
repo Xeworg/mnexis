@@ -612,6 +612,45 @@ test("the door shows the content of the records it answers with", () => {
 	assert.match(lines[1], /the board is in odd\/next\.md/, `the content is there: ${lines[1]}`);
 });
 
+test("the door draws what it did not include", () => {
+	// The human reads the same coverage the agent reads: the candidates the
+	// budget could not keep, and the size that explains why.
+	const lines = resultLines(
+		"mnexis_context",
+		{
+			details: {
+				count: 1,
+				memories: [
+					{ uuid: "7f5561f7-7493-44c9-b594-3ea1c8c5519e", memory_type: "fact", preview: "el puerto es 8081" },
+				],
+				coverage: {
+					candidates: 3,
+					carried: 1,
+					left_out: 2,
+					left_out_items: [
+						{
+							uuid: "aaaa1111-2222-3333-4444-555566667777",
+							title: "el puerto viejo",
+							memory_type: "fact",
+							bytes: 412,
+						},
+					],
+				},
+			},
+		},
+		{ expanded: true },
+	);
+	const drawn = lines.join("\n");
+	assert.ok(
+		lines.some((line) => line.includes("not included · 2 candidates did not fit the budget")),
+		`the panel says what it left out: ${drawn}`,
+	);
+	assert.ok(
+		lines.some((line) => line.includes("el puerto viejo") && line.includes("412 bytes")),
+		`and names the record with its size: ${drawn}`,
+	);
+});
+
 test("an expanded door draws the session state: its records and its index", () => {
 	// The block rides the answer's details, so the panel is the only view the
 	// human has of what the agent was handed: the records with their content,

@@ -22,7 +22,9 @@ pub use agents::{
     EnvironmentStatus, FileAction, InstallReport, InstalledAsset, InstalledFile, StatusReport,
 };
 pub use budget::{Budget, BudgetMode, SUPPORTED_TOKENIZER_V1, token_count_v1};
-pub use context::{ContextItem, ContextRequest, ContextResponse, SearchFilter};
+pub use context::{
+    ContextItem, ContextRequest, ContextResponse, Coverage, OmittedItem, SearchFilter,
+};
 pub use io::ConflictPolicy;
 pub use opencode_config::{ConfigAction, ConfigOutcome, OpencodeConfig};
 pub use preview::{MemoryPreview, previews};

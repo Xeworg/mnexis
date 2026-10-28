@@ -6,7 +6,7 @@
 
 use serde_json::{Value, to_string_pretty};
 
-use crate::application::{ContextItem, ContextResponse, SessionState};
+use crate::application::{ContextItem, ContextResponse, Coverage, SessionState};
 use crate::domain::error::MnexisError;
 use crate::domain::memory::{Memory, MemoryHistory};
 use crate::domain::scope::ReadScopeMode;
@@ -197,6 +197,9 @@ pub fn context_answer(response: &ContextResponse, mode: ReadScopeMode) -> String
     for (index, item) in response.items.iter().enumerate() {
         lines.push(context_item_line(index + 1, item));
     }
+    // What the answer did not include: the agent's cross-check round is a
+    // coverage problem, and it needs something to look for.
+    lines.extend(coverage_lines(&response.coverage));
     if let Some(state) = &response.session_state {
         // A block with nothing in it is not worth the lines the agent
         // pays for: a project that recorded no state answers exactly what
@@ -234,6 +237,37 @@ pub fn context_item_line(position: usize, item: &ContextItem) -> String {
     let text = item.content.as_deref().unwrap_or(&item.preview);
     line.push_str(&one_line(text));
     line
+}
+
+/// The declaration of what the answer left out: the candidates the budget
+/// could not keep, with the size that explains why.
+///
+/// Nothing is declared when the answer left nothing out: a declaration that
+/// says "nothing was left out" on every answer is noise the agent pays for
+/// on every call.
+pub fn coverage_lines(coverage: &Coverage) -> Vec<String> {
+    if coverage.left_out == 0 && coverage.left_out_items.is_empty() {
+        return Vec::new();
+    }
+    let plural = |count: usize| {
+        if count == 1 {
+            "candidate"
+        } else {
+            "candidates"
+        }
+    };
+    let mut lines = vec![format!(
+        "not included: {} {} did not fit the budget (the least relevant first)",
+        coverage.left_out,
+        plural(coverage.left_out)
+    )];
+    for entry in &coverage.left_out_items {
+        lines.push(format!(
+            "- [{}] {} — {} ({} bytes)",
+            entry.memory_type, entry.title, entry.uuid, entry.bytes
+        ));
+    }
+    lines
 }
 
 /// The block's lines: the live records that fit the budget, the index of
