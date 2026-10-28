@@ -250,3 +250,41 @@ not reach the agent** in the surfaces the agent actually reads.
   the newest records whole and index the rest, and the index names every
   one of them with the uuid that pulls it. The resident mass now has a
   ceiling, and the ceiling is declared.
+- L9 (2026-10-27): the review. The native assessment (`assess`, escalating
+  item 3 because the shared SQL helper changed) returned **high risk** and
+  a plan with two parts: the writer self-verifies and **an independent
+  verifier runs**. The independent verifier **failed on infrastructure**
+  — the pi process died with a stream write error, not with a finding — so
+  it is reported as **unavailable** and was not relaunched. The parent's
+  own verification took its place, question by question:
+  1. **The shared helper.** `filter_sql`'s `state: Option<&String>`
+     became `states: &[String]`, and every caller was checked:
+     `list_in` and `list_in_typed` pass the one state they were given
+     (`state IN (?)` with one element is `state = ?`), `list_deleted`,
+     `list_recent` and `count_in` pass an empty set, which is the "no
+     filter" they had before. No query changed its semantics.
+  2. **The filter and the limit.** The state filter is in the WHERE
+     clause (`src/storage/memory_repo.rs`, `filter_sql`), and the LIMIT
+     is applied by the query that wraps it — a superseded record cannot
+     crowd a live one out.
+  3. **The fill.** A candidate that does not fit is popped back out of
+     the resident part and `full` is set, so the resident part can never
+     end up over the budget, and everything after the first one that did
+     not fit goes to the index — the newest-first rule holds, and a
+     smaller, older record is never kept in place of a newer one.
+  4. **The counts.** `resident_tokens` counts the resident part's
+     serialised form and `tokens` the whole block with its own value
+     counted as zero, so `tokens` is never below `resident_tokens` and
+     the declared budget is the one the fill uses.
+  5. **The items.** The block is attached after the response is built, so
+     the items, their order and `tokens_used` cannot move — and the
+     differential says they did not.
+  6. **The empty paths.** A namespace the profile may not read yields the
+     empty block, a store that cannot answer yields an empty candidate
+     list (`.unwrap_or_default()`), and the session that cannot be read
+     yields no session — the block is additive and never takes a command
+     down.
+  With the differential (twelve surfaces byte-identical), the suite (710
+  cargo, 133 node) and clippy clean, the criterion holds. **Risk: item 3**
+  — the shared SQL helper changed — and the verification above is what
+  answers it.
