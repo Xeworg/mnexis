@@ -109,3 +109,19 @@ before and after; the CLI's surfaces are untouched.
   difference) and the six read tools' answers are **byte-identical**:
   `memory_workspace`, `memory_list`, `memory_search`,
   `memory_search_prompts`, `memory_suggest_topic_key`, `memory_recall`.
+- **L5** — **T2 done** (S4, S5), written by a delegated worker and checked
+  by the parent: the tool's description names the priced items with their
+  handle, the three parts of the session state and what the coverage
+  declares; the skill, the extension's README and the root README name the
+  door in the MCP surface. The count of the server's tools was written as
+  **fourteen** (and fourteen names) — it is **seventeen**, and the stale
+  Rust doc comments ("9 memory_* tools", "exposes 15 tools") are corrected.
+- **L6** — **A promise the answer was making, now made true.** The
+  declaration said "the least relevant first", and the truth is the
+  opposite: the omitted candidates are listed in rank order, so the ones
+  that **just missed the cut** come first (verified on the binary: the most
+  relevant omitted fact is named first, then the rest in rank order). The
+  wording in the CLI's text answer, in the extension's answer and in the
+  documents is now "the closest to the cut first" — the promise the agent
+  reads is now the promise the engine keeps. The worker that wrote the
+  documentation is the one who caught it.
