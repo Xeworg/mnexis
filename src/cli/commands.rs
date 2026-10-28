@@ -1437,28 +1437,13 @@ pub fn context(
             serde_json::to_value(read_scope).unwrap_or(serde_json::Value::Null),
         );
     }
-    let count = response.items.len();
-    // The text says where the door looked, the same way the envelope
-    // does: a human reading "no items selected" has to know whether the
-    // project has no memories or the search looked elsewhere.
-    let searched = if response.searched_namespace.is_empty() {
-        "none".to_string()
-    } else {
-        response.searched_namespace.clone()
-    };
+    // The text answer is the answer: the items with their content, then the
+    // session-state block (state-block-budget S7.1). A human or an agent
+    // reading the stdout of the door has to find the facts there, and the
+    // skill promises exactly that.
     Ok(CommandOutcome::new(
         json,
-        crate::cli::output::with_read_scope(
-            if count == 0 {
-                format!("no items selected (namespace={searched})")
-            } else {
-                format!(
-                    "selected {count} items (tokens={}, namespace={searched})",
-                    response.tokens_used
-                )
-            },
-            read_scope,
-        ),
+        crate::cli::output::context_answer(&response, read_scope),
     ))
 }
 

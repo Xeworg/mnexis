@@ -3962,3 +3962,101 @@ fn stats_with_open_reads_counts_every_namespace() {
         "with the reads open every namespace is counted: {json}"
     );
 }
+
+// --- The door's text answer (state-block-budget S7.1) ------------------------
+//
+// The CLI's stdout is the machine channel of every agent that has no tool:
+// the text mode of the door used to print a header and nothing else, while
+// the skill told the agent that the command "returns the memories that
+// matter". These tests pin the text answer: the items with their content,
+// then the block with the live state and the index of what did not fit.
+
+#[test]
+fn the_door_text_answer_carries_the_items_and_the_state_block() {
+    let p = Profile::new();
+    p.run_silent(&[
+        "save",
+        "--type",
+        "knowledge",
+        "--title",
+        "el puerto del servicio",
+        "el servicio escucha en el puerto 8081",
+    ])
+    .unwrap_status("seed the fact");
+    p.run_silent(&[
+        "save",
+        "--type",
+        "project_state",
+        "--title",
+        "Where the project is",
+        "the last session closed the door question",
+    ])
+    .unwrap_status("seed the state");
+    p.run_silent(&[
+        "save",
+        "--type",
+        "decision",
+        "--title",
+        "Standing decisions",
+        "the reads stay closed by default",
+    ])
+    .unwrap_status("seed the decision");
+
+    let out = p
+        .run_text(&["context", "puerto"])
+        .unwrap_status("the door's text answer");
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    // The item: its identity, then its text, on one physical line.
+    assert!(
+        text.contains("1. [el-puerto-del-servicio] el puerto del servicio — el servicio escucha en el puerto 8081"),
+        "the items are the answer: {text}"
+    );
+    // The block: the live state, newest first, with its content.
+    assert!(
+        text.contains("session state: 2 records,"),
+        "the block declares what it holds: {text}"
+    );
+    assert!(
+        text.contains("- [decision] Standing decisions — the reads stay closed by default"),
+        "the block carries the live records with their content: {text}"
+    );
+    assert!(
+        text.contains(
+            "- [project_state] Where the project is — the last session closed the door question"
+        ),
+        "the block carries the live records with their content: {text}"
+    );
+    // And the read scope still closes the answer.
+    assert!(
+        text.contains("read scope:"),
+        "the scope line still closes the answer: {text}"
+    );
+}
+
+#[test]
+fn the_door_text_answer_says_nothing_about_state_a_project_does_not_have() {
+    let p = Profile::new();
+    p.run_silent(&[
+        "save",
+        "--type",
+        "knowledge",
+        "--title",
+        "el puerto del servicio",
+        "el servicio escucha en el puerto 8081",
+    ])
+    .unwrap_status("seed the fact");
+
+    let out = p
+        .run_text(&["context", "puerto"])
+        .unwrap_status("the door's text answer");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !text.contains("session state:"),
+        "a project with no state has no block to print: {text}"
+    );
+    assert!(
+        text.contains("1. [el-puerto-del-servicio]"),
+        "the items are still the answer: {text}"
+    );
+}

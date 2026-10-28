@@ -31,15 +31,22 @@ answer means this project has nothing, not that the door looked elsewhere. If
 it returns nothing, the project has no memory yet — carry on
 and record what the session produces (see "The loop").
 
-**Its answer already carries the session state.** The `session_state` block
-holds this project's `project_state` and `decision` records **with their
-whole content**, newest first, plus the summary of the most recent finished
-session. Read it before reaching for `list`, `search` or `recall` for the same
-question: it is the measured answer to "where did we leave off" — one call
-instead of the three or four rounds an agent spends rebuilding the same state
-by hand. The block is outside the token budget and belongs to the namespace
-the door searched; when the project has recorded no state it answers with an
-empty list and a null session, not an error.
+**Its answer already carries the session state.** After the items it prints
+`session state: <n> records, <resident> of <budget> tokens`, then one line per
+**live** `project_state` or `decision` record that fits the block's budget —
+`- [<memory_type>] <title> — <content>`, newest first, with the whole content —
+then `indexed: <m> records did not fit the budget (pull one with mnexis show
+<uuid>)` and one `- [<memory_type>] <title> — <uuid> (<created_at>)` line per
+live record that did not fit. Read the block before reaching for `list`,
+`search` or `recall` for the same question: it is the measured answer to
+"where did we leave off" — one call instead of the three or four rounds an
+agent spends rebuilding the same state by hand. The block has a budget of its
+own (2 048 tokens), outside the door's, so it never moves which memories the
+door picks; what the budget could not fit is not dropped, it is indexed by
+identity, and `mnexis show <uuid>` pulls it. Superseded, archived and proposed
+records are not in the block at all, and the most recent finished session's
+summary rides with it. A project that recorded no state answers with no block
+— never an error.
 
 `mnexis status` answers the other half in one call: the namespace this
 workspace writes into, the read and write allowlists, how many memories the
@@ -79,12 +86,14 @@ this one was in one call — identity and preview by default, the whole
 records with `full`. `mnexis_context` is the **one-call door**: give it
 the task in one line and it answers with the memories this project
 recorded that matter for it, already trimmed to a token budget, naming
-the namespace it searched — and with it, the **session state** (the
-`project_state`/`decision` records with their whole content and the
-previous session's summary). It is the cheapest way to ask the project a
-question ("where did we leave off", "which port does it listen on"):
-read the state it returns before walking the namespace by hand with
-`list` and `show`.
+the namespace it searched — and with it, the **session state**: the live
+`project_state`/`decision` records with the content that fits the block's
+own budget, the index of the live records that did not fit, and the
+previous session's summary. The index is a list of what exists, not of
+what you lost: an indexed record is one `mnexis_show` away. It is the
+cheapest way to ask the project a question ("where did we leave off",
+"which port does it listen on"): read the state it returns before walking
+the namespace by hand with `list` and `show`.
 When those tools are available
 in the session, prefer them: the CLI below is the fallback for hosts
 without the extension.

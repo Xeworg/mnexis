@@ -18,7 +18,7 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 | Tool | Purpose |
 | --- | --- |
 | `mnexis_workspace` | First call of a session: the namespace this workspace writes into, the allowlists, and the most recent memories — each with its title and a preview, never the whole record. |
-| `mnexis_context` | The one-call door: the task in one line, and the memories this project recorded that matter for it, trimmed to a token budget — plus the **session state** (the `project_state`/`decision` records with their whole content and the previous session's summary), so one call answers "where did we leave off". The answer declares the namespace it searched and the tokens it spent. |
+| `mnexis_context` | The one-call door: the task in one line, and the memories this project recorded that matter for it, trimmed to a token budget — plus the **session state** (the live `project_state`/`decision` records with the content that fits the block's own 2048-token budget, the index of the live records that did not fit, and the previous session's summary), so one call answers "where did we leave off". The answer declares the namespace it searched and the tokens it spent. |
 | `mnexis_save` | Store a durable, self-contained memory about the project, with the `type` of fact it is when the agent knows it: one of `knowledge`, `decision`, `preference`, `procedure`, `project_state`, `episode`, `fact` (optional, so the engine decides otherwise). |
 | `mnexis_search` | Full-text search over the stored memories (ranked), narrowed by `type` when only some kinds matter. |
 | `mnexis_list` | List what is already stored, narrowed by `type` when only some kinds matter. |
@@ -53,6 +53,12 @@ of every agent — this extension, opencode, and the codex and claude code
 integrations to come — and a drawing there would be paid by every agent, in
 tokens, for every memory it reads.
 
+The door's panel draws the session state its answer carries: the records it
+holds, with their content, then the index of the live records that did not
+fit the block's budget — identity, kind, title and date — and the previous
+session's summary. An answer from an engine that predates the block draws
+nothing extra: the panel is the one it always was.
+
 The kind of a memory has its own icon: 📘 knowledge, 🎯 decision, ⭐
 preference, 📋 procedure, 📍 project_state, 🎉 episode, 🧠 fact. The
 engine's own mark is 🤖, so a session with two memory engines stays
@@ -83,16 +89,26 @@ then never another project's silence. It takes `namespace` when the
 question is about another project, and `token_budget` when the default
 budget is not the one wanted.
 
-Its answer also carries the **session state**, outside the token budget:
-the `project_state` and `decision` records of that namespace with their
-whole content, newest first, plus the summary of the most recent finished
-session. That block is the measured answer to the session's fan-out (the
-call-budget experiment: three extra rounds rebuilding the same state by
-hand became one call), so read it before asking the other surfaces — the
-state is already in the first answer. It carries an empty list and a
-null session when the project has recorded nothing, and never another
-namespace's records; a namespace the profile may write but not read
-yields the empty block.
+Its answer also carries the **session state**, in a budget of its own: the
+block holds the namespace's **live** `project_state` and `decision` records
+(never the superseded, archived or proposed ones), newest first, with their
+whole content while they fit the block's 2 048-token budget — and every live
+record that did not fit follows as an **index entry**: identity, kind, title
+and date, no content. What the budget left out is therefore never silent:
+`mnexis_show` (or `mnexis show <uuid>` from a shell) pulls it. The most
+recent finished session's summary rides with the block, and the answer says
+how many records ride resident and what they cost, so both halves are
+visible at a glance.
+
+The block is the measured answer to the session's fan-out (the call-budget
+experiment: three extra rounds rebuilding the same state by hand became one
+call), so read it before asking the other surfaces — the state is already in
+the first answer. Its budget is its own: the door's items keep their
+selection, their order and their count whether the block is there or not,
+which is the property the call-budget experiment measured. An empty block —
+a project that recorded no state, or a namespace the profile may write but
+not read — draws nothing at all: that answer is exactly what the door always
+answered, never an error and never a `null`.
 
 Writes are not: `mnexis_save` always targets the workspace namespace, and
 `mnexis_supersede` refuses a memory that lives in another project. The

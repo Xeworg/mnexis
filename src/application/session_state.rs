@@ -2,10 +2,9 @@
 //!
 //! The control fans out over the surfaces because each of them holds a part of
 //! "where we left off". The block hands one surface the whole of it: the
-//! `project_state` and `decision` records **with their content** (not the
-//! priced preview the other surfaces return), newest first, plus the most
-//! recent session summary — the session `mnexis recall --previous` answers
-//! with.
+//! **live** `project_state` and `decision` records (not the priced preview the
+//! other surfaces return), newest first, plus the most recent session summary —
+//! the session `mnexis recall --previous` answers with.
 //!
 //! It rides one surface, and the experiment chose which one (call-budget S6):
 //! measured against the shipped surfaces, the block on the door saved a median
@@ -14,13 +13,28 @@
 //! `status` keeps its priced shape (#56). The bench switch is gone with the
 //! experiment: the variable a bench arm set changes nothing now.
 //!
-//! The block is **outside the token budget**: the budgeted envelope is
-//! `serialise_envelope` (label, tokenizer, items) and the block is not part of
-//! it, so the budgeted hits keep their selection, their order and their count
-//! whether the block is there or not.
+//! The block is **outside the token budget of the door**: the budgeted envelope
+//! is `serialise_envelope` (label, tokenizer, items) and the block is not part
+//! of it, so the budgeted hits keep their selection, their order and their
+//! count whether the block is there or not.
+//!
+//! It carries a budget of its own, because an unbudgeted resident mass never
+//! decays (state-block-budget S4). The resident part — the live records with
+//! their whole content — fits [`SESSION_STATE_TOKEN_BUDGET`]; the live records
+//! that do not fit ride [`SessionState::index`], identity and title without
+//! content, so the agent sees that they exist and pulls one with
+//! `mnexis show <uuid>`. The fill is greedy, deterministic and newest-first:
+//! the recursion's order is the decision, and a decision that depends on the
+//! budget is not reproducible without one.
+//!
+//! The history — `superseded`, `archived` and `proposed` — is excluded
+//! silently (state-block-budget S2), and the filter is in the SQL
+//! ([`MemoryRepository::list_typed_state_recent`]): a filter applied after the
+//! query would let superseded records crowd the live ones out of the limit.
 
 use serde::{Deserialize, Serialize};
 
+use crate::application::budget::token_count_v1;
 use crate::application::service::MemoryService;
 use crate::domain::memory::Memory;
 use crate::domain::repository::MemoryRepository;
@@ -30,19 +44,45 @@ use crate::domain::scope::NamespaceScope;
 /// Both are values of the closed set in [`crate::domain::memory_type`].
 pub const STATE_TYPES: [&str; 2] = ["project_state", "decision"];
 
-/// The most records the block carries. One answer, not an archive: the cap
-/// every list command has, applied after the type filter.
-const STATE_RECORD_LIMIT: usize = 100;
+/// The states of a record that is still live: what the project is, and what it
+/// still argues about. The history is everything else.
+pub const LIVE_STATES: [&str; 2] = ["active", "disputed"];
 
-/// The block: this project's state, with its content.
+/// The most records the block carries. One answer, not an archive: the cap
+/// every list command has, applied after the type and state filters.
 ///
-/// An empty store is a valid block — an empty list and no session — never a
-/// failure: the block is additive, so it can never take the command down.
+/// Twenty-five candidates feed the fill; the budget decides how many of them
+/// keep their content and how many are indexed.
+const STATE_RECORD_LIMIT: usize = 25;
+
+/// The budget of the block's resident part, in tokens: the live records that
+/// fit carry their whole content, the rest are indexed.
+///
+/// It is the block's own budget — the door's budgeted items never see it — and
+/// it is measured with the same estimator ([`token_count_v1`]) the door's
+/// budget uses.
+pub const SESSION_STATE_TOKEN_BUDGET: i64 = 2048;
+
+/// The block: this project's live state, with the content that fits.
+///
+/// An empty store is a valid block — an empty list, an empty index and no
+/// session — never a failure: the block is additive, so it can never take the
+/// command down.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionState {
-    /// The `project_state` and `decision` records of the namespace, newest
-    /// first, each with its whole content.
+    /// The live records that fit the block's budget: whole content, newest
+    /// first.
     pub records: Vec<StateRecord>,
+    /// The live records that did not fit: identity and title, no content. The
+    /// agent sees that they exist and pulls one with `mnexis show <uuid>`.
+    pub index: Vec<StateIndexEntry>,
+    /// The budget the resident part may use, in tokens.
+    pub budget: i64,
+    /// What the resident part costs, in tokens.
+    pub resident_tokens: i64,
+    /// What the whole block costs (resident + index + session), in tokens.
+    /// This is what the agent pays.
+    pub tokens: i64,
     /// The most recent finished session of the same namespace, when there is
     /// one.
     pub session: Option<SessionSummary>,
@@ -53,9 +93,34 @@ impl SessionState {
     pub fn empty() -> Self {
         Self {
             records: Vec::new(),
+            index: Vec::new(),
+            budget: SESSION_STATE_TOKEN_BUDGET,
+            resident_tokens: 0,
+            tokens: 0,
             session: None,
         }
+        .with_counts()
     }
+
+    /// Declare what the block costs, with the estimator the door's budget uses.
+    ///
+    /// `resident_tokens` is the token count of the resident part's serialised
+    /// form, and `tokens` the token count of the whole block: the declaration
+    /// itself is counted zeroed, so the number does not measure its own digits.
+    fn with_counts(mut self) -> Self {
+        self.resident_tokens = token_count_v1(&serialise_records(&self.records));
+        let mut counted = self.clone();
+        counted.tokens = 0;
+        self.tokens =
+            token_count_v1(&serde_json::to_string(&counted).expect("the block serialises"));
+        self
+    }
+}
+
+/// The resident part's serialised form: the records, as the wire carries them,
+/// in the block's order.
+fn serialise_records(records: &[StateRecord]) -> String {
+    serde_json::to_string(records).expect("the resident part serialises")
 }
 
 /// One state record, with the content the priced preview would have cut.
@@ -71,6 +136,9 @@ pub struct StateRecord {
     pub content: String,
     /// When the record was created: the block reads newest first.
     pub created_at: String,
+    /// The record's lifecycle state. The block carries only the live ones, so
+    /// this is `active` or `disputed`.
+    pub state: String,
 }
 
 impl StateRecord {
@@ -81,6 +149,37 @@ impl StateRecord {
             title: memory.title,
             content: memory.content,
             created_at: memory.created_at,
+            state: memory.state.as_str().to_string(),
+        }
+    }
+}
+
+/// A live record the budget left out: identity and title, no content.
+///
+/// The agent sees that the record exists and pulls it whole with
+/// `mnexis show <uuid>`, so the uuid it carries is the full one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateIndexEntry {
+    /// The memory's stable identifier, as `mnexis show` expects it.
+    pub uuid: String,
+    /// The kind of thing the fact is: `project_state` or `decision`.
+    pub memory_type: String,
+    /// What the fact *is*. Empty when it has no title.
+    pub title: String,
+    /// When the record was created: the block reads newest first.
+    pub created_at: String,
+    /// The record's lifecycle state: `active` or `disputed`.
+    pub state: String,
+}
+
+impl StateIndexEntry {
+    fn of(record: StateRecord) -> Self {
+        Self {
+            uuid: record.uuid,
+            memory_type: record.memory_type,
+            title: record.title,
+            created_at: record.created_at,
+            state: record.state,
         }
     }
 }
@@ -99,9 +198,9 @@ pub struct SessionSummary {
 }
 
 impl<R: MemoryRepository> MemoryService<R> {
-    /// The state block of `namespace`: the records of what the project is and
-    /// what it chose, with their content, plus the most recent session
-    /// summary of the same namespace.
+    /// The state block of `namespace`: the live records of what the project is
+    /// and what it chose, newest first, with the content its budget has room
+    /// for, plus the most recent session summary of the same namespace.
     ///
     /// `namespace` is one the calling command already authorized: the door
     /// passes the namespace it searched, `status` the workspace's own (or the
@@ -122,15 +221,39 @@ impl<R: MemoryRepository> MemoryService<R> {
             .iter()
             .map(|memory_type| (*memory_type).to_string())
             .collect();
-        let records = self
+        let states: Vec<String> = LIVE_STATES
+            .iter()
+            .map(|state| (*state).to_string())
+            .collect();
+        let candidates = self
             .repo
-            .list_typed_recent(
+            .list_typed_state_recent(
                 &NamespaceScope::Only(vec![namespace.to_string()]),
                 &types,
+                &states,
                 STATE_RECORD_LIMIT,
             )
-            .map(|memories| memories.into_iter().map(StateRecord::of).collect())
             .unwrap_or_default();
+
+        // Greedy, deterministic, newest-first: a candidate keeps its content
+        // while the resident part stays within the budget, and the first one
+        // that does not fit — with every one after it — is indexed instead.
+        let mut records: Vec<StateRecord> = Vec::new();
+        let mut index: Vec<StateIndexEntry> = Vec::new();
+        let mut full = false;
+        for memory in candidates {
+            if full {
+                index.push(StateIndexEntry::of(StateRecord::of(memory)));
+                continue;
+            }
+            records.push(StateRecord::of(memory));
+            if token_count_v1(&serialise_records(&records)) > SESSION_STATE_TOKEN_BUDGET {
+                let record = records.pop().expect("the record just pushed");
+                index.push(StateIndexEntry::of(record));
+                full = true;
+            }
+        }
+
         let session = self
             .repo
             .previous_finished_session(namespace)
@@ -142,7 +265,15 @@ impl<R: MemoryRepository> MemoryService<R> {
                 ended_at: session.ended_at,
                 summary: session.summary,
             });
-        SessionState { records, session }
+        SessionState {
+            records,
+            index,
+            budget: SESSION_STATE_TOKEN_BUDGET,
+            resident_tokens: 0,
+            tokens: 0,
+            session,
+        }
+        .with_counts()
     }
 }
 
