@@ -698,3 +698,51 @@ transcripts already on disk).
 **So the plan moves:** the door's answer (what it carries, what it declares
 as missing, the state block) comes **before** the skill — the doctrine is
 worth its own experiment, but the measured waste is in the door.
+
+### 13. The state block, budgeted and delivered — closed (feature `state-block-budget`)
+
+The block that rides the door was the one answer that replaced "where did
+we leave off" with a single call, and it had two defects: its **resident
+mass never decayed** (every live state record with its whole content,
+unbudgeted and outside the door's budget — **4 594 tokens** in this
+namespace, growing every session) and it **carried the history as if it
+were current** (a superseded record looked exactly like a live one, and
+the block had no field that said otherwise). And it did not reach the
+agent at all: the pi extension rendered only the items, so the promise in
+the tool's description was a promise the tool could not keep.
+
+**What shipped** (feature doc: `odd/tasks/state-block-budget.md`; branch
+`feat/state-block-budget`).
+
+- **The live only:** the block carries `active` and `disputed`, and the
+  filter is **in the SQL** — a filter applied after the query would let
+  superseded records crowd the live ones out of the limit.
+- **The budget:** the resident part (the records with their whole content)
+  fits **2 048 tokens**; every live record that does not fit rides the
+  **index** with its identity and its title, so the agent sees that the
+  state exists and pulls one with `mnexis show <uuid>`. The fill is greedy,
+  deterministic and newest-first.
+- **The declaration:** the block carries `budget`, `resident_tokens` and
+  `tokens` — what it costs, in the door's own tokenizer.
+- **The delivery:** the pi tool renders the block between the items and
+  the declaration, the chrome draws it, and **the CLI's text mode prints
+  the answer** — the items with their content, the block, the index. That
+  last one closed a hole the skill had been describing for a while: the
+  text mode printed a header and nothing else, so every agent that reaches
+  the CLI instead of the tool got no answer at all.
+
+**The differential** (base `bee8287`, `tmp/diff-state-block.sh`): twelve
+surfaces **byte-identical** — `status`, `list`, `list --full`, `search`,
+`recall`, `sessions`, `stats`, `doctor`, `project list --json`,
+`timeline`, `show`, `suggest-topic-key` — and only the two door modes
+moved. The door's **items did not move**: the same items, the same order,
+the same `tokens_used`; the block is outside the door's budget, and the
+fixture's block holds 4 live records in 1 388 of 2 048 tokens (1 427 for
+the whole block).
+
+**What it does not settle:** the block's budget is a constant, not a
+measurement — the number of records that fit depends on how long a
+project's state records are, and the first project with long records will
+show the index working (or not). The typed priority that would decide
+*which* state is worth the content is still the unmeasured experiment
+(#55), and the index is the honest fallback until it is measured.

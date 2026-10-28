@@ -214,3 +214,39 @@ not reach the agent** in the surfaces the agent actually reads.
   block (`tests/cli_commands.rs`, two tests). The rendering helpers live in
   `src/cli/output.rs` next to the other renderers, and the command's text
   is now `context_answer(&response, read_scope)`.
+- L6 (2026-10-27): the slice boundary, recorded as the harness asks. The
+  branch carries **five** commits and ~1 950 authored lines, and the
+  feature does not split further along them: the service (the block's
+  shape, the policy, the repository's state filter and the contract suite)
+  is one unit because the repository's method rename breaks its caller —
+  the tree does not compile in the middle of it — and the extension's tool
+  and its drawing are two units because they are two surfaces with two
+  suites. The boundary that was crossed is the one the board already
+  named once ("neither splits without breaking the thing it pins"), and
+  the unit that follows is the door's own.
+- L7 (2026-10-27): the outcome. **The criterion (S8) holds on all six
+  points.** The live only (S8.1): the block carries `active` and
+  `disputed`; the superseded record of the differential's fixture is gone,
+  and the filter is in the SQL. The budget holds (S8.2): the fixture's
+  resident part is 1 388 of 2 048 tokens, and the record that did not fit
+  is in the index. The budget is declared (S8.3): `budget`,
+  `resident_tokens` and `tokens` are on the wire. The door's items do not
+  move (S8.4): the same items, the same order, the same `tokens_used`. The
+  delivery exists (S8.5): the CLI's text mode prints the items and the
+  block, the tool's answer carries it, the chrome draws it. The
+  differential (S8.6): **twelve surfaces byte-identical** against
+  `bee8287`, only the two door modes moved. The suite (S8.7): 710 cargo
+  tests and 133 node tests green, clippy clean.
+  Two definitions were settled by the parent after the work: the
+  `tokens` field counts the block's **whole serialised form** with its own
+  value counted as zero (what the agent pays, recomputable from the
+  answer it declares) — not the sum of the three named parts; and the
+  `indexed:` heading appears only when the index is not empty, the pi
+  tool's rule, adopted by the CLI so the two surfaces never drift.
+- L8 (2026-10-27): **what the block costs now, measured.** The fixture's
+  block: 4 live records, 1 388 resident tokens of 2 048, 1 427 for the
+  whole block. The namespace that motivated it held 4 594 tokens of
+  unbudgeted state before this change; with the same budget it would hold
+  the newest records whole and index the rest, and the index names every
+  one of them with the uuid that pulls it. The resident mass now has a
+  ceiling, and the ceiling is declared.
