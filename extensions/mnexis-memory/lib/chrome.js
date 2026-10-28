@@ -201,8 +201,11 @@ export function resultLines(toolName, result, options = {}) {
 			break;
 		case "mnexis_list":
 		case "mnexis_search":
+			lines.push(...itemLines(details.memories ?? details.hits ?? []));
+			break;
 		case "mnexis_context":
 			lines.push(...itemLines(details.memories ?? details.hits ?? []));
+			lines.push(...stateLines(details.session_state));
 			break;
 		case "mnexis_recall":
 			lines.push(...itemLines(recallItems(details)));
@@ -414,8 +417,9 @@ function memoryLines(memory) {
 /**
  * One line per memory: what it is, and a few words of what it says.
  *
- * A record that carries its whole content shows it — the door promises the
- * state with its content, and the drawing is the only view the human has.
+ * A record that carries its whole content shows it — the door's items and the
+ * state block's resident records do, and the drawing is the only view the
+ * human has.
  */
 function itemLines(items) {
 	if (!Array.isArray(items) || items.length === 0) return ["(nothing)"];
@@ -473,6 +477,62 @@ function recallItems(details) {
 	if (Array.isArray(recall.previews) && recall.previews.length > 0) return recall.previews;
 	if (Array.isArray(recall.memories_in_window)) return recall.memories_in_window;
 	return [];
+}
+
+/**
+ * The session state the door's answer carries.
+ *
+ * The block is the live state with the content that fits its budget, plus the
+ * index of the live records that did not fit. The human reads the same block
+ * the agent does: the records whole, and the index as the list of identities
+ * it is — so what the budget left out is visible and one `show` away.
+ *
+ * An answer from an engine that predates the block has no `session_state`, and
+ * then nothing is drawn: the panel is exactly the one it always was.
+ */
+function stateLines(block) {
+	if (!block || typeof block !== "object") return [];
+	const records = Array.isArray(block.records) ? block.records : [];
+	const index = Array.isArray(block.index) ? block.index : [];
+	const session = block.session && typeof block.session === "object" ? block.session : null;
+	if (records.length === 0 && index.length === 0 && session === null) return [];
+
+	const resident = typeof block.resident_tokens === "number" ? block.resident_tokens : null;
+	const budget = typeof block.budget === "number" ? block.budget : null;
+	const held = counted(records.length, "record");
+	const lines = [
+		resident === null || budget === null
+			? `session state · ${held}`
+			: `session state · ${held} · ${resident} of ${budget} tokens`,
+	];
+	if (records.length > 0) lines.push(...itemLines(records));
+	if (index.length > 0) {
+		lines.push(`indexed · ${counted(index.length, "record")} did not fit the budget`);
+		lines.push(...index.map(indexLine));
+	}
+	if (session) {
+		const id = typeof session.id === "string" && session.id !== "" ? ` · ${session.id}` : "";
+		const ended =
+			typeof session.ended_at === "string" && session.ended_at !== ""
+				? ` · ended ${session.ended_at}`
+				: "";
+		lines.push(`previous session${id}${ended}`);
+		if (typeof session.summary === "string" && session.summary !== "") {
+			lines.push(...indentLines(session.summary));
+		}
+	}
+	return lines;
+}
+
+/** One indexed record: what it is, how to name it, and when it was written. */
+function indexLine(entry) {
+	const type = entry?.memory_type ?? "project_state";
+	const uuid = shortUuid(entry?.uuid);
+	const head = `${typeIcon(type)} ${type}${uuid ? ` · ${uuid}` : ""}`;
+	const said = [entry?.title, entry?.created_at]
+		.filter((part) => typeof part === "string" && part !== "")
+		.join(" · ");
+	return said === "" ? head : `${head}  ${truncate(said, PREVIEW_MAX)}`;
 }
 
 /** The text the tool returned, as lines. */

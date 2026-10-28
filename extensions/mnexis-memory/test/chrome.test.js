@@ -612,6 +612,158 @@ test("the door shows the content of the records it answers with", () => {
 	assert.match(lines[1], /the board is in odd\/next\.md/, `the content is there: ${lines[1]}`);
 });
 
+test("an expanded door draws the session state: its records and its index", () => {
+	// The block rides the answer's details, so the panel is the only view the
+	// human has of what the agent was handed: the records with their content,
+	// and the index of what the block's budget could not fit.
+	const result = {
+		details: {
+			count: 1,
+			tokens_used: 147,
+			memories: [
+				{ uuid: "7f5561f7-7493-44c9-b594-3ea1c8c5519e", memory_type: "fact", preview: "el puerto es 8081" },
+			],
+			session_state: {
+				records: [
+					{
+						uuid: "7f5561f7-7493-44c9-b594-3ea1c8c5519e",
+						memory_type: "project_state",
+						title: "el board",
+						content: "the board is in odd/next.md",
+						created_at: "2026-10-20T02:08:58Z",
+						state: "active",
+					},
+				],
+				index: [
+					{
+						uuid: "aaaa1111-2222-3333-4444-555566667777",
+						memory_type: "decision",
+						title: "usamos postgres",
+						created_at: "2026-09-01T00:00:00Z",
+						state: "active",
+					},
+				],
+				budget: 2048,
+				resident_tokens: 1922,
+				tokens: 2104,
+				session: {
+					id: "01JX",
+					namespace: "mnexis",
+					ended_at: "2026-10-27T00:00:00Z",
+					summary: "el puerto del servicio",
+				},
+			},
+		},
+	};
+	const before = structuredClone(result);
+	const lines = resultLines("mnexis_context", result, { expanded: true });
+	const drawn = lines.join("\n");
+
+	assert.ok(
+		lines.includes("session state · 1 record · 1922 of 2048 tokens"),
+		`the block says what it holds and what it cost: ${drawn}`,
+	);
+	assert.ok(
+		lines.some((line) => line.startsWith("📍 project_state") && line.includes("#7f5561f7")),
+		`a resident record is named with its kind and identity: ${drawn}`,
+	);
+	assert.ok(
+		lines.some((line) => line.includes("the board is in odd/next.md")),
+		`and its content is drawn: ${drawn}`,
+	);
+	assert.ok(
+		lines.includes("indexed · 1 record did not fit the budget"),
+		`the index says what it is: ${drawn}`,
+	);
+	assert.ok(
+		lines.some(
+			(line) =>
+				line.startsWith("🎯 decision") &&
+				line.includes("#aaaa1111") &&
+				line.includes("usamos postgres"),
+		),
+		`an indexed record is one line with its title: ${drawn}`,
+	);
+	assert.ok(
+		lines.some((line) => line.includes("2026-09-01T00:00:00Z")),
+		`and says when it was written: ${drawn}`,
+	);
+	assert.ok(
+		lines.some((line) => line.includes("01JX")),
+		`the previous session is named: ${drawn}`,
+	);
+	assert.ok(
+		lines.some((line) => line.includes("el puerto del servicio")),
+		`and its summary is drawn: ${drawn}`,
+	);
+	assert.deepEqual(result, before, "the chrome never invents data: the answer is the one that came back");
+});
+
+test("a door answer without a session state draws what it drew before", () => {
+	const details = {
+		count: 1,
+		memories: [
+			{
+				uuid: "7f5561f7-7493-44c9-b594-3ea1c8c5519e",
+				memory_type: "project_state",
+				content: "the board is in odd/next.md",
+			},
+		],
+	};
+	const expected = ["📍 project_state · #7f5561f7", "   the board is in odd/next.md"];
+
+	assert.deepEqual(
+		resultLines("mnexis_context", { details }, { expanded: true }),
+		expected,
+		"an engine without the block draws the items, and nothing else",
+	);
+	assert.deepEqual(
+		resultLines("mnexis_context", { details: { ...details, session_state: null } }, { expanded: true }),
+		expected,
+		"a null block draws no heading and no null",
+	);
+	assert.deepEqual(
+		resultLines(
+			"mnexis_context",
+			{
+				details: {
+					...details,
+					session_state: {
+						records: [],
+						index: [],
+						budget: 2048,
+						resident_tokens: 0,
+						tokens: 0,
+						session: null,
+					},
+				},
+			},
+			{ expanded: true },
+		),
+		expected,
+		"an empty block draws nothing: no heading, no empty list",
+	);
+});
+
+test("a list and a search still draw their items, and only their items", () => {
+	// The door's block shares the switch the list and the search draw with:
+	// splitting the door out must change nothing about the siblings.
+	const details = {
+		count: 1,
+		memories: [
+			{
+				uuid: "7f5561f7-7493-44c9-b594-3ea1c8c5519e",
+				memory_type: "project_state",
+				content: "the board is in odd/next.md",
+			},
+		],
+	};
+	const expected = ["📍 project_state · #7f5561f7", "   the board is in odd/next.md"];
+
+	assert.deepEqual(resultLines("mnexis_list", { details }, { expanded: true }), expected);
+	assert.deepEqual(resultLines("mnexis_search", { details }, { expanded: true }), expected);
+});
+
 test("a record that only carries a preview stays one line", () => {
 	const lines = resultLines(
 		"mnexis_list",
