@@ -1,8 +1,9 @@
 # The board — what is done, what is open, what comes next
 
 **Last updated:** 2026-10-28 (item 17: the lean-skill experiment — the body is
-not read where it counts, and the harness pays 755 tokens a call; before
-that: item 16: the pricing was measured, lost and
+not read where it counts, the harness pays 755 tokens a call, and the ship
+is `head`: the 18 184-byte body is replaced by the measured 1 103-byte one;
+before that: item 16: the pricing was measured, lost and
 was reverted — the door carries whole facts again, and the door is in the
 MCP surface; before that: item 14 landed: the door's answer is priced
 and declares its coverage — M3 and M4 of the order the re-read metric
@@ -887,6 +888,33 @@ carry less when it is not. And **M5**: the lean skill, with its own
 experiment.
 
 ### 17. The lean skill — measured: the body is not read, and the harness costs more than the file
+
+**The ship (the human's decision, 2026-10-28): `head` ships.** The fat body
+(18 184 B) is replaced by the short one (1 103 B) — byte for byte the `head`
+arm of the batch, nothing edited, so what ships is exactly what was
+measured. The reasons, in the order they matter:
+
+- **the body was never read** — `fat` read it **0 of 30** write sessions and
+  1 of 60 measured ones. The only part of the file that reaches the model is
+  the description pi injects, and it does not change.
+- **the behaviour does not move** — C1 and C4 hold for every arm, and on the
+  doctrine chains `head` is 10/10 on `dup` where `fat` was 9/10, equal on
+  `cnf`, and cheaper per call (5 829 / 6 005 against 6 202 / 7 101).
+- **the rules live in the tools, not in the file** — P1 registered it before
+  the run: the title rule is carried by the description of `mnexis_save`, and
+  the CLI declares its own setup in its own error (`run 'mnexis init' first`).
+- **the extension now covers the half the fat body was teaching** — the
+  store half is repaired by the shipped extension (PR #99, item 19), and
+  `fat` was the only arm that ended with two live rows for the port (1/10).
+
+**What is lost, stated plainly:** the fat body carried operational recipes
+(`mnexis init`, the binding, the doctor) that no agent ever read. If one ever
+does, the tool descriptions and the CLI's own errors carry the rules.
+
+**The consequence for the release:** the skill ships inside the binary
+(`src/assets.rs:33`), so this reaches the users with the next release — and
+the local host needs a rebuild before `./install.sh skills` installs the new
+one, because a stale binary installs a stale skill.
 
 **M5, closed with its numbers** (`odd/tasks/skill-lean.md`; the criterion in
 `tmp/bench/skill-lean-measurement.md`, written before any run; the numbers

@@ -1,6 +1,6 @@
 # The skill lean, and the harness that could replace it
 
-**Feature:** `skill-lean` · **Branch:** `feat/skill-lean` · **Status:** measured — the decision is open (see the Log, L3 and L4)
+**Feature:** `skill-lean` · **Branch:** `feat/skill-lean` · **Status:** shipped — `head` (1 103 B) is the skill now; the fat body is gone (see the Log, L3-L5)
 **Board:** `odd/next.md` item 17 (M5)
 
 **Batch 2 closed the `combo` option:** the reduced skill reinforced by the
@@ -159,3 +159,44 @@ the short skill; D2: dearer than its own arithmetic). T7 still waits on the
 ship decision, which is the human's — and the two candidates that survive
 the measurement are keeping `fat` or shipping `head`, justified by
 maintenance and by not being worse, never by tokens.
+
+**L5** — the ship decision, the human's, verbatim: *"si actualiza la skill"*.
+It answers the question L4 left standing — keep `fat` or ship `head` — and it
+lands **on `head`**, whose bytes were already measured (`head` 1 103 B, `fat`
+18 184 B).
+
+**What ships is the measured artifact, byte for byte.** `skills/mnexis-memory/SKILL.md`
+is now a copy of `tmp/bench/build-context/skill-head.md` — the arm that ran in
+the batch — with nothing edited, so the shipped skill is exactly what scored
+10/10 on `dup`, equal on `cnf` and cheaper per call (5 829 / 6 005 against
+6 202 / 7 101). The frontmatter is unchanged, so the **description** pi
+injects into the system prompt — the only part of the file the model ever saw
+— is byte-identical to the one the measurement ran with: the trigger does not
+move.
+
+**Why `head` and not `fat`, in one place.** The body was never read (`fat`
+0 of 30 write sessions, 1 of 60 measured); the behaviour is the same
+everywhere (C1, C4 hold for all four arms, and `head` was the only arm that
+beat `fat` on `dup`); the rules live in the tools, not in the file (the
+title rule rides `mnexis_save`'s description — P1 registered it before the
+run — and the CLI declares its own setup in its own error); and the store
+half the fat body was teaching is now repaired by the shipped extension
+(PR #99, item 19), while `fat` was the only arm that ended with two live rows for
+the port (1/10).
+
+**What is lost, stated plainly.** The fat body carried the operational
+recipes — `mnexis init`, the binding trap, the doctor — and no agent read
+them in 672 transcripts. The one honest caveat: a body that nobody reads is
+free *today*, and a future host that reads it would lose those recipes. The
+tools and the CLI's own errors carry the rules they need.
+
+**The verification of the ship (T7).** The file is byte-identical to the
+measured arm (`diff` against `tmp/bench/build-context/skill-head.md`); the
+frontmatter is byte-identical to the previous version's, so the trigger is
+untouched; the binary is rebuilt before the install (the skill ships inside
+it, `src/assets.rs:33`), and the installed copy is byte-identical to the
+tree in **both** agent directories. What is **not** re-measured is stated
+plainly: the shipped combination is `head` plus the extension's store
+repair, and the repair was measured against `fat` (item 18) — the two
+changes make the store safer, never weaker, but the combination itself was
+not run as an arm.

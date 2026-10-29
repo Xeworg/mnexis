@@ -76,6 +76,11 @@ mnexis search "wrap mode borde"                            # ranked search
 mnexis status                                             # namespace, allowlists, recent
 ```
 
+The skill is deliberately small — 1 103 bytes. What the agent needs to know
+lives in the tool descriptions it already reads: a long body was measured and
+read in 1 of 60 sessions, changing nothing, while the extension repairs on
+its own the duplicate a second save would create.
+
 The door carries whole facts: each item is the fact's identity and its
 entire content, never a cut one — the budget decides which facts fit, not
 how much of a fact you see, and the door keeps the most relevant ones — and
