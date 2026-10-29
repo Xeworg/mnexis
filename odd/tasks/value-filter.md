@@ -94,14 +94,14 @@ ceiling is gone.
 
 | id | what | specs | route | commit |
 | --- | --- | --- | --- | --- |
-| T1 | the value's definition (domain) and its rule | S2, S4 | inline | _pending_ |
-| T2 | the engine filter: repository, service, CLI `list --value` | S1, S3, S4 | inline | _pending_ |
-| T3 | the MCP mirror: `memory_list` gains `value` | S5 | inline | _pending_ |
-| T4 | the extension asks the engine instead of walking | S6 | inline | _pending_ |
-| T5 | the corpus: Rust, JS and the parity suite | S8 | inline | _pending_ |
-| T6 | the criterion C1-C5, measured | S7 | inline | _pending_ |
-| T7 | independent verification of the data effect | S1-S6 | verify | _pending_ |
-| T8 | docs: READMEs and the board | S9 | inline | _pending_ |
+| T1 | the value's definition (domain) and its rule | S2, S4 | inline | `7fb3f6f` |
+| T2 | the engine filter: repository, service, CLI `list --value` | S1, S3, S4 | inline | `7fb3f6f` |
+| T3 | the MCP mirror: `memory_list` gains `value` | S5 | inline | `7fb3f6f` |
+| T4 | the extension asks the engine instead of walking | S6 | inline | `32b16b3` |
+| T5 | the corpus: Rust, JS and the parity suite | S8 | inline + worker | `7fb3f6f`, `32b16b3`, `6b9ac36` |
+| T6 | the criterion C1-C5, measured | S7 | inline | `tmp/bench/value-filter-measurement.md` |
+| T7 | independent verification of the data effect | S1-S6 | verify | L8 |
+| T8 | docs: READMEs and the board | S9 | inline | `8100dc6` |
 
 ## Log
 
@@ -171,4 +171,39 @@ were rewritten for the new contract, and the race the corpus reproduces moved fr
 The worker also recorded the RED evidence against a scratch copy of the previous production code
 (five failures, exactly the new and rewritten tests), and the GREEN counts: **160 tests, 158 pass,
 0 fail, 2 skipped** (the opt-in parity pair), and the parity suite **2/2** against the real binary.
+
+**L8** — the independent verification (T7, `gentle-ai-verify`, read-only, against the **real**
+binary and the base commit built in a scratch copy): **every claim HOLDS**, no blocking defect.
+Its verdict, per claim: the maximal-digit-run rule over the four indexed columns (a tag is not
+indexed text, so `8081` as a tag does not match); the filter before the limit and the offset paging
+the matches; the empty answer and the `INVALID_ARGUMENT`; the MCP mirror over raw JSON-RPC; the
+repair asking the engine for the value's records (no `search`, no walk) and the ceiling case by
+hand (2 500 fillers, the twin at row **2 501**, retired, `recovery.source = "value"`, and **no**
+"duplicate check did not finish"); and the twin rule's boundaries (a value change, a shared number
+with no shared keyword, another namespace, `archived`, `proposed` and a compaction summary all stay
+untouched, while **both** genuine twins are retired). Its failure-mode hunt found no false
+negative, no retired non-twin and no false claim. It also ran a wider differential than this
+document's C4: **53 command comparisons** against the base (`41` read + `12` write), all
+byte-identical in stdout, stderr and exit code; the only difference is `list --help`, which now
+names the new flag.
+
+Its advisories, and what I did with them:
+
+1. `TWIN_SCAN_MAX_PAGES` still bounds the pages of **matches** the extension reads (2 000 records
+   carrying the *same* value), and S6's first wording overstated that. S6 is amended (L6) and the
+   extension's README and the board say the bound honestly.
+2. `--value -8081` is refused by clap as an unknown argument instead of with the rule's message.
+   It is not a digit run either way; left as it is.
+3. `list --value` without `--state` returns every state, which is `list`'s own semantics, and the
+   twin rule checks the state anyway.
+4. A transient failure of `tests/assets_fidelity.rs` while the README was edited during the run:
+   the test embeds the extension's README with `include_str!`, so the binary must be rebuilt after
+   a doc change. Green after the rebuild.
+
+The verifier also left three durable probes. The two Rust ones are in
+`tests/cli_commands.rs` now (`list_by_value_reads_every_indexed_column_and_the_maximal_run_rule`
+and the strengthened refusal), because they pin the contract over the four columns and the rule's
+negative cases. Its parity probe (2 500 records through the CLI) was **not** added: it would add
+minutes to an opt-in suite to prove what the 121-match parity test already proves about the paging
+and what the bench measures about the namespace size.
 

@@ -588,6 +588,61 @@ fn list_by_value_answers_only_the_records_that_carry_it() {
 }
 
 #[test]
+fn list_by_value_reads_every_indexed_column_and_the_maximal_run_rule() {
+    let p = Profile::new();
+    // The indexed text is the content, the title, the topic key and the
+    // keywords: the filter reads the same four columns the index covers.
+    let by_content = save(&p, "the port is 8081", &[]);
+    // A value written inside a word: the run is maximal, the letters are
+    // not part of it.
+    let by_word = save(&p, "v8081 is the version", &[]);
+    let by_title = save(&p, "a fact about a port", &["--title", "Port 8081"]);
+    let by_topic = save(
+        &p,
+        "another fact",
+        &["--topic-key", "port-8081", "--title", "Key fact"],
+    );
+    let by_keywords = save(
+        &p,
+        "a third fact",
+        &["--keywords", "listen port 8081", "--title", "Word fact"],
+    );
+    // Not carriers: a longer run, a prefixed run, a two-digit run.
+    let longer = save(&p, "the port is 80810", &[]);
+    let prefixed = save(&p, "the port is 18081", &[]);
+    let two = save(&p, "the port is 80", &[]);
+    // Not a carrier: the value is only a TAG. A tag is not indexed text.
+    let tagged = save(
+        &p,
+        "no digits in the text",
+        &["--tags", "8081", "--title", "Tagged fact"],
+    );
+
+    let out = p
+        .run_silent(&["list", "--value", "8081"])
+        .unwrap_status("list --value");
+    let json = stdout_json(&out);
+    let uuids: Vec<String> = json["items"]
+        .as_array()
+        .expect("items array")
+        .iter()
+        .map(|item| item["uuid"].as_str().expect("uuid").to_string())
+        .collect();
+    for carrier in [&by_content, &by_word, &by_title, &by_topic, &by_keywords] {
+        assert!(
+            uuids.contains(carrier),
+            "the record {carrier} carries the value: {uuids:?}"
+        );
+    }
+    for not_carrier in [&longer, &prefixed, &two, &tagged] {
+        assert!(
+            !uuids.contains(not_carrier),
+            "the record {not_carrier} does not carry the value: {uuids:?}"
+        );
+    }
+}
+
+#[test]
 fn list_by_value_applies_before_the_limit() {
     // The record that does not carry the value is saved FIRST: a filter
     // that ran after the limit would answer an empty page.
@@ -641,7 +696,7 @@ fn list_by_value_answers_empty_for_a_value_nobody_carries() {
 #[test]
 fn list_by_value_refuses_an_argument_that_is_not_a_value() {
     let p = Profile::new();
-    for argument in ["80", "abc", "8a81", ""] {
+    for argument in ["80", "abc", "8a81", "", "8", "8081a", "80.0", "port"] {
         let out = p.run_silent(&["list", "--value", argument]);
         assert_eq!(
             out.status.code(),
@@ -654,6 +709,10 @@ fn list_by_value_refuses_an_argument_that_is_not_a_value() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
             stderr.contains("is not a value"),
+            "the error names the rule: {stderr}"
+        );
+        assert!(
+            stderr.contains("run of 3 or more digits"),
             "the error names the rule: {stderr}"
         );
     }
