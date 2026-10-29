@@ -59,6 +59,7 @@ fn list(profile: &Profile, ns: &str) -> Vec<mnexis_core::domain::memory::Memory>
 
             namespace: Some(ns.to_string()),
             state: None,
+            value: None,
             limit: 100,
             offset: 0,
         })

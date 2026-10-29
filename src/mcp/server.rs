@@ -286,6 +286,7 @@ impl McpServer {
             namespace: args.namespace.clone(),
             state,
             memory_types: parse_memory_types(args.memory_type.as_deref())?,
+            value: args.value.clone(),
             limit: clamp_limit(args.limit),
             offset: args.offset,
         };
@@ -746,7 +747,7 @@ impl McpServer {
 
     #[tool(
         name = "memory_list",
-        description = "List the memories this project already holds, with optional namespace/state filters and pagination. Use it at the start of a session, together with memory_workspace, to see what the project knows."
+        description = "List the memories this project already holds, with optional namespace/state/value filters and pagination. Use it at the start of a session, together with memory_workspace, to see what the project knows."
     )]
     fn memory_list(&self, Parameters(args): Parameters<ListArgs>) -> Result<String, McpError> {
         self.do_list(args)

@@ -570,6 +570,110 @@ fn list_state_filter_excludes_other_states() {
     assert_eq!(json["count"], 0);
 }
 
+// --- list --value (value-filter S1-S4) ---
+
+#[test]
+fn list_by_value_answers_only_the_records_that_carry_it() {
+    let p = Profile::new();
+    let carried = save(&p, "the port is 8081", &[]);
+    save(&p, "the port is 9090", &[]);
+    save(&p, "a fact without a number", &[]);
+    let out = p
+        .run_silent(&["list", "--value", "8081"])
+        .unwrap_status("list --value");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 1, "one record carries the value");
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(items[0]["uuid"], carried);
+}
+
+#[test]
+fn list_by_value_applies_before_the_limit() {
+    // The record that does not carry the value is saved FIRST: a filter
+    // that ran after the limit would answer an empty page.
+    let p = Profile::new();
+    save(&p, "a fact without a number", &[]);
+    let carried = save(&p, "the port is 8081", &[]);
+    let out = p
+        .run_silent(&["list", "--value", "8081", "--limit", "1"])
+        .unwrap_status("list --value");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 1, "the limit counts matches, not rows");
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(items[0]["uuid"], carried);
+}
+
+#[test]
+fn list_by_value_pages_the_matches() {
+    let p = Profile::new();
+    let first = save(&p, "the port is 8081 here", &[]);
+    let second = save(&p, "the port is 8081 there", &[]);
+    let third = save(&p, "the port is 8081 everywhere", &[]);
+    let page = p
+        .run_silent(&["list", "--value", "8081", "--limit", "2"])
+        .unwrap_status("list --value");
+    let json = stdout_json(&page);
+    assert_eq!(json["count"], 2);
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(items[0]["uuid"], first);
+    assert_eq!(items[1]["uuid"], second);
+
+    let rest = p
+        .run_silent(&["list", "--value", "8081", "--limit", "2", "--offset", "2"])
+        .unwrap_status("list --value --offset");
+    let json = stdout_json(&rest);
+    assert_eq!(json["count"], 1);
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(items[0]["uuid"], third);
+}
+
+#[test]
+fn list_by_value_answers_empty_for_a_value_nobody_carries() {
+    let p = Profile::new();
+    save(&p, "the port is 9090", &[]);
+    let out = p
+        .run_silent(&["list", "--value", "8081"])
+        .unwrap_status("list --value");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 0);
+}
+
+#[test]
+fn list_by_value_refuses_an_argument_that_is_not_a_value() {
+    let p = Profile::new();
+    for argument in ["80", "abc", "8a81", ""] {
+        let out = p.run_silent(&["list", "--value", argument]);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "'{argument}' must be an invalid argument: stderr: {:?}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // The error names the rule, so the caller learns it from the
+        // refusal instead of guessing.
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("is not a value"),
+            "the error names the rule: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn list_by_value_reads_the_value_a_record_carries_in_its_title() {
+    // The indexed text is the content, the title, the topic key and the
+    // keywords: the filter reads the same four columns the index covers.
+    let p = Profile::new();
+    let titled = save(&p, "a fact about a port", &["--title", "Port 8081"]);
+    let out = p
+        .run_silent(&["list", "--value", "8081"])
+        .unwrap_status("list --value");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 1);
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(items[0]["uuid"], titled);
+}
+
 // --- update / history ---
 
 #[test]

@@ -18,8 +18,8 @@
 //!   idempotency_key, valid_from, valid_until, tags (array, max 32), state
 //!   (default "active"), keywords (comma-separated, max 32) and
 //!   replace_keywords (default false)
-//! - memory_list: optional namespace, state, limit (default 20, clamp to 100),
-//!   offset (default 0)
+//! - memory_list: optional namespace, state, value, limit (default 20, clamp
+//!   to 100), offset (default 0)
 //! - memory_search: query required; optional namespace, limit default 20 clamp 100
 //! - memory_history: uuid required; optional limit
 //! - memory_get: uuid required
@@ -104,6 +104,11 @@ pub struct ListArgs {
     /// State filter (default: all states)
     #[serde(default)]
     pub state: Option<String>,
+    /// Only the memories that carry this value: a run of three or more
+    /// digits, exactly as written (8081 is a value, 80 is not). The
+    /// default is every value.
+    #[serde(default)]
+    pub value: Option<String>,
     /// Max results (default 20, clamped to 100)
     #[serde(default = "default_limit")]
     pub limit: usize,
