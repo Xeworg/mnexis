@@ -73,6 +73,28 @@ test("search, list, show and supersede use the documented flags", async () => {
 	assert.deepEqual(calls[3].args, ["supersede", "--older", "a", "--newer", "b", "--reason", "why"]);
 });
 
+test("list carries the value filter and the offset that pages the matches", async () => {
+	const { exec, calls } = fakeExec([{ code: 0, stdout: '{"items":[]}', stderr: "" }]);
+	const client = createClient({ exec, binary: "mnexis" });
+	await client.list(
+		{ namespace: "ns", value: "8081", limit: 100, offset: 200, full: true },
+		"/w",
+	);
+	assert.deepEqual(calls[0].args, [
+		"list",
+		"--namespace",
+		"ns",
+		"--limit",
+		"100",
+		"--offset",
+		"200",
+		"--full",
+		"--value",
+		"8081",
+		"--json",
+	]);
+});
+
 test("the binary can be overridden with MNEXIS_BIN", async () => {
 	const { exec, calls } = fakeExec([{ code: 0, stdout: "", stderr: "" }]);
 	const client = createClient({ exec, env: { MNEXIS_BIN: "/opt/mnexis" } });

@@ -3,8 +3,9 @@
  * S1-S3, L4).
  *
  * The corpus in `recovery.test.js` runs against a fake that mirrors the engine
- * (oldest-first `list`, no `memory_history` row on save or supersede, the
- * engine's supersede failures). A fake can drift from the engine silently —
+ * (oldest-first `list`, `list --value` with the maximal-digit-run rule, no
+ * `memory_history` row on save or supersede, the engine's supersede
+ * failures). A fake can drift from the engine silently —
  * that is exactly how the first implementation passed its tests and failed in
  * production (L4/B1, L4/B4) — so this file asks the engine itself.
  *
@@ -189,10 +190,22 @@ test("parity: a twin past the page the engine returns is repaired (B1)", { skip 
 	assert.equal(timeline.data?.superseded_by?.[0]?.uuid, saved.details.uuid);
 });
 
-test("parity: a twin behind a saturated ranked answer is repaired (B1)", { skip }, async (t) => {
+test("parity: a twin behind a page of matches is repaired (B1, S6)", { skip }, async (t) => {
 	const { client, workDir, tools } = await realEngine(t);
+	// 140 records that carry NO value: they give the namespace size without
+	// ever being a match, so the page the engine answers proves the filter
+	// runs before the limit (S3) — a `list` that ignored the value would
+	// answer these first.
+	await fillers(client, workDir, 140, (index) => ({
+		namespace: NAMESPACE,
+		title: `Nota de trabajo ${index}`,
+		content: "Nota de trabajo sobre el despliegue y su operacion diaria.",
+		keywords: "nota, bitacora",
+	}));
 	// 120 one-line records that all carry the value: they fill the engine's
-	// ranked page (`MAX_LIMIT`, 100) without ever being twins of this fact.
+	// page (`MAX_LIMIT`, 100) of matches without ever being twins of this
+	// fact, and they are written before the twin, so the twin is the 121st
+	// match — behind the first page of MATCHES, not just of the namespace.
 	await fillers(client, workDir, 120, (index) => ({
 		namespace: NAMESPACE,
 		title: `Ticket ${index}`,
@@ -211,6 +224,26 @@ test("parity: a twin behind a saturated ranked answer is repaired (B1)", { skip 
 	);
 	assert.equal(older.code, 0, `the twin failed to save: ${older.stderr.trim()}`);
 
+	// The page of matches the engine answers first: every one of its records
+	// carries the value, and the twin is NOT among them, so a repair that
+	// trusted one page would miss it (S3, S6).
+	const firstPage = await client.run(
+		["list", "--namespace", NAMESPACE, "--value", "8081", "--limit", "100", "--full"],
+		{ json: true, cwd: workDir },
+	);
+	assert.equal(firstPage.code, 0, `list --value failed: ${firstPage.stderr.trim()}`);
+	assert.equal(firstPage.data?.items?.length, 100, "the first page of matches is full");
+	assert.equal(
+		firstPage.data.items.every((item) => new RegExp("(?:^|[^0-9])8081(?:[^0-9]|$)").test(item.content ?? "")),
+		true,
+		"every record on the page carries the value: the filter runs before the limit",
+	);
+	assert.equal(
+		firstPage.data.items.some((item) => item.uuid === older.data.uuid),
+		false,
+		"the twin sits past the first page of matches",
+	);
+
 	const saved = await tools.get("mnexis_save").execute(
 		"call-1",
 		{
@@ -223,8 +256,12 @@ test("parity: a twin behind a saturated ranked answer is repaired (B1)", { skip 
 		context(workDir),
 	);
 	assert.notEqual(saved.isError, true, "the save succeeded");
-	assert.equal(saved.details.recovery?.source, "list", "the saturated answer sent the repair to the whole namespace");
+	assert.equal(saved.details.recovery?.source, "value", "the repair asked the engine for the records that carry the value");
 	assert.equal(saved.details.recovery?.superseded?.[0]?.uuid, older.data.uuid);
+	// S6: the answer no longer declares a check that did not finish.
+	const answerText = saved.content.map((block) => block.text).join("\n");
+	assert.doesNotMatch(answerText, /duplicate check did not finish/i, "the answer declares no unfinished check");
+	assert.equal(saved.details.recovery_failed, undefined, "and nothing failed");
 
 	const live = liveForFact(await activeRecords(client, workDir), "8081", "puerto");
 	assert.deepEqual(live.map((item) => item.uuid), [saved.details.uuid], "exactly one live record for the fact");
