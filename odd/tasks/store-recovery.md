@@ -1,6 +1,6 @@
 # Store recovery, productized
 
-**Feature:** `store-recovery` · **Branch:** `feat/store-recovery` · **Status:** planned
+**Feature:** `store-recovery` · **Branch:** `feat/store-recovery` · **Status:** shipped — implemented, twice verified, the PR is the human's
 **Board:** `odd/next.md` item 18 (the enforcement arm)
 **Evidence base:** `tmp/bench/skill-lean-report.md` `## The enforcement arm`
 (R1 10/10 against 0/10 at +72 tokens per call), `odd/tasks/extension-enforcement.md` L4
@@ -80,11 +80,11 @@ scope, and the shipped skill body keeps whatever it says today.
 
 | id | what | specs | route | commit |
 | --- | --- | --- | --- | --- |
-| T1 | the twin rule and its guards, test-first | S1-S3, S6 | worker | feat(extension): repair the twin a second save creates |
-| T2 | observability: the tool result names both records, one log line per repair | S4 | worker | (same commit) |
-| T3 | the three-case regression corpus | S6 | worker | (same commit) |
-| T4 | independent verification of the data effect | S1-S3, S5 | verify | — |
-| T5 | board and README line | S4, S7 | inline | docs: the extension repairs a twin |
+| T1 | the twin rule and its guards, test-first | S1-S3, S6 | worker | `2a4ae0e` feat(extension): repair the twin a second save creates |
+| T2 | observability: the tool result names both records, one log line per repair | S4 | worker | `2a4ae0e` (same commit) |
+| T3 | the three-case regression corpus | S6 | worker | `2a4ae0e` (same commit) |
+| T4 | independent verification of the data effect | S1-S3, S5 | verify | two rounds (L4, L5): round 1 refused it, round 2 closed B2-B4 |
+| T5 | board and README line | S4, S7 | inline | `c333729` docs(odd): the store recovery contract, its ceiling and its two verification rounds |
 
 ## Log
 
@@ -152,3 +152,24 @@ refusals), failure journaling for search, show and supersede, and no collateral
 change to a save that needs no repair. `mnexis_list`'s description claimed
 "newest first", which the engine does not do — the belief that produced B1 —
 and it is corrected here.
+
+**L6** — the state at the cut, for the PR. The suites are green against the
+tree as it stands: `node --test "extensions/mnexis-memory/test/*.test.js"` →
+**158 tests, 156 pass, 0 fail, 2 skipped** (the parity suite is opt-in), and
+`MNEXIS_PARITY_BIN=$HOME/.local/bin/mnexis node --test
+"extensions/mnexis-memory/test/parity.recovery.test.js"` → **2/2** against
+mnexis 0.5.0-dev in a temporary data directory. The branch sits **directly on
+`origin/main`** (`95154a8`), the tree is clean, and there is nothing to rebase.
+The change is one work unit that cannot be split without breaking what it
+pins: the rule and its guards, the three-case corpus and the parity suite
+travel with the code they verify (606 lines in `index.js`, 1 438 in the two
+suites).
+
+**The delivery note that is easy to miss:** the extension is **embedded in the
+executable** (`src/assets.rs:43`, `include_str!`), so this change reaches the
+users with the next **release**, not with the merge — and the local host only
+after `./install.sh extensions`, which rebuilds a binary older than the tree
+(the trap of #52: a stale binary installs a stale extension). The three
+decisions the cut left open (ship `fat` or `head`, the doctrine scorer's two
+artifacts, and the value filter that would remove the 2 000 ceiling) are
+outside this feature and none of them blocks it.
