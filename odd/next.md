@@ -1004,3 +1004,39 @@ measured. And the extension mnexis ships today
 registers tools and a `session_start` handler — so the arms measured a hook
 the product does not have. Neither correction revives the combo: D3 failed
 on behavior, and `head` needed no section to reach 10/10.
+
+### 18. The enforcement arm — the control does buy something, and it is the store
+
+**Feature `extension-enforcement`** (`odd/tasks/extension-enforcement.md`; the
+criterion in `tmp/bench/extension-recovery-measurement.md`, written before the
+run; the numbers in `tmp/bench/skill-lean-report.md`, `## The enforcement
+arm`). Two arms, one image, one binary and **the same skill (`fat`) in both**:
+`actual` is the extension `mnexis agent install --env pi` ships today, `nueva`
+is that same extension plus store recovery and post-compaction context
+recovery. N = 10 per arm per chain, 80 chains, zero empty answers, zero
+invalid runs. The two recoveries ride one arm by the human's decision, so this
+section — not the design — separates them.
+
+| criterion | result | the number |
+| --- | --- | --- |
+| R0 the arms are what they claim | **HOLDS** | `actual` wrote 0 intervention lines |
+| R1 the enforcement repairs the twin | **HOLDS** | `rec`: `nueva` one live record 10/10, `actual` **0/10** |
+| R2 no regression | **HOLDS** | `dup` 10/10 vs 10/10, `cnf` 5/10 vs 4/10, answers 10/10 everywhere |
+| R3 the fact survives a compaction | **HOLDS** | `cmp`: 8081 answered 10/10, 10/10 runs compacted |
+| R4 enforcement is cheap | **HOLDS** | dup +35, cnf −2 069, rec +72, cmp +179 tokens per call (bar +200) |
+| R5 the hook is real | **HOLDS** | `rec` 10 interventions, `cmp` 10, `dup` not exercised, `cnf` not applicable |
+
+**Three findings worth keeping.** (1) The store recovery is real: in `rec`,
+where the promulgated title is asserted as the user's exact request, the
+advising arm left **two live rows in all ten runs** and the enforcing arm left
+**one in all ten**, for **+72 tokens per call**. (2) That also corrects batch
+2: the doctrine does not break on an unfamiliar title (10/10 in `head` there),
+it breaks on an **imposed** one. (3) The context recovery bought nothing: in
+`cmp` both arms answered 8081 10/10 — `actual` by searching the store as the
+product intends — while the injection saved no calls (median 16.0 against
+15.5) and cost **+179 tokens per call**.
+
+**What is still the human's:** whether to productize the store half, which is
+bench-only today, and the two M5 decisions that item 17 left open (ship `fat`
+or `head`; whether to correct the doctrine scorer's two artifacts). The
+context half is not worth shipping on this evidence.
