@@ -1,8 +1,9 @@
 # The board — what is done, what is open, what comes next
 
 **Last updated:** 2026-10-28 (item 17: the lean-skill experiment — the body is
-not read where it counts, and the harness pays 755 tokens a call; before
-that: item 16: the pricing was measured, lost and
+not read where it counts, the harness pays 755 tokens a call, and the ship
+is `head`: the 18 184-byte body is replaced by the measured 1 103-byte one;
+before that: item 16: the pricing was measured, lost and
 was reverted — the door carries whole facts again, and the door is in the
 MCP surface; before that: item 14 landed: the door's answer is priced
 and declares its coverage — M3 and M4 of the order the re-read metric
@@ -888,6 +889,33 @@ experiment.
 
 ### 17. The lean skill — measured: the body is not read, and the harness costs more than the file
 
+**The ship (the human's decision, 2026-10-28): `head` ships.** The fat body
+(18 184 B) is replaced by the short one (1 103 B) — byte for byte the `head`
+arm of the batch, nothing edited, so what ships is exactly what was
+measured. The reasons, in the order they matter:
+
+- **the body was never read** — `fat` read it **0 of 30** write sessions and
+  1 of 60 measured ones. The only part of the file that reaches the model is
+  the description pi injects, and it does not change.
+- **the behaviour does not move** — C1 and C4 hold for every arm, and on the
+  doctrine chains `head` is 10/10 on `dup` where `fat` was 9/10, equal on
+  `cnf`, and cheaper per call (5 829 / 6 005 against 6 202 / 7 101).
+- **the rules live in the tools, not in the file** — P1 registered it before
+  the run: the title rule is carried by the description of `mnexis_save`, and
+  the CLI declares its own setup in its own error (`run 'mnexis init' first`).
+- **the extension now covers the half the fat body was teaching** — the
+  store half is repaired by the shipped extension (PR #99, item 19), and
+  `fat` was the only arm that ended with two live rows for the port (1/10).
+
+**What is lost, stated plainly:** the fat body carried operational recipes
+(`mnexis init`, the binding, the doctor) that no agent ever read. If one ever
+does, the tool descriptions and the CLI's own errors carry the rules.
+
+**The consequence for the release:** the skill ships inside the binary
+(`src/assets.rs:33`), so this reaches the users with the next release — and
+the local host needs a rebuild before `./install.sh skills` installs the new
+one, because a stale binary installs a stale skill.
+
 **M5, closed with its numbers** (`odd/tasks/skill-lean.md`; the criterion in
 `tmp/bench/skill-lean-measurement.md`, written before any run; the numbers
 in `tmp/bench/skill-lean-report.md`). Four arms, one image
@@ -1004,3 +1032,71 @@ measured. And the extension mnexis ships today
 registers tools and a `session_start` handler — so the arms measured a hook
 the product does not have. Neither correction revives the combo: D3 failed
 on behavior, and `head` needed no section to reach 10/10.
+
+### 18. The enforcement arm — the control does buy something, and it is the store
+
+**Feature `extension-enforcement`** (`odd/tasks/extension-enforcement.md`; the
+criterion in `tmp/bench/extension-recovery-measurement.md`, written before the
+run; the numbers in `tmp/bench/skill-lean-report.md`, `## The enforcement
+arm`). Two arms, one image, one binary and **the same skill (`fat`) in both**:
+`actual` is the extension `mnexis agent install --env pi` ships today, `nueva`
+is that same extension plus store recovery and post-compaction context
+recovery. N = 10 per arm per chain, 80 chains, zero empty answers, zero
+invalid runs. The two recoveries ride one arm by the human's decision, so this
+section — not the design — separates them.
+
+| criterion | result | the number |
+| --- | --- | --- |
+| R0 the arms are what they claim | **HOLDS** | `actual` wrote 0 intervention lines |
+| R1 the enforcement repairs the twin | **HOLDS** | `rec`: `nueva` one live record 10/10, `actual` **0/10** |
+| R2 no regression | **HOLDS** | `dup` 10/10 vs 10/10, `cnf` 5/10 vs 4/10, answers 10/10 everywhere |
+| R3 the fact survives a compaction | **HOLDS** | `cmp`: 8081 answered 10/10, 10/10 runs compacted |
+| R4 enforcement is cheap | **HOLDS** | dup +35, cnf −2 069, rec +72, cmp +179 tokens per call (bar +200) |
+| R5 the hook is real | **HOLDS** | `rec` 10 interventions, `cmp` 10, `dup` not exercised, `cnf` not applicable |
+
+**Three findings worth keeping.** (1) The store recovery is real: in `rec`,
+where the promulgated title is asserted as the user's exact request, the
+advising arm left **two live rows in all ten runs** and the enforcing arm left
+**one in all ten**, for **+72 tokens per call**. (2) That also corrects batch
+2: the doctrine does not break on an unfamiliar title (10/10 in `head` there),
+it breaks on an **imposed** one. (3) The context recovery bought nothing: in
+`cmp` both arms answered 8081 10/10 — `actual` by searching the store as the
+product intends — while the injection saved no calls (median 16.0 against
+15.5) and cost **+179 tokens per call**.
+
+**What is still the human's:** whether to productize the store half, which is
+bench-only today, and the two M5 decisions that item 17 left open (ship `fat`
+or `head`; whether to correct the doctrine scorer's two artifacts). The
+context half is not worth shipping on this evidence.
+
+### 19. Store recovery productized — and the ceiling it declares
+
+**Feature `store-recovery`** (`odd/tasks/store-recovery.md`, Log L1-L5). The
+enforcement arm's winning half is now in the shipped extension
+(`extensions/mnexis-memory/index.js`): a save that would leave two live records
+for one fact supersedes **every** qualifying twin onto the saved record, so the
+fact ends with one live record. The context half stays out: it answered nothing
+and cost +179 tokens per call (item 18).
+
+**Two rounds of independent verification shaped it, and both found real
+defects.** The first refused the change because the candidate page was the 50
+*oldest* rows — the repair was silently inert in any project with more than 50
+records, reproduced at 64 records with five live twins and zero repairs. The
+fix searches by the value the twin must carry and escalates to an exhaustive
+walk when the ranked answer saturates. The second round confirmed B2-B4 closed
+(only genuine twins are retired; every twin, not one; no test claims a history
+row the engine never writes) and left one edge open: the walk stops at 2 000
+records. That is **declared, not hidden** — the answer the model reads says the
+duplicate check did not finish and that a second live record may remain.
+
+**Known limits, on purpose:** the 2 000-record ceiling (an engine filter on
+value would remove the walk entirely — a separate feature); the repair is not
+transactional, so a concurrent save racing the same fact can leave a twin for
+the next one; a twin whose fact carries no number is out of scope by the
+measured rule.
+
+**Evidence:** `node --test "extensions/mnexis-memory/test/*.test.js"` → 158
+tests, 156 pass, 2 skipped (the parity suite is opt-in); with the parity binary,
+`MNEXIS_PARITY_BIN=$HOME/.local/bin/mnexis node --test
+"extensions/mnexis-memory/test/parity.recovery.test.js"` → 2/2 against mnexis
+0.5.0-dev in a temporary data directory.
