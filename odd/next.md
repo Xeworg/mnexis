@@ -1,6 +1,9 @@
 # The board — what is done, what is open, what comes next
 
-**Last updated:** 2026-10-28 (item 17: the lean-skill experiment — the body is
+**Last updated:** 2026-10-29 (item 20: the board catches up — the steering
+answer that only the branch carried is on the board, the doctrine scorer's
+two artifacts are corrected in the instrument, and 0.5.0 is released; before
+that: item 17: the lean-skill experiment — the body is
 not read where it counts, the harness pays 755 tokens a call, and the ship
 is `head`: the 18 184-byte body is replaced by the measured 1 103-byte one;
 before that: item 16: the pricing was measured, lost and
@@ -51,6 +54,13 @@ archived and **not** merged — see item 1c). The `session-recall` slices
 (`feat/session-recall-command`, `feat/session-recall-anchor`,
 `feat/session-recall-state`) and the leftover `feat/session-recall` are
 merged and waiting to be deleted.
+
+**Released: v0.5.0** (2026-10-29) — the store recovery productized in the
+extension (#99), the skill shipping its measured `head` (#100, inside
+#101), the door carrying whole facts and declaring its coverage (#92, #96)
+and the door in the MCP surface (#94). The schema did not move. `main` is
+**`af5aa29`** (the release commit; the merge is `21777ee`) and the installed
+binary is **0.5.0**, reinstalled from the release itself.
 
 **Released: v0.4.0** (2026-10-26), the door and the call budget: the
 one-call door as a pi tool (#64), the doctor's check and repair for the
@@ -470,11 +480,17 @@ bench asks a knowledge-shaped question ("¿en qué puerto
 escucha?"), while the recurring question is steering-shaped ("¿dónde
 quedamos?"), which is exactly what the typed-memory idea is for.
 
-Two debts are still open: the **re-measurement** of the door, which needs
-the bench environment (docker + the model provider) and cannot run in
-the sandbox that wrote it, and the **steering-shaped experiment** that
-the re-measurement has to precede (issue #55): whether a typed priority
-earns its place, measured with the criterion written before the numbers.
+Two debts — one closed, one next. **The re-measurement ran** (2026-10-26,
+`tmp/bench/door-tool-report.md`, N=10 against `main`@`68ee9fd`): 2 of its 5
+criteria hold. The hand-rebuild is gone (median `mnexis_show` 0, was 3) and
+quality held (10/10, zero invented) — but **the priced pair displaced it,
+not the door**: only 5/10 runs called `mnexis_context`, the rest answered
+with `workspace → list`, and the cost did not move (44 237 tokens vs 44 478,
+7 calls vs 9). The next cost lever is the fixed prefix, not the door's
+budget. **The steering-shaped experiment ran too** (2026-10-26, 3 arms × 10
+runs × 2 phases, criterion in `tmp/bench/steering-measurement.md`, written
+before any arm): **the answer is no** — item 20 carries the numbers and
+what it settles.
 
 **The type axis, honest (#55, part one).** `memory_type` was half-built:
 a free-text column that travelled in every read shape and was filtered
@@ -489,7 +505,10 @@ SQL and before the limit. The vocabulary was the human's call: the seven
 kinds, `fact` included, so not a single stored row had to be rewritten.
 
 What is NOT settled: whether a typed priority ever earns its place. That
-is the steering experiment, and it needs the bench environment.
+is the steering experiment, and it needs the bench environment. **It ran on
+2026-10-26 and answered no** (item 20): the type stays what #66 shipped, an
+attribute the agent writes and a filter it applies. What the run leaves
+open is the *pruning* form of the idea, not the tier.
 
 **The identity debt, closed (#58).** The records that predate the
 identity work carried no title at all, so every priced answer named
@@ -881,11 +900,13 @@ calls and serialises the typed envelope as it is; the differential leaves
 the other six read tools' answers **byte-identical**. Item 11 is closed.
 
 **What comes next.** The question the measurement sharpened: **which facts
-are worth the answer's weight** — the typed priority that would decide it
-(#55) is still the unmeasured experiment, and now it has a concrete form:
-the door should carry the facts **when the task is about the facts**, and
-carry less when it is not. And **M5**: the lean skill, with its own
-experiment.
+are worth the answer's weight**. The typed priority that would decide it
+(#55) was measured on 2026-10-26 and **retired**: the tier costs ~35 % for
+a 10/10 the shipped engine already gives (item 20). What is still open is
+the lever that run did not touch — the door should carry the facts **when
+the task is about the facts**, and carry less when it is not. That is a
+*pruning* experiment, not an addition, and it needs the bench environment.
+And **M5**: the lean skill, with its own experiment.
 
 ### 17. The lean skill — measured: the body is not read, and the harness costs more than the file
 
@@ -986,16 +1007,19 @@ written before the run). **80 of 80 chains, zero empty answers:**
 | D1 the reinforcement pays | **HOLDS** | `combo` one live record 10/10, answer 8081 10/10 |
 | D2 the insurance is priced | **FAILS** | +244 (dup) and +259 (cnf) tokens per call against `head`, bar was +200 |
 | D3 no better than `head`, no ship | **FAILS** | 10/10 against 10/10 — `head` was already perfect |
-| D4 nothing regresses | **FAILS, both hits are artifacts** | the 15 "live stale records" are all the *same* active row recalling the old value in its own sentence; the 1 "invented" is a hypothetical ("como 8080 o similar") |
+| D4 nothing regresses | **FAILS as the batch was scored — and HOLDS once the instrument is corrected** | the 15 "live stale records" were all the *same* active row recalling the old value in its own sentence, and the 1 "invented" was a hypothetical ("como 8080 o similar"); the corrected scorer reads invented 0 and live stale records 0 (item 20) |
 
 **The reinforcement is not adopted**, on two independent grounds: `head`
 with 1 103 B already reached 10/10 in the same chain, so the section could
 at best tie (P1, registered before the run, called exactly this), and the
-section costs more per call than its own ~170 tokens predict. D4 is
+section costs more per call than its own ~170 tokens predict. D4 was
 reported against the criterion as written, not corrected to fit: with the
 prose mentions excluded, `cnf`'s one-record column is **10/10 in all four
 arms** and the real stale count is 0, so the artifacts cannot flatter an
-arm — and D2 and D3 fail on their own numbers either way.
+arm — and D2 and D3 fail on their own numbers either way. **Both artifacts
+are now corrected in the scorer** (2026-10-29, item 20): the criterion file
+is untouched, and the corrected run reads D4 **HOLDS** with D1-D3 printing
+the same numbers.
 
 Two store-side findings survive the batch. `fat` is the only arm that ended
 with two live rows for the port (`ddup-fat9`, 1/10 — and it marked the
@@ -1067,7 +1091,8 @@ product intends — while the injection saved no calls (median 16.0 against
 **What is still the human's:** whether to productize the store half, which is
 bench-only today, and the two M5 decisions that item 17 left open (ship `fat`
 or `head`; whether to correct the doctrine scorer's two artifacts). The
-context half is not worth shipping on this evidence.
+context half is not worth shipping on this evidence. **Both are settled
+now** (item 20): the store half shipped (#99) and the scorer was corrected.
 
 ### 19. Store recovery productized — and the ceiling it declares
 
@@ -1100,3 +1125,80 @@ tests, 156 pass, 2 skipped (the parity suite is opt-in); with the parity binary,
 `MNEXIS_PARITY_BIN=$HOME/.local/bin/mnexis node --test
 "extensions/mnexis-memory/test/parity.recovery.test.js"` → 2/2 against mnexis
 0.5.0-dev in a temporary data directory.
+
+### 20. The board catches up — the steering answer, the corrected scorer, and 0.5.0
+
+Three things landed since item 19, and two debts stay open.
+
+**The steering experiment answered no, and the board was not carrying it.**
+The experiment ran on 2026-10-26 (3 arms × 10 runs × 2 phases, criterion in
+`tmp/bench/steering-measurement.md`, written before any arm) and its result
+lived only in the branch `bench/steering-arms`, never merged — so `main`'s
+board still called the typed priority unmeasured. The numbers: the shipped
+engine answered the steering-shaped question ("¿por dónde quedamos?")
+**10/10** for a median **29 493** tokens; the typed tier reached the same
+10/10 for **39 925 (+35 %)** and the tier plus a steering pointer for
+**40 220 (+36 %)**, with the tax neutral in phase K. The pre-registered
+rule ("the type ascends only if an arm passes the tax, the prize and the
+cost") retires the idea: **the type stays what #66 shipped** — an attribute
+the agent writes and a filter it applies — and it does not ascend to a
+retrieval input. The mechanism: the tier reorders what the text search
+already matched, so the state records sit at the front of the budgeted
+answer and the budget still fills up; the window was never the ranking.
+
+**What that does NOT settle.** The run *added* a tier; it never *removed*
+content. The lever the measurement sharpened is still open in its pruning
+form: the door should carry the facts **when the task is about the facts**
+and carry less when it is not (item 16). That is a different experiment,
+and the steering run does not answer it.
+
+**The doctrine scorer's two artifacts are corrected.** In the instrument, not
+in the criterion: `doctrine-measurement.md` was written before the numbers
+and is not edited to fit them. The scorer now reads a live row that carries
+the current value as **not** a stale row (the matcher takes the value the
+record must not carry), and a number the answer quotes to reject or offers
+as a hypothetical as **not** an invented value. On the same transcripts D4
+reads **HOLDS** (invented 0, live stale records 0), D1-D3 print the same
+numbers they printed before, and `cnf`'s one-record column reads **10/10
+in all four arms** — the column the report had already predicted from the
+per-run evidence. `score-doctrine.py --selftest`: eight cases, 0 failed.
+The same defect is still in `score-steering.py`, whose transcripts were not
+kept: it is corrected the next time that batch runs.
+
+**0.5.0 is released** (2026-10-29): the store recovery in the extension
+(#99), the skill's measured `head` (#100 inside #101), the door with whole
+facts and its coverage declaration (#92, #96) and the door in the MCP
+surface (#94). The schema did not move. The workflow ran the four jobs
+green and the published assets were verified by hand: every checksum in
+`SHA256SUMS` matches, the tarball carries `VERSION` 0.5.0, and the
+installer in a throwaway HOME installs 0.5.0. The local host runs the
+released binary, with the extension and the skill byte-identical to `main`.
+
+**The branches are cleaned.** The merged ones are gone (16 remote, 5 local),
+the bench branches are preserved in the remote (`bench/chrome-shape`,
+`bench/prefix-cost`, `bench/steering-arms` — the criteria are the artifact,
+and `tmp/bench/` is gitignored), and the unmerged `near-duplicate-titles`
+work is archived as `origin/archive/near-duplicate-titles`: measured,
+superseded, kept for the record.
+
+**The two debts that remain, and what each one needs.**
+
+1. **The value filter** — the feature that would kill the **2 000-record
+   ceiling** the store repair declares (item 19). Today the repair finds a
+   twin by asking the engine for a ranked search of the value (a page of
+   100, the engine's own `MAX_LIMIT`); when that answer comes back
+   saturated it walks the namespace page by page, up to 20 pages
+   (`TWIN_SCAN_MAX_PAGES`), and past that it *declares* that the check did
+   not finish. An engine-side filter by value — a predicate the CLI can ask
+   for — would answer the question in one call and remove both the ceiling
+   and the walk. It is a change in the engine (`src/`), with its own branch,
+   its own PR and its own measurement; the board's own words are that raising
+   the ceiling is a separate decision, because every number has a boundary.
+2. **The door's re-measurement against the merged binary.** The door was
+   priced, measured, lost and reverted (items 15 and 16); the revert was
+   measured once, against the branch tree. Re-measuring against the
+   released binary needs the bench environment (docker image plus the model
+   provider), which the sandbox that wrote the bench cannot run. The
+   steering run narrowed what that re-measurement can change: the lever it
+   tested was negative, so what is left is the door's **weight** against the
+   fixed prefix, which is where the same run said the cost lever lives.
