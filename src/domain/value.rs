@@ -185,7 +185,9 @@ mod tests {
 
     #[test]
     fn a_number_that_is_not_a_value_is_an_invalid_argument() {
-        for raw in ["", "   ", "80", "8", "8a81", "port", "8081a", "-8081", "8081.0", "٨٠٨١"] {
+        for raw in [
+            "", "   ", "80", "8", "8a81", "port", "8081a", "-8081", "8081.0", "٨٠٨١",
+        ] {
             let error = parse(raw).unwrap_err();
             assert!(
                 matches!(error, MnexisError::InvalidArgument { .. }),
@@ -249,10 +251,28 @@ mod tests {
 
     #[test]
     fn a_record_carries_the_value_in_any_of_its_indexed_columns() {
-        assert!(record_carries_value("the port is 8081", "", "", &[], "8081"));
+        assert!(record_carries_value(
+            "the port is 8081",
+            "",
+            "",
+            &[],
+            "8081"
+        ));
         assert!(record_carries_value("", "Port 8081", "", &[], "8081"));
         assert!(record_carries_value("", "", "port-8081", &[], "8081"));
-        assert!(record_carries_value("", "", "", &["port 8081".to_string()], "8081"));
-        assert!(!record_carries_value("the port is 9090", "", "", &[], "8081"));
+        assert!(record_carries_value(
+            "",
+            "",
+            "",
+            &["port 8081".to_string()],
+            "8081"
+        ));
+        assert!(!record_carries_value(
+            "the port is 9090",
+            "",
+            "",
+            &[],
+            "8081"
+        ));
     }
 }

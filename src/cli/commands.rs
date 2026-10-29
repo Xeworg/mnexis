@@ -719,6 +719,7 @@ fn relations_of(profile: &mut Profile, memories: &[Memory]) -> Vec<serde_json::V
 
 // --- list ---
 
+#[allow(clippy::too_many_arguments)]
 pub fn list(
     profile: &mut Profile,
     namespace: Option<String>,

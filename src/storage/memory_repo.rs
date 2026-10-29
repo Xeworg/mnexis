@@ -157,7 +157,8 @@ impl SqliteMemoryRepository {
             for _ in 0..4 {
                 param_refs.push(pattern as &dyn ToSql);
             }
-        }        sql.push_str(if newest_first {
+        }
+        sql.push_str(if newest_first {
             " ORDER BY id DESC LIMIT ? OFFSET ?"
         } else {
             " ORDER BY id LIMIT ? OFFSET ?"
@@ -497,7 +498,16 @@ impl MemoryRepository for SqliteMemoryRepository {
         states: &[String],
         limit: usize,
     ) -> Result<Vec<Memory>, MnexisError> {
-        self.list_filtered(namespaces, states, limit, 0, false, true, memory_types, None)
+        self.list_filtered(
+            namespaces,
+            states,
+            limit,
+            0,
+            false,
+            true,
+            memory_types,
+            None,
+        )
     }
 
     fn count_in(&self, namespaces: &NamespaceScope) -> Result<i64, MnexisError> {

@@ -86,6 +86,7 @@ pub trait MemoryRepository {
     /// [`crate::domain::value`]). It filters before the limit too, and the
     /// offset pages the matches, not the rows the engine read. `None`
     /// filters nothing.
+    #[allow(clippy::too_many_arguments)]
     fn list_in_typed(
         &self,
         namespaces: &NamespaceScope,
