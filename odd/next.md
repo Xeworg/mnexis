@@ -1120,6 +1120,12 @@ transactional, so a concurrent save racing the same fact can leave a twin for
 the next one; a twin whose fact carries no number is out of scope by the
 measured rule.
 
+**The ceiling is gone (item 21).** The engine answers `mnexis list --value
+<N>` with every record that carries the value, exhaustively, so the repair
+asks it instead of walking the namespace: the 2 000-record ceiling and the
+walk behind it are removed, not raised, and the declaration that the
+duplicate check did not finish now names a real failure instead of a bound.
+
 **Evidence:** `node --test "extensions/mnexis-memory/test/*.test.js"` → 158
 tests, 156 pass, 2 skipped (the parity suite is opt-in); with the parity binary,
 `MNEXIS_PARITY_BIN=$HOME/.local/bin/mnexis node --test
@@ -1194,6 +1200,11 @@ superseded, kept for the record.
    and the walk. It is a change in the engine (`src/`), with its own branch,
    its own PR and its own measurement; the board's own words are that raising
    the ceiling is a separate decision, because every number has a boundary.
+   **Delivered by item 21**: the engine answers `mnexis list --value <N>`
+   exhaustively, the repair asks it instead of walking, and the ceiling is
+   gone rather than raised. The declaration that the duplicate check did not
+   finish now names a real failure (or the pathological case of more than
+   2 000 records carrying the same value) instead of the namespace's size.
 2. **The door's re-measurement against the merged binary.** The door was
    priced, measured, lost and reverted (items 15 and 16); the revert was
    measured once, against the branch tree. Re-measuring against the
@@ -1202,3 +1213,67 @@ superseded, kept for the record.
    steering run narrowed what that re-measurement can change: the lever it
    tested was negative, so what is left is the door's **weight** against the
    fixed prefix, which is where the same run said the cost lever lives.
+
+### 21. The value filter — the engine answers "which records carry this value?"
+
+**Feature `value-filter`** (`odd/tasks/value-filter.md`). The debt of item 19
+is closed: the 2 000-record ceiling the store repair declared is **gone**,
+not raised. The engine has a filter by value, the repair asks it, and the
+walk behind the ceiling no longer exists.
+
+**The surface.** `mnexis list --value <N>`, and the same filter on the MCP
+tool `memory_list` (an optional `value`) and on the extension's own
+`mnexis_list`. It lives on `list` and not on `search` because `list` is the
+exhaustive surface: it is ordered by id and paged, while `search` is a
+ranking with no paging, and paging a ranking by OFFSET can duplicate or lose
+rows between pages.
+
+**What a value is.** A run of three or more digits, exactly as written: the
+same definition the bench measured (R1) and the one the extension's twin rule
+applies. `8081` is carried by `the port is 8081` and by `v8081`; it is not
+carried by `80810` nor by `18081`. The text that is read is the record's
+**indexed text** — content, title, topic key and keywords, the four columns
+the FTS5 index covers — so the answer is a superset of the records whose
+content carries the value, which is the safe direction for a filter that
+feeds a repair.
+
+**The rules.** The filter applies **before** the limit (a filtered answer is
+not a short answer), `--offset` pages the matches, a value nobody carries is
+an empty answer, and an argument that is not a value (`80`, `abc`) is an
+`INVALID_ARGUMENT` whose message says what a value is.
+
+**The measurement** (`tmp/bench/value-filter-measurement.md`, criterion
+pre-registered in S7 of the feature document, against the real engine in a
+temporary data directory — no docker, no model provider):
+
+- **C1, exhaustive**: a namespace of 2 752 records with three that carry
+  `8081` answers with exactly those three, one page, no gap, no duplicate.
+- **C2, the ceiling is crossed**: the twin sits at row **2 501** — past the
+  2 000 the old walk stopped at — and the filter finds it in the **first
+  page**.
+- **C3, the cost follows the matches**: **one** engine call finds the twin
+  (the old path was one ranked search plus up to twenty `list` pages, and
+  past 2 000 records it still had not found it).
+- **C4, no other surface moves**: 18 commands × 2 modes (text and `--json`),
+  **36 comparisons, 36 identical**, against the base commit `9f129c1` —
+  stdout, stderr and exit code compared byte for byte.
+- **C5, the filter is honest**: a value nobody carries answers empty (exit
+  0); `80`, `abc` and `8a81` are refused with exit 2 and the rule in the
+  message.
+
+**One design decision, stated.** The cut of 2026-10-29 proposed a
+token-exact match (the FTS5 tokenizer's). The feature departs from it on
+purpose: the extension's measured twin rule reads `8081` out of `v8081`, so a
+token-exact filter would answer the engine's question with **fewer** records
+than the twin rule asks for, and the repair would miss a twin. Digit runs are
+the superset direction. The cost is that the rule cannot be an FTS5 `MATCH`
+— a digit run that is not a token is invisible to the tokenizer, and SQLite
+has no sound pure-SQL formulation of "maximal digit run" (the LIKE/GLOB
+boundary trick matches different occurrences and reports a false positive:
+`a1212b` with the value `12`). So the engine narrows in SQL with a sound
+superset predicate (`LIKE '%value%'` over the four indexed columns) and
+decides exactly in Rust.
+
+**The debt that remains** is the door's re-measurement against the released
+binary, which needs the bench environment (docker image plus the model
+provider).

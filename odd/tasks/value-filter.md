@@ -54,9 +54,16 @@ value either.
 the same semantics and the same validation.
 
 **S6** — The extension's repair asks the engine for the records that carry the value and never
-walks the namespace. The answer the model reads no longer carries the declaration that the
-duplicate check did not finish, and the 2 000-record ceiling is gone from the extension's
-contract, from its README and from the board's item 19.
+walks the namespace. The **2 000-record ceiling over the namespace's records** is gone from the
+extension's contract, from its README and from the board's item 19: the engine's answer is
+exhaustive, so the repair reads the matches and nothing else.
+
+*Amended after the corpus was written (see L6):* the first wording of this spec said the answer
+"no longer carries the declaration that the duplicate check did not finish". That was too strong,
+and the worker's own corpus found where: the declaration is still **right** when the check really
+did not finish (the engine refused, or more than 2 000 records carry the same value — a bound over
+the matches, not over the namespace). What is gone is the ceiling that made the declaration
+routine. The declaration stays for a real failure, as the store recovery's own S4 demands.
 
 **S7** — The criterion, written **before** the numbers (measured against the real engine, in a
 temporary data directory; it needs no docker and no model provider):
@@ -123,3 +130,45 @@ and decides exactly in Rust.
 paging it is unsafe — S1), any change to the FTS5 index or to its tokenizer (public behaviour, and
 the search's own contract), any change to the extension's twin rule (measured, and it stays), and
 the re-measurement of the door (the other open debt, which needs docker and a model provider).
+
+**L4** — the slice boundary, recorded as the harness asks. The engine slice was **753 authored
+lines in one commit** (`7fb3f6f`) and the extension slice **418** (`32b16b3`), over the ~400 the
+workflow aims at, and neither could be split: the repository's method grew a parameter, so the
+trait, the storage adapter, the service, the CLI and the MCP mirror travel together (a tree with
+half of them does not compile, and a commit that does not compile is not a reviewable slice); and
+the extension's slice is the high-risk item (it changes what a save supersedes), which the
+workflow asks to travel alone so a native review can take it by itself. The docs are the third
+commit.
+
+**L5** — the criterion, measured (S7): `tmp/bench/value-filter-measurement.md`, against the real
+engine in a temporary data directory, no docker and no model provider.
+
+- **C1**: a namespace of 2 752 records with three that carry `8081` answers with exactly those
+  three — one page, no gap, no duplicate.
+- **C2**: the twin sits at row **2 501**, past the 2 000 the old walk stopped at, and the filter
+  finds it in the **first page**.
+- **C3**: **one** engine call finds the twin; the old path was one ranked search plus up to
+  twenty `list` pages, and past 2 000 records it still had not found it.
+- **C4**: 18 commands × 2 modes = **36 comparisons, 36 identical** against the base commit
+  `9f129c1` (stdout, stderr and exit code, byte for byte).
+- **C5**: a value nobody carries answers empty (exit 0); `80`, `abc` and `8a81` are refused with
+  exit 2 and the rule in the message.
+
+**L6** — the corpus found an overstatement in S6, and the correction is recorded here rather than
+quietly applied. The first wording said the answer "no longer carries the declaration that the
+duplicate check did not finish". The declaration is still **right** when the check really did not
+finish: the engine refused (the store recovery's S4 demands the declaration), or more than 2 000
+records carry the same value — the extension's `TWIN_SCAN_MAX_PAGES` still bounds the pages of
+**matches** it reads, and it says so. What the change removes is the ceiling over the namespace's
+records, which is what made the declaration routine. S6 is rewritten to say exactly that, and the
+extension's README says the same.
+
+**L7** — the corpus (the JavaScript half, delegated and reported): the fake engine mirrors the
+value filter (maximal digit runs, the filter before the limit and the offset, the engine's own
+`INVALID_ARGUMENT` envelope), the three tests that pinned the ranked search and the namespace walk
+were rewritten for the new contract, and the race the corpus reproduces moved from `show` to
+`supersede` — the repair reads whole records with `list --full` and never calls `show` any more.
+The worker also recorded the RED evidence against a scratch copy of the previous production code
+(five failures, exactly the new and rewritten tests), and the GREEN counts: **160 tests, 158 pass,
+0 fail, 2 skipped** (the opt-in parity pair), and the parity suite **2/2** against the real binary.
+
