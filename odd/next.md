@@ -1040,3 +1040,35 @@ product intends — while the injection saved no calls (median 16.0 against
 bench-only today, and the two M5 decisions that item 17 left open (ship `fat`
 or `head`; whether to correct the doctrine scorer's two artifacts). The
 context half is not worth shipping on this evidence.
+
+### 19. Store recovery productized — and the ceiling it declares
+
+**Feature `store-recovery`** (`odd/tasks/store-recovery.md`, Log L1-L5). The
+enforcement arm's winning half is now in the shipped extension
+(`extensions/mnexis-memory/index.js`): a save that would leave two live records
+for one fact supersedes **every** qualifying twin onto the saved record, so the
+fact ends with one live record. The context half stays out: it answered nothing
+and cost +179 tokens per call (item 18).
+
+**Two rounds of independent verification shaped it, and both found real
+defects.** The first refused the change because the candidate page was the 50
+*oldest* rows — the repair was silently inert in any project with more than 50
+records, reproduced at 64 records with five live twins and zero repairs. The
+fix searches by the value the twin must carry and escalates to an exhaustive
+walk when the ranked answer saturates. The second round confirmed B2-B4 closed
+(only genuine twins are retired; every twin, not one; no test claims a history
+row the engine never writes) and left one edge open: the walk stops at 2 000
+records. That is **declared, not hidden** — the answer the model reads says the
+duplicate check did not finish and that a second live record may remain.
+
+**Known limits, on purpose:** the 2 000-record ceiling (an engine filter on
+value would remove the walk entirely — a separate feature); the repair is not
+transactional, so a concurrent save racing the same fact can leave a twin for
+the next one; a twin whose fact carries no number is out of scope by the
+measured rule.
+
+**Evidence:** `node --test "extensions/mnexis-memory/test/*.test.js"` → 158
+tests, 156 pass, 2 skipped (the parity suite is opt-in); with the parity binary,
+`MNEXIS_PARITY_BIN=$HOME/.local/bin/mnexis node --test
+"extensions/mnexis-memory/test/parity.recovery.test.js"` → 2/2 against mnexis
+0.5.0-dev in a temporary data directory.

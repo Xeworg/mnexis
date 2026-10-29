@@ -388,6 +388,265 @@ export function sessionIdOf(ctx) {
 	}
 }
 
+// --- store recovery (odd/tasks/store-recovery.md, S1-S7) ---
+//
+// A save that lands on a second live record for one fact leaves the store
+// with two current answers to the same question. The extension repairs that
+// one shape, and only that shape: it supersedes **every** older record that
+// is a twin of this save onto the one the save wrote, so the fact keeps
+// exactly one live record and the superseded rows stay visible as
+// `superseded` (S1, S3, S5).
+
+/**
+ * The size of every page a save reads to find a twin.
+ *
+ * It is the engine's own cap (`MAX_LIMIT = 100`, `src/cli/commands.rs:24`):
+ * asking for more is silently clamped, and a bound nobody can reason about is
+ * a bound that hides records. What matters is not the number but what happens
+ * when it is reached — a ranked answer shorter than the page is complete, and
+ * a full one sends the repair to the whole namespace (`candidatesByValue`),
+ * so no twin can hide behind the cap.
+ */
+export const TWIN_SCAN_LIMIT = 100;
+
+/**
+ * How many pages the exhaustive fallback reads before it stops.
+ *
+ * Only reached when the ranked answer is saturated, and only then does the
+ * repair walk the namespace instead of asking for it: 20 pages is 2000
+ * records, far past any project this engine serves. Past that the repair
+ * reports that it could not check rather than reading forever (S4).
+ */
+export const TWIN_SCAN_MAX_PAGES = 20;
+
+/**
+ * The numeric values that identify a fact: its tokens of three or more digits.
+ *
+ * This is the bench's signature (R1), kept as measured: the failure corpus
+ * is two records that carry the same number under two titles.
+ */
+export function numericValues(text) {
+	const values = new Set();
+	for (const match of String(text ?? "").match(/\d{3,}/g) ?? []) {
+		values.add(match);
+	}
+	return values;
+}
+
+/**
+ * The value two contents share when they carry the SAME numeric signature, or
+ * null when they do not.
+ *
+ * A shared token is not enough: a save that says "the port is 9090, it used to
+ * be 8081" shares 8081 with the record it contradicts, and repairing that would
+ * make a value CHANGE look like a rename. Only an identical set is one fact
+ * renamed. The cost is stated where it belongs: a rename that introduces an
+ * unrelated number is not repaired, because a missed repair is a store that
+ * looks like today's and a wrong one is a fact that silently changed identity.
+ */
+export function sameNumericSignature(left, right) {
+	const leftValues = numericValues(left);
+	const rightValues = numericValues(right);
+	if (leftValues.size === 0 || leftValues.size !== rightValues.size) {
+		return null;
+	}
+	for (const value of leftValues) {
+		if (!rightValues.has(value)) {
+			return null;
+		}
+	}
+	for (const value of leftValues) {
+		return value;
+	}
+	return null;
+}
+
+/**
+ * One keyword compared the way a reader compares it: case and spacing folded.
+ *
+ * A keyword is an element of the record's vocabulary, never a value, so
+ * `listen port` and `port` are two different keywords on purpose: comparing
+ * their words would widen the match, and this rule is allowed only to narrow.
+ */
+export function keywordKey(word) {
+	return String(word ?? "")
+		.trim()
+		.toLowerCase()
+		.replace(/\s+/g, " ");
+}
+
+/**
+ * The keyword list of a record, however the engine or the save spelled it.
+ */
+function keywordList(words) {
+	if (Array.isArray(words)) {
+		return words;
+	}
+	if (typeof words === "string") {
+		return words.split(",");
+	}
+	return [];
+}
+
+/**
+ * True when two records share at least one keyword (S2.3).
+ *
+ * This is the hardening the product adds to the measured rule: a shared
+ * number alone also matches unrelated facts, such as a port and a worker
+ * count (L2). No shared keyword means no repair, and the product accepts
+ * missing a twin rather than retiring an unrelated record.
+ */
+export function sharesKeyword(left, right) {
+	const rightKeys = new Set(keywordList(right).map(keywordKey));
+	for (const word of keywordList(left)) {
+		const key = keywordKey(word);
+		if (key !== "" && rightKeys.has(key)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * The compaction summary the shipped `session_compact` hook stores is not a
+ * project fact (S2.4).
+ *
+ * The hook writes `Session <id> was compacted. What was happening: ...`; that
+ * text is session history, and two records that quote it are not one fact.
+ */
+export function isCompactionSummary(item) {
+	return /\bwas compacted\b/i.test(String(item?.content ?? ""));
+}
+
+/**
+ * True when a record carries a vocabulary this rule can compare.
+ *
+ * A `mnexis search` hit carries the words; a record read whole always does.
+ * An answer without them is not judged as "no shared keyword" — it is read
+ * whole and judged by `twinValue`, so a missing field can never turn the
+ * repair into a silent no-op.
+ */
+function hasKeywordField(item) {
+	return Array.isArray(item?.keywords) || typeof item?.keywords === "string";
+}
+
+/**
+ * True when `item` could be the live twin of the record a save just wrote,
+ * judged on the identity a ranked hit already answers (S2.1, S2.3).
+ *
+ * The cheap half of the rule, deliberately: a search hit carries the uuid,
+ * the state, the namespace and the words, so everything except the numeric
+ * signature and the summary test is decided before a record is read whole. A
+ * superseded row is history, not a second live record; a record in another
+ * namespace is another project's; no shared keyword is another fact that
+ * happens to carry the same number (L2).
+ */
+export function sharesIdentity(saved, item, namespace) {
+	if (!saved || typeof saved !== "object" || !item || typeof item !== "object") {
+		return false;
+	}
+	if (typeof namespace !== "string" || namespace === "") {
+		return false;
+	}
+	if (typeof saved.uuid !== "string" || saved.uuid === "" || saved.namespace !== namespace) {
+		return false;
+	}
+	if (typeof item.uuid !== "string" || item.uuid === "" || item.uuid === saved.uuid) {
+		return false;
+	}
+	if ((item.state ?? "active") !== "active") {
+		return false;
+	}
+	if (item.namespace !== namespace) {
+		return false;
+	}
+	return !hasKeywordField(item) || sharesKeyword(saved.keywords, item.keywords);
+}
+
+/**
+ * The shared value when `item` is a live twin of `saved`, or null (S2).
+ *
+ * The expensive half: it needs both contents, so it runs on records that
+ * already passed `sharesIdentity` and, for a ranked hit, after reading the
+ * record whole. The title is not compared — the measured failure had two
+ * different titles, and the engine already updates on a title match.
+ */
+export function twinValue(saved, item, namespace) {
+	if (!sharesIdentity(saved, item, namespace)) {
+		return null;
+	}
+	// Now the words are authoritative: the identity half lets an answer
+	// without them through only so it can be read, never so it can be paired.
+	if (!sharesKeyword(saved.keywords, item.keywords)) {
+		return null;
+	}
+	if (isCompactionSummary(saved) || isCompactionSummary(item)) {
+		return null;
+	}
+	return sameNumericSignature(saved.content, item.content);
+}
+
+/**
+ * Every live twin the candidate query answered, as pairs (S1, B3).
+ *
+ * All of them: S1 promises the fact ends with exactly one live record, and
+ * retiring one of N twins delivers "one fewer", not "one". The order is the
+ * engine's own id order, which is the order a reader expects the older
+ * records in.
+ */
+export function twinPairs(saved, candidates, namespace) {
+	const pairs = [];
+	const seen = new Set();
+	for (const item of Array.isArray(candidates) ? candidates : []) {
+		if (!item || typeof item !== "object") {
+			continue;
+		}
+		if (typeof item.uuid === "string" && seen.has(item.uuid)) {
+			continue;
+		}
+		const value = twinValue(saved, item, namespace);
+		if (value === null) {
+			continue;
+		}
+		seen.add(item.uuid);
+		pairs.push({ older: item, newer: saved, value });
+	}
+	return pairs;
+}
+
+/** The name of a record in an answer a human or the model reads. */
+function recordLabel(item) {
+	const uuid = typeof item?.uuid === "string" && item.uuid !== "" ? item.uuid : "unknown";
+	const title = typeof item?.title === "string" ? item.title.trim() : "";
+	return title === "" ? uuid : `'${title}' (${uuid})`;
+}
+
+/** Why the older record was superseded: the link reason the engine keeps. */
+export function twinReason(pair) {
+	return (
+		`one fact, one record: ${recordLabel(pair.older)} and ${recordLabel(pair.newer)} ` +
+		`carried the same value ${pair.value}`
+	);
+}
+
+/**
+ * The one line the model reads per repaired twin (S4).
+ *
+ * It names both records and the shared value, and says what the store did
+ * with the older one: superseded, never deleted, still visible as
+ * `superseded` in `mnexis list` and `mnexis show`. It promises no history
+ * revision, because the engine writes none on supersede
+ * (`src/storage/memory_repo.rs:700-705`, "no history row, by parity") and
+ * `mnexis_history` answers "no history" for that record (S3, L4/B4).
+ */
+export function twinRepairLine(pair) {
+	return (
+		`Repaired a duplicate: ${recordLabel(pair.older)} and ${recordLabel(pair.newer)} ` +
+		`carried the same value ${pair.value} for one fact; the older record was ` +
+		"superseded, not deleted, and `mnexis list` and `mnexis show` report it as `superseded`."
+	);
+}
+
 export default function mnexisMemoryExtension(pi) {
 	// One client and one resolution cache per extension instance (per session).
 	const client = createClient({
@@ -697,6 +956,331 @@ export default function mnexisMemoryExtension(pi) {
 		return { workspace: resolution, gate: { authorized: true, asked: true } };
 	}
 
+	/**
+	 * Journal one line of store recovery (S4).
+	 *
+	 * The host session's entry journal is the path this extension's answers
+	 * already live on: pi persists it beside the tool results and keeps it out
+	 * of the model context, and the extension has no file of its own to log to.
+	 * A journal that cannot be written must never break a save.
+	 */
+	function appendRecovery(ctx, data) {
+		if (typeof pi.appendEntry !== "function") {
+			return;
+		}
+		try {
+			pi.appendEntry("mnexis-store-recovery", {
+				ts: new Date().toISOString(),
+				kind: "store-recovery",
+				session: sessionIdOf(ctx),
+				...data,
+			});
+		} catch {
+			// The journal is a report, never a precondition.
+		}
+	}
+
+	/**
+	 * One ranked read of the live records that carry a value (S2, B1).
+	 *
+	 * `mnexis search` answers by the token, not by a page of the namespace:
+	 * the FTS index covers the content (`src/retrieval/fts5.rs:83-150`), the
+	 * state filter is `active` and the namespace filter is the save's, and both
+	 * apply BEFORE the limit — so the twin a save created seconds ago is found
+	 * whatever its age, its id or how many records the namespace holds.
+	 *
+	 * A short answer is a complete one: the LIMIT did not bite, because the
+	 * query matched fewer rows than the page. A full answer may be truncated,
+	 * and `candidatesByValue` says what happens then.
+	 */
+	async function searchCandidates(namespace, value, ctx) {
+		const found = await client.search(
+			{ query: value, namespace, limit: TWIN_SCAN_LIMIT, match: "all" },
+			ctx.cwd,
+		);
+		if (found.code !== 0) {
+			return {
+				error: {
+					step: "search",
+					value,
+					error: describeFailure({ code: found.code, stderr: found.stderr, namespace }),
+				},
+			};
+		}
+		const items = readItems(found.data);
+		return { items, value, saturated: items.length >= TWIN_SCAN_LIMIT };
+	}
+
+	/**
+	 * The whole namespace, page by page (S2, B1: the cap is not a blind spot).
+	 *
+	 * Only reached when the ranked answer is saturated. The engine orders a
+	 * list by id and applies the limit after the filters
+	 * (`src/storage/memory_repo.rs:99-104`), so consecutive offsets cover every
+	 * record once: a page shorter than the bound is the end, and nothing can
+	 * sit behind it.
+	 */
+	async function allRecords(namespace, ctx) {
+		const items = [];
+		for (let page = 0; page < TWIN_SCAN_MAX_PAGES; page += 1) {
+			// `client.list` carries no offset and this change does not touch
+			// lib/cli.js, so the paged read goes through the client's run.
+			const listed = await client.run(
+				[
+					"list",
+					"--namespace",
+					namespace,
+					"--limit",
+					String(TWIN_SCAN_LIMIT),
+					"--offset",
+					String(page * TWIN_SCAN_LIMIT),
+					"--full",
+				],
+				{ json: true, cwd: ctx.cwd },
+			);
+			if (listed.code !== 0) {
+				return {
+					error: {
+						step: "list",
+						error: describeFailure({ code: listed.code, stderr: listed.stderr, namespace }),
+					},
+				};
+			}
+			const rows = readItems(listed.data);
+			items.push(...rows);
+			if (rows.length < TWIN_SCAN_LIMIT) {
+				return { items };
+			}
+		}
+		return {
+			error: {
+				step: "list",
+				error:
+					"the namespace holds more than " +
+					`${TWIN_SCAN_LIMIT * TWIN_SCAN_MAX_PAGES} records, so the twin scan stopped ` +
+					"before it could prove it had seen them all",
+			},
+		};
+	}
+
+	/**
+	 * The records that could be a twin of this save (S2, B1, B2).
+	 *
+	 * The query is the value the twin must carry, never a page of the
+	 * namespace: every record the query answers is a record whose content holds
+	 * a value of this save, and a twin is one of those. One value is enough —
+	 * the twin carries ALL of them — so the first value whose answer is short
+	 * of the page is a complete candidate set. When every value saturates the
+	 * ranked answer, the namespace is walked instead, and then the set is
+	 * complete by construction.
+	 */
+	async function candidatesByValue(saved, ctx) {
+		for (const value of numericValues(saved.content)) {
+			const answered = await searchCandidates(saved.namespace, value, ctx);
+			if (answered.error) {
+				return answered;
+			}
+			if (!answered.saturated) {
+				return { items: answered.items, source: "search" };
+			}
+		}
+		const exhaustive = await allRecords(saved.namespace, ctx);
+		if (exhaustive.error) {
+			return exhaustive;
+		}
+		return { items: exhaustive.items, source: "list" };
+	}
+
+	/**
+	 * The whole record a candidate needs to be judged (S2.2, S2.4).
+	 *
+	 * A `list --full` page already carries the content; a ranked hit carries
+	 * the identity only, so only the records that survived the cheap half of
+	 * the rule are read whole — a twin is checked against what the store says,
+	 * never against a preview.
+	 */
+	async function readCandidate(item, ctx) {
+		if (typeof item.content === "string") {
+			return { record: item };
+		}
+		const shown = await client.show(item.uuid, ctx.cwd);
+		if (shown.code !== 0) {
+			return {
+				error: {
+					step: "show",
+					uuid: item.uuid,
+					error: describeFailure({
+						code: shown.code,
+						stderr: shown.stderr,
+						namespace: item.namespace,
+					}),
+				},
+			};
+		}
+		if (!shown.data || typeof shown.data !== "object" || typeof shown.data.uuid !== "string") {
+			return { error: { step: "show", uuid: item.uuid, error: "the engine answered no record" } };
+		}
+		return { record: shown.data };
+	}
+
+	/**
+	 * Repair every second live record a save just created (S1-S5, B1-B3).
+	 *
+	 * Placement is deliberate: this runs in `mnexis_save`'s own execute, after
+	 * the engine answered and after `prepareWrite` authorized the write, so
+	 * the record the save wrote is the one the engine named — no correlation
+	 * by tool-call id, no second write path, and no repair on a save the gate
+	 * refused.
+	 *
+	 * The saved record is not read back: its uuid, its content and its words
+	 * are the ones this call just wrote, and the engine stores the content
+	 * verbatim (`src/application/service.rs:247`). What this call cannot know
+	 * is the rest of the namespace, and that is the only thing read here.
+	 *
+	 * A repair that cannot read or write the store leaves the save's answer
+	 * untouched and journals why (S4): the store is never guessed at, and a
+	 * repair that did not happen is never silent.
+	 */
+	async function repairSavedTwin(workspace, params, answer, ctx) {
+		const savedUuid = typeof answer?.uuid === "string" ? answer.uuid : "";
+		const content = typeof params?.content === "string" ? params.content : "";
+		// No value of three or more digits means no twin can exist (S2.2), and
+		// then the store is not read at all.
+		if (savedUuid === "" || numericValues(content).size === 0) {
+			return null;
+		}
+		const namespace = typeof workspace?.namespace === "string" ? workspace.namespace : "";
+		// The `session_compact` guard, exactly (S3): only a bound workspace
+		// names a namespace that is a permission, and only the allowlist lets
+		// this session write into it. Neither is a failure to report: a save the
+		// gate refused never reached here, so there is nothing to repair.
+		if (workspace?.bound !== true || namespace === "") {
+			return null;
+		}
+		const saved = {
+			uuid: savedUuid,
+			namespace,
+			title:
+				typeof answer?.title === "string" && answer.title.trim() !== ""
+					? answer.title
+					: typeof params?.title === "string"
+						? params.title
+						: "",
+			content,
+			keywords: Array.isArray(answer?.keywords)
+				? answer.keywords
+				: keywordList(params?.keywords),
+		};
+		try {
+			const allowed = await getWriteNamespaces(ctx.cwd);
+			if (!allowed.includes(namespace)) {
+				return null;
+			}
+			const found = await candidatesByValue(saved, ctx);
+			if (found.error) {
+				appendRecovery(ctx, {
+					action: "failed",
+					namespace,
+					saved: { uuid: savedUuid },
+					...found.error,
+				});
+				return { failed: [found.error] };
+			}
+			const candidates = [];
+			const failed = [];
+			for (const item of found.items) {
+				if (!sharesIdentity(saved, item, namespace)) {
+					continue;
+				}
+				const resolved = await readCandidate(item, ctx);
+				if (resolved.error) {
+					appendRecovery(ctx, {
+						action: "failed",
+						namespace,
+						saved: { uuid: savedUuid },
+						...resolved.error,
+					});
+					failed.push(resolved.error);
+					continue;
+				}
+				candidates.push(resolved.record);
+			}
+			const pairs = twinPairs(saved, candidates, namespace);
+			const repaired = [];
+			for (const pair of pairs) {
+				// S5 keeps the measured direction: the older record is
+				// superseded onto the one the save wrote, which is the newer
+				// record, and the engine keeps the row and the link.
+				const superseded = await client.supersede(
+					{ older: pair.older.uuid, newer: savedUuid, reason: twinReason(pair) },
+					ctx.cwd,
+				);
+				if (superseded.code !== 0) {
+					const failure = {
+						step: "supersede",
+						uuid: pair.older.uuid,
+						value: pair.value,
+						error: describeFailure({
+							code: superseded.code,
+							stderr: superseded.stderr,
+							namespace,
+						}),
+					};
+					appendRecovery(ctx, {
+						action: "failed",
+						namespace,
+						saved: { uuid: savedUuid },
+						...failure,
+					});
+					failed.push(failure);
+					continue;
+				}
+				// S4, one line per intervention.
+				appendRecovery(ctx, {
+					action: "supersede",
+					namespace,
+					older: { uuid: pair.older.uuid, title: pair.older.title ?? "" },
+					newer: { uuid: savedUuid, title: saved.title },
+					value: pair.value,
+					reason: twinReason(pair),
+				});
+				repaired.push(pair);
+			}
+			if (repaired.length === 0) {
+				return failed.length > 0 ? { failed } : null;
+			}
+			return {
+				line: repaired.map(twinRepairLine).join("\n"),
+				detail: {
+					action: "supersede",
+					namespace,
+					source: found.source,
+					newer: { uuid: savedUuid, title: saved.title },
+					superseded: repaired.map((pair) => ({
+						uuid: pair.older.uuid,
+						title: pair.older.title ?? "",
+						value: pair.value,
+					})),
+					...(failed.length > 0 ? { failed } : {}),
+				},
+			};
+		} catch (error) {
+			// A repair that cannot read or write the store leaves the save's
+			// answer exactly as the engine gave it, and says so in the journal.
+			const failure = {
+				step: "repair",
+				error: error instanceof Error ? error.message : String(error),
+			};
+			appendRecovery(ctx, {
+				action: "failed",
+				namespace,
+				saved: { uuid: savedUuid },
+				...failure,
+			});
+			return { failed: [failure] };
+		}
+	}
+
 	/** Shared prologue for the write tools. */
 	async function prepareWrite(ctx) {
 		const workspace = await resolveWorkspace(ctx.cwd);
@@ -884,8 +1468,22 @@ export default function mnexisMemoryExtension(pi) {
 				result.data && Array.isArray(result.data.keywords) ? result.data.keywords : [];
 			const whatWithWords =
 				words.length > 0 ? `${what} Words: ${words.join(", ")}.` : what;
+			// S1-S5: every live record that is a twin of this one is retired
+			// onto it before the model reads the answer, and the reply carries
+			// both records and the shared value (S4). A repair that could not
+			// run journals why and never changes the answer.
+			const repair = await repairSavedTwin(workspace, params, result.data, ctx);
+			// A repair that could not run must never read as a clean save: the
+			// ceiling of the scan is declared to the model, so a second live
+			// record left behind is a fact the caller can see and check.
+			const unfinished =
+				repair && repair.failed && repair.failed.length > 0
+					? `\nThe duplicate check did not finish: ${repair.failed[0].error}. ` +
+						"A second live record for this fact may remain; confirm with " +
+						"`mnexis_search` before trusting the store."
+					: "";
 			return ok(
-				whatWithWords,
+				`${whatWithWords}${repair && repair.line ? `\n${repair.line}` : ""}${unfinished}`,
 				{
 					namespace: workspace.namespace,
 					uuid: result.data && result.data.uuid ? result.data.uuid : null,
@@ -895,6 +1493,10 @@ export default function mnexisMemoryExtension(pi) {
 					revision: revision || null,
 					output: result.stdout.trim(),
 					data: result.data,
+					...(repair && repair.detail ? { recovery: repair.detail } : {}),
+					...(repair && repair.failed && repair.failed.length > 0
+						? { recovery_failed: repair.failed }
+						: {}),
 				},
 			);
 		},
@@ -1023,7 +1625,7 @@ export default function mnexisMemoryExtension(pi) {
 		label: "List memories",
 		promptSnippet: "List the memories recorded, across projects.",
 		description:
-			"List the memories stored, newest first: what is there, with a preview " +
+			"List the memories stored: what is there, with a preview " +
 			"of each one. Use it to review what is already recorded before saving " +
 			"something new. The list reaches every project by default; pass `namespace` " +
 			"to narrow it to one project. Each item names the memory and shows a few " +
