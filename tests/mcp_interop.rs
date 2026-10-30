@@ -707,7 +707,7 @@ async fn memory_update_correct_revision_increments() -> Result<(), Box<dyn std::
 }
 
 // ---------------------------------------------------------------------------
-// memory_history after update → 1 entry (S6, S9)
+// memory_history after update → 1 entry, holding the replaced revision (S6, S9)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -790,11 +790,17 @@ async fn memory_history_returns_update_revisions() -> Result<(), Box<dyn std::er
     );
     let items = hist_parsed["items"].as_array().expect("items array");
     assert_eq!(items.len(), 1, "history items: {items:?}");
-    // History records the post-update state of the memory at revision 2.
+    // The trail records the state the update replaced: revision 1, with the
+    // content the record had before the change.
+    assert_eq!(
+        items[0]["revision"].as_i64().expect("revision"),
+        1,
+        "history entry must record the replaced revision: {items:?}"
+    );
     assert_eq!(
         items[0]["content"].as_str().expect("content"),
-        "updated",
-        "history entry must record post-update content: {items:?}"
+        "original",
+        "history entry must record the pre-update content: {items:?}"
     );
 
     client.cancel().await?;

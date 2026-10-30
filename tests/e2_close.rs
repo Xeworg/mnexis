@@ -97,10 +97,12 @@ fn persist_after_restart_preserves_every_record() {
     assert_eq!(u1.revision, 2);
     assert_eq!(u2.content, "bravo");
     assert_eq!(u2.revision, 1);
-    // History survives the reopen.
+    // History survives the reopen, and it holds the revision the update
+    // replaced.
     let h = svc.history("u1").unwrap();
     assert_eq!(h.len(), 1, "history: {h:?}");
-    assert_eq!(h[0].revision, 2);
+    assert_eq!(h[0].revision, 1);
+    assert_eq!(h[0].content, "alpha", "the pre-update content: {h:?}");
 }
 
 // --- concurrent_update_conflict ---
@@ -194,13 +196,20 @@ fn history_complete_after_three_updates() {
         svc.update(req).unwrap();
     }
     let h = svc.history("u1").unwrap();
-    // The service contract (pinned by tests/application_service.rs):
-    // history holds one entry per update revision. Three updates -> three
-    // entries. The retrieval order is reverse-chronological (newest
-    // first), matching the CLI/MCP history view.
+    // The trail records the state each change replaced: one entry per
+    // revision that existed, holding that revision's content. Three updates
+    // leave revisions 1, 2 and 3 in the trail. The retrieval order is
+    // reverse-chronological (newest first), matching the CLI/MCP history
+    // view.
     assert_eq!(h.len(), 3, "history: {h:?}");
     let revisions: Vec<i32> = h.iter().map(|e| e.revision).collect();
-    assert_eq!(revisions, vec![4, 3, 2]);
+    assert_eq!(revisions, vec![3, 2, 1]);
+    let contents: Vec<&str> = h.iter().map(|e| e.content.as_str()).collect();
+    assert_eq!(
+        contents,
+        vec!["v3", "v2", "v1"],
+        "history[N] is the record as it stood at revision N"
+    );
 }
 
 // --- scope_forbidden_on_unauthorised_namespace ---
@@ -295,9 +304,23 @@ fn supersede_atomic_sets_both_states_and_writes_link() {
     let n = svc.get("newer").unwrap().unwrap();
     assert_eq!(o.state, MemoryState::Superseded);
     assert_eq!(n.state, MemoryState::Active);
-    // The link row is queryable through the service's history. We do
-    // not expose links yet; assert the post-state holds, which is the
-    // observable atomicity contract.
+    // The flip is a change, so the trail keeps the older record as it was.
+    let history = svc.history("older").unwrap();
+    assert_eq!(history.len(), 1, "history: {history:?}");
+    assert_eq!(history[0].revision, 1, "the pre-bump revision: {history:?}");
+    assert_eq!(
+        history[0].content, "old",
+        "the pre-flip content: {history:?}"
+    );
+    assert_eq!(
+        history[0].state,
+        MemoryState::Active,
+        "the pre-flip state: {history:?}"
+    );
+    assert_eq!(
+        history[0].change_reason, "r",
+        "the link's reason: {history:?}"
+    );
 }
 
 // --- delete_removes_from_fts ---

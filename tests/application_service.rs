@@ -174,7 +174,8 @@ fn update_increments_revision_and_writes_history() {
     assert_eq!(updated.content, "updated");
     let history = svc.history("uuid-1").unwrap();
     assert_eq!(history.len(), 1);
-    assert_eq!(history[0].revision, 2);
+    assert_eq!(history[0].revision, 1, "the revision the update replaced");
+    assert_eq!(history[0].content, "original", "the pre-update content");
 }
 
 #[test]
@@ -775,16 +776,74 @@ fn the_previous_content_stays_in_the_history() {
     again.topic_key = "puerto-del-servicio".into();
     svc.save(again).expect("the update");
 
+    // The trail records the state the re-save replaced: revision 1 is the
+    // record as it was, and the live row is the one with the new value.
     let history = svc.history("uuid-t3").expect("the history");
-    assert!(
-        history.iter().any(|h| h.content.contains("9090")),
-        "the revision is recorded: {history:?}"
+    assert_eq!(history.len(), 1, "one row per change: {history:?}");
+    assert_eq!(history[0].revision, 1, "the replaced revision: {history:?}");
+    assert_eq!(
+        history[0].content, PORT_8081,
+        "the pre-update content, byte-identical: {history:?}"
     );
+    assert_eq!(history[0].state, MemoryState::Active, "{history:?}");
     assert!(
-        history
-            .iter()
-            .any(|h| h.change_reason.contains("puerto-del-servicio")),
+        history[0].change_reason.contains("puerto-del-servicio"),
         "the reason names the key: {history:?}"
+    );
+    let live = svc.get("uuid-t3").unwrap().expect("the live record");
+    assert_eq!(live.revision, 2, "the live row: {live:?}");
+    assert!(
+        live.content.contains("9090"),
+        "and it carries the new value: {live:?}"
+    );
+}
+
+#[test]
+fn a_supersede_records_the_state_before_the_flip() {
+    let (mut svc, _dir) = make_service();
+    svc.save(save_req("uuid-s-old", PORT_8081)).unwrap();
+    svc.save(save_req("uuid-s-new", "the port is now 9090"))
+        .unwrap();
+    svc.supersede(SupersedeRequest {
+        older_uuid: "uuid-s-old".into(),
+        newer_uuid: "uuid-s-new".into(),
+        expected_old_revision: 1,
+        expected_new_revision: 1,
+        reason: "the port moved".into(),
+        now: "2026-02-01T00:00:00Z".into(),
+    })
+    .expect("the supersede");
+
+    let history = svc.history("uuid-s-old").expect("the history");
+    assert_eq!(history.len(), 1, "the supersede wrote a row: {history:?}");
+    assert_eq!(history[0].revision, 1, "the pre-bump revision: {history:?}");
+    assert_eq!(
+        history[0].content, PORT_8081,
+        "the pre-flip content: {history:?}"
+    );
+    assert_eq!(
+        history[0].state,
+        MemoryState::Active,
+        "the pre-flip state: {history:?}"
+    );
+    assert_eq!(
+        history[0].changed_by, "user",
+        "the actor of the record: {history:?}"
+    );
+    assert_eq!(
+        history[0].change_reason, "the port moved",
+        "the link's reason: {history:?}"
+    );
+    assert_eq!(
+        history[0].changed_at, "2026-02-01T00:00:00Z",
+        "the change's time: {history:?}"
+    );
+    let live = svc.get("uuid-s-old").unwrap().expect("the older record");
+    assert_eq!(live.state, MemoryState::Superseded);
+    assert_eq!(live.revision, 2, "the bump is on the live row: {live:?}");
+    assert_eq!(
+        live.content, PORT_8081,
+        "a supersede never rewrites content"
     );
 }
 

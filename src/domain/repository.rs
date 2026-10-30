@@ -171,10 +171,12 @@ pub trait MemoryRepository {
     /// close a cycle in the supersession graph (the trivial self-link
     /// included), verify the newer row still holds
     /// `expected_new_revision` (`REVISION_CONFLICT` with the row's current
-    /// revision otherwise), flip the older row to `superseded` at
-    /// `expected_old_revision` (bumping its revision), and persist the
-    /// link with its `reason`. Nothing commits unless every step passes;
-    /// namespace, scope, and state gates stay in the service.
+    /// revision otherwise), append the older row's **pre-flip** state to
+    /// the trail (`memory_history[expected_old_revision]`, with
+    /// `changed_by` and the link's `reason`), flip the older row to
+    /// `superseded` at `expected_old_revision` (bumping its revision), and
+    /// persist the link with its `reason`. Nothing commits unless every
+    /// step passes; namespace, scope, and state gates stay in the service.
     fn supersede_atomic(
         &mut self,
         older_uuid: &str,

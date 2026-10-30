@@ -471,21 +471,22 @@ impl<R: MemoryRepository> MemoryService<R> {
         }
         updated.updated_at = req.now.clone();
 
-        // The history revision is what the UPDATE will produce
-        // (current + 1). We pre-compute it so the history row matches
-        // the post-update row exactly.
-        let new_revision = current.revision + 1;
+        // The trail records the state the change replaces: the revision
+        // that is being left behind, with its own content, type and
+        // metadata. `revision` is the pre-update revision (the UPDATE below
+        // bumps the live row to `current.revision + 1`), so
+        // `show --revision N` answers the record as it stood at N.
         let history = MemoryHistory {
             id: None,
             memory_uuid: req.uuid.clone(),
-            revision: new_revision,
-            memory_type: updated.memory_type.clone(),
-            content: updated.content.clone(),
-            state: updated.state,
-            valid_from: updated.valid_from.clone(),
-            valid_until: updated.valid_until.clone(),
-            assertion_basis: updated.assertion_basis.clone(),
-            changed_by: updated.actor.clone(),
+            revision: current.revision,
+            memory_type: current.memory_type.clone(),
+            content: current.content.clone(),
+            state: current.state,
+            valid_from: current.valid_from.clone(),
+            valid_until: current.valid_until.clone(),
+            assertion_basis: current.assertion_basis.clone(),
+            changed_by: current.actor.clone(),
             change_reason: req.reason.clone(),
             changed_at: req.now.clone(),
         };
@@ -1130,17 +1131,21 @@ impl<R: MemoryRepository> MemoryService<R> {
             channel: req.channel.clone(),
             assertion_basis: req.assertion_basis.clone(),
         };
+        // The trail records the state the re-save replaces: the record as
+        // it was before this write, with its own content, type and
+        // metadata. The live row becomes `next_revision`; the trail keeps
+        // `current.revision`.
         let history = MemoryHistory {
             id: None,
             memory_uuid: current.uuid.clone(),
-            revision: next_revision,
-            memory_type: updated.memory_type.clone(),
-            content: updated.content.clone(),
-            state: updated.state,
-            valid_from: updated.valid_from.clone(),
-            valid_until: updated.valid_until.clone(),
-            assertion_basis: updated.assertion_basis.clone(),
-            changed_by: req.actor.clone(),
+            revision: current.revision,
+            memory_type: current.memory_type.clone(),
+            content: current.content.clone(),
+            state: current.state,
+            valid_from: current.valid_from.clone(),
+            valid_until: current.valid_until.clone(),
+            assertion_basis: current.assertion_basis.clone(),
+            changed_by: current.actor.clone(),
             change_reason: format!(
                 "saved again with the topic key `{}`",
                 current.topic_key.as_str()

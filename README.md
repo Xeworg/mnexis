@@ -233,7 +233,7 @@ prompt            store what the user said
 prompts           list or search what the user said
 status            where this workspace may write, and what is already there
 show              show a memory (current or specific revision)
-history           show revision history
+history           show revision history (each revision as the record stood)
 timeline          the life of one memory: identity, events, supersede links
 delete            soft-delete a memory
 restore           restore a soft-deleted memory

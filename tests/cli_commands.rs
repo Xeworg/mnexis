@@ -759,12 +759,15 @@ fn update_bumps_revision_and_writes_history() {
 
     let hist = p.run_silent(&["history", &uuid]).unwrap_status("history");
     let hjson = stdout_json(&hist);
-    // Service contract (pinned by tests/application_service.rs): history
-    // holds one entry per update revision; the initial save is revision 1
-    // and is not duplicated into the log.
+    // The trail records the state the change replaced: one row, carrying
+    // revision 1 as it was before the update.
     assert_eq!(hjson["count"], 1, "history: {hjson}");
     let items = hjson["items"].as_array().expect("items");
-    assert_eq!(items[0]["revision"], 2);
+    assert_eq!(items[0]["revision"], 1, "the replaced revision: {hjson}");
+    assert_eq!(
+        items[0]["content"], "first revision",
+        "the pre-update content: {hjson}"
+    );
     assert_eq!(items[0]["change_reason"], "correct content");
 }
 
@@ -787,9 +790,8 @@ fn update_wrong_expected_revision_exits_5() {
 
 #[test]
 fn show_specific_revision_uses_history() {
-    // History holds one entry per UPDATE revision (the T17 contract); the
-    // initial save is the canonical row, not a history row. Two updates
-    // make revision 2 a historical revision worth showing.
+    // The trail records the state each change replaced, so revision 2 is
+    // the record as it stood before the second update.
     let p = Profile::new();
     let uuid = save(&p, "v1 content", &[]);
     p.run_silent(&[
@@ -820,6 +822,324 @@ fn show_specific_revision_uses_history() {
     assert_eq!(stdout_json(&out)["content"], "v2 content");
     let current = p.run_silent(&["show", &uuid]).unwrap_status("show current");
     assert_eq!(stdout_json(&current)["content"], "v3 content");
+}
+
+// --- the revision trail (A3) ---
+//
+// Before a row changes, the trail records the state it had: `history[N]` is
+// the record as it stood at revision N, so `show --revision N` answers for
+// every revision that exists. And the trail never pins the rows it
+// describes: `purge` removes a soft-deleted record together with its rows.
+
+/// The trail rows of one record: (rows, content bytes, all-column bytes).
+fn trail(profile: &Profile, uuid: &str) -> (i64, i64, i64) {
+    let conn = mnexis_core::open_sqlite(&profile.data_dir.join("mnexis.db"))
+        .expect("open the store for the trail");
+    conn.query_row(
+        "SELECT count(*), coalesce(sum(length(content)), 0), \
+                coalesce(sum(length(memory_uuid) + length(memory_type) + length(content) \
+                  + length(state) + length(assertion_basis) + length(changed_by) \
+                  + length(change_reason) + length(changed_at)), 0) \
+         FROM memory_history WHERE memory_uuid = ?1",
+        [uuid],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .expect("the trail")
+}
+
+const ALPHA: &str = "The deploy environment is staging-eu. Alpha record, revision one.";
+
+#[test]
+fn a_supersede_keeps_the_state_the_older_record_had() {
+    let p = Profile::new();
+    let older = save(&p, ALPHA, &["--title", "alpha", "--keywords", "deploy"]);
+    let newer = save(
+        &p,
+        "The deploy environment is production-eu. Beta record, revision one.",
+        &["--title", "beta", "--keywords", "deploy"],
+    );
+    p.run_silent(&[
+        "supersede",
+        "--older",
+        &older,
+        "--newer",
+        &newer,
+        "--reason",
+        "the environment moved to production",
+    ])
+    .unwrap_status("supersede");
+
+    // The revision the flip replaced is the old record as it was.
+    let out = p
+        .run_silent(&["show", &older, "--revision", "1"])
+        .unwrap_status("show the pre-flip revision");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["content"].as_str(),
+        Some(ALPHA),
+        "revision 1 is the content before the flip, byte-identical: {json}"
+    );
+    assert_eq!(json["revision"], 1, "the pre-bump revision: {json}");
+    assert_eq!(json["state"], "active", "the pre-flip state: {json}");
+    assert_eq!(
+        json["changed_by"], "user",
+        "the actor of the record: {json}"
+    );
+    assert_eq!(
+        json["change_reason"], "the environment moved to production",
+        "the link's reason: {json}"
+    );
+
+    let hist = p.run_silent(&["history", &older]).unwrap_status("history");
+    let hjson = stdout_json(&hist);
+    assert!(
+        hjson["count"].as_u64().unwrap_or(0) >= 1,
+        "the supersede wrote a revision: {hjson}"
+    );
+    let carries = hjson["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .any(|item| item["content"].as_str() == Some(ALPHA));
+    assert!(carries, "a row carries the old content: {hjson}");
+
+    // The live row is what the supersede made of it, and `show` says so.
+    let shown = p.run_silent(&["show", &older]).unwrap_status("show live");
+    let live = stdout_json(&shown);
+    assert_eq!(live["state"], "superseded", "{live}");
+    assert_eq!(live["revision"], 2, "the revision was bumped: {live}");
+}
+
+#[test]
+fn a_re_save_keeps_the_content_the_record_had() {
+    let p = Profile::new();
+    let uuid = save(
+        &p,
+        "The cache TTL is 60 seconds.",
+        &["--title", "cache ttl"],
+    );
+    let again = p
+        .run_silent(&[
+            "save",
+            "--title",
+            "cache ttl",
+            "The cache TTL is 300 seconds.",
+        ])
+        .unwrap_status("re-save the same title");
+    assert_eq!(stdout_json(&again)["uuid"], uuid.as_str());
+
+    // The live row carries the new content, byte-identical to the request,
+    // and `show` with no revision answers exactly that row.
+    let live = stdout_json(&p.run_silent(&["show", &uuid]).unwrap_status("show live"));
+    assert_eq!(
+        live["content"], "The cache TTL is 300 seconds.",
+        "the live content: {live}"
+    );
+    assert_eq!(live["revision"], 2, "{live}");
+
+    let out = p
+        .run_silent(&["show", &uuid, "--revision", "1"])
+        .unwrap_status("show the pre-update revision");
+    assert_eq!(
+        stdout_json(&out)["content"],
+        "The cache TTL is 60 seconds.",
+        "revision 1 is the pre-update content, byte-identical"
+    );
+
+    // Every revision the record has answers, including the live one.
+    let current = p
+        .run_silent(&["show", &uuid, "--revision", "2"])
+        .unwrap_status("show the live revision");
+    assert_eq!(
+        stdout_json(&current)["content"],
+        "The cache TTL is 300 seconds."
+    );
+}
+
+#[test]
+fn a_change_grows_the_trail_by_the_old_content_and_its_columns() {
+    let p = Profile::new();
+    let old = "The cache TTL is 60 seconds.";
+    let uuid = save(&p, old, &["--title", "cache ttl"]);
+    let before = trail(&p, &uuid);
+    p.run_silent(&[
+        "save",
+        "--title",
+        "cache ttl",
+        "The cache TTL is 300 seconds.",
+    ])
+    .unwrap_status("re-save");
+    let after = trail(&p, &uuid);
+
+    assert_eq!(
+        after.0 - before.0,
+        1,
+        "one row per change: {before:?} {after:?}"
+    );
+    assert_eq!(
+        after.1 - before.1,
+        old.len() as i64,
+        "the row carries the old content and nothing more: {before:?} {after:?}"
+    );
+    assert!(
+        after.2 - before.2 <= old.len() as i64 + 150,
+        "the row costs the old content plus its columns (<= 150 B): {before:?} {after:?}"
+    );
+}
+
+#[test]
+fn the_door_carries_the_live_row_and_never_the_trail() {
+    let p = Profile::new();
+    let uuid = save(&p, "the deploy port is 8081", &["--title", "deploy port"]);
+    p.run_silent(&["save", "--title", "deploy port", "the deploy port is 9090"])
+        .unwrap_status("re-save");
+
+    let out = p
+        .run_silent(&["context", "--namespace", "default", "deploy port"])
+        .unwrap_status("context");
+    let json = stdout_json(&out);
+    let text = serde_json::to_string(&json).expect("the door's answer");
+    assert!(
+        text.contains("9090"),
+        "the door carries the live row: {text}"
+    );
+    assert!(
+        !text.contains("8081"),
+        "the trail is not in FTS and not in the answer: {text}"
+    );
+    let items = json["items"].as_array().expect("items");
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item["uuid"] == uuid.as_str())
+            .count(),
+        1,
+        "one live row, once: {text}"
+    );
+}
+
+#[test]
+fn purge_removes_the_trail_of_the_record_it_purges() {
+    let p = Profile::new();
+    let uuid = save(&p, "v1 content", &[]);
+    p.run_silent(&[
+        "update",
+        &uuid,
+        "--content",
+        "v2 content",
+        "--expected-revision",
+        "1",
+        "--reason",
+        "r",
+    ])
+    .unwrap_status("update");
+    assert_eq!(trail(&p, &uuid).0, 1, "the update wrote a revision");
+    p.run_silent(&["delete", "--force", &uuid])
+        .unwrap_status("delete");
+
+    let out = p
+        .run_silent(&["purge", "--all", "--apply"])
+        .unwrap_status("purge a record with a trail");
+    assert_eq!(stdout_json(&out)["purged"], 1, "the record is purged");
+    assert_eq!(trail(&p, &uuid).0, 0, "its trail goes with it");
+}
+
+#[test]
+fn purge_removes_a_superseded_record_and_its_link() {
+    let p = Profile::new();
+    let older = save(&p, "the deploy port is 8081", &["--title", "alpha"]);
+    let newer = save(&p, "the deploy port is 9090", &["--title", "beta"]);
+    p.run_silent(&[
+        "supersede",
+        "--older",
+        &older,
+        "--newer",
+        &newer,
+        "--reason",
+        "the port moved",
+    ])
+    .unwrap_status("supersede");
+    p.run_silent(&["delete", "--force", &older])
+        .unwrap_status("delete the superseded record");
+
+    let out = p
+        .run_silent(&["purge", "--all", "--apply"])
+        .unwrap_status("purge a record with a trail and a link");
+    assert_eq!(stdout_json(&out)["purged"], 1, "the record is purged");
+    assert_eq!(trail(&p, &older).0, 0, "its trail goes with it");
+    let links = p
+        .run_silent(&["timeline", &newer])
+        .unwrap_status("timeline");
+    assert_eq!(
+        stdout_json(&links)["supersedes"].as_array().map(Vec::len),
+        Some(0),
+        "the link to the purged record is gone: {links:?}"
+    );
+}
+
+#[test]
+fn purge_keeps_the_live_records_and_their_trail() {
+    let p = Profile::new();
+    let live = save(&p, "v1 content", &[]);
+    p.run_silent(&[
+        "update",
+        &live,
+        "--content",
+        "v2 content",
+        "--expected-revision",
+        "1",
+        "--reason",
+        "r",
+    ])
+    .unwrap_status("update the record that stays");
+    let gone = save(&p, "the record that goes", &[]);
+    p.run_silent(&["delete", "--force", &gone])
+        .unwrap_status("delete");
+
+    let out = p
+        .run_silent(&["purge", "--all", "--apply"])
+        .unwrap_status("purge");
+    assert_eq!(stdout_json(&out)["purged"], 1, "only the deleted record");
+    assert_eq!(trail(&p, &live).0, 1, "the live record keeps its trail");
+    let shown = p.run_silent(&["show", &live]).unwrap_status("show live");
+    assert_eq!(stdout_json(&shown)["content"], "v2 content");
+}
+
+#[test]
+fn purge_all_wins_over_a_cutoff() {
+    // The two flags can be passed together; `--all` decides, exactly as it
+    // did before the trail rows were deleted first.
+    let p = Profile::new();
+    let uuid = save(&p, "purge me", &[]);
+    p.run_silent(&["delete", "--force", &uuid])
+        .unwrap_status("delete");
+    let out = p
+        .run_silent(&[
+            "purge",
+            "--all",
+            "--before",
+            "2000-01-01T00:00:00Z",
+            "--apply",
+        ])
+        .unwrap_status("purge --all --before");
+    assert_eq!(stdout_json(&out)["purged"], 1, "--all still decides");
+}
+
+#[test]
+fn purge_before_still_runs_and_matches_no_record_without_a_purge_after() {
+    // `soft_delete` never sets `purge_after`, so a cutoff alone matches
+    // nothing — the behaviour before the trail rows were deleted first, and
+    // it must stay a successful no-op, not an error.
+    let p = Profile::new();
+    let uuid = save(&p, "kept by the cutoff", &[]);
+    p.run_silent(&["delete", "--force", &uuid])
+        .unwrap_status("delete");
+    let out = p
+        .run_silent(&["purge", "--before", "2000-01-01T00:00:00Z", "--apply"])
+        .unwrap_status("purge --before");
+    assert_eq!(stdout_json(&out)["purged"], 0, "{out:?}");
+    let still = p.run_silent(&["timeline", &uuid]).unwrap_status("timeline");
+    assert_eq!(stdout_json(&still)["memory"]["uuid"], uuid.as_str());
 }
 
 // --- search / explain / delete / restore ---

@@ -251,8 +251,8 @@ fn update_form_prefills_and_writes_a_new_revision() {
     assert!(status.contains("to revision 2"), "status: {status:?}");
     assert_eq!(
         app.history.first().map(|h| h.revision),
-        Some(2),
-        "the detail history refreshed"
+        Some(1),
+        "the detail history shows the revision the update replaced"
     );
 }
 

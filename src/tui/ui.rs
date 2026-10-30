@@ -340,8 +340,12 @@ fn render_detail(frame: &mut Frame, app: &App, area: Rect) {
                 lines.push(Line::from(content_line.to_string()));
             }
             lines.push(Line::from(""));
+            // One line per revision the record has left behind: the trail
+            // records the state a change replaced, so `rev N` is the record
+            // as it stood at revision N and the reason is the change that
+            // ended it.
             lines.push(Line::from(Span::styled(
-                "History (newest first)",
+                "Revisions (the state each change replaced)",
                 Style::new().add_modifier(Modifier::BOLD),
             )));
             if app.deleted_view {

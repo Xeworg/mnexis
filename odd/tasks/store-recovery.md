@@ -173,3 +173,17 @@ after `./install.sh extensions`, which rebuilds a binary older than the tree
 decisions the cut left open (ship `fat` or `head`, the doctrine scorer's two
 artifacts, and the value filter that would remove the 2 000 ceiling) are
 outside this feature and none of them blocks it.
+
+---
+
+## Correction (2026-10-30, A3) — the engine now writes the trail on supersede
+
+The amendment above records a verification from 2026-10-26 that is **no longer true**: the
+engine wrote no `memory_history` row on supersede then, and it does now. A3 (the phase 0
+of `odd/reports/memory-types-analysis.md`) implemented one rule on both paths — *before a
+row changes, the trail records the state it had* — so a supersede now leaves the older
+record's **pre-flip** state in `memory_history` with the link's reason, and `mnexis show
+<old> --revision 1` answers it. The extension's twin rule is unaffected: it reads the
+older record whole **before** superseding, and the line it writes to the human is
+unchanged on purpose — the trail is queryable, and the line's bytes are model-facing.
+The fake that mirrored "no history row on supersede" now mirrors the real rule.

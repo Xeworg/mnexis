@@ -634,10 +634,13 @@ export function twinReason(pair) {
  *
  * It names both records and the shared value, and says what the store did
  * with the older one: superseded, never deleted, still visible as
- * `superseded` in `mnexis list` and `mnexis show`. It promises no history
- * revision, because the engine writes none on supersede
- * (`src/storage/memory_repo.rs:700-705`, "no history row, by parity") and
- * `mnexis_history` answers "no history" for that record (S3, L4/B4).
+ * `superseded` in `mnexis list` and `mnexis show`. The engine also keeps the
+ * state the flip replaced in `memory_history`
+ * (`src/storage/memory_repo.rs`, `supersede_atomic`), so `mnexis_history`
+ * and `mnexis show --revision <old revision>` answer the record as it was
+ * before the supersede; this one line does not narrate the trail, because
+ * the trail is a store fact the model can ask for and not a second sentence
+ * on every repair.
  */
 export function twinRepairLine(pair) {
 	return (

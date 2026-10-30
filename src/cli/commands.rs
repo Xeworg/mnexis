@@ -977,47 +977,61 @@ pub fn show(
         }
         Some(rev) => {
             let entries = profile.service_ref().history(&uuid)?;
-            let entry = entries
-                .iter()
-                .find(|h| h.revision == rev)
-                .ok_or_else(|| MnexisError::not_found(format!("memory:{uuid} revision:{rev}")))?;
-            Ok(CommandOutcome::new(
-                json!({
-                    "uuid": entry.memory_uuid,
-                    "revision": entry.revision,
-                    "memory_type": entry.memory_type,
-                    "state": entry.state.as_str(),
-                    "content": entry.content,
-                    "assertion_basis": entry.assertion_basis,
-                    "valid_from": entry.valid_from,
-                    "valid_until": entry.valid_until,
-                    "changed_by": entry.changed_by,
-                    "change_reason": entry.change_reason,
-                    "changed_at": entry.changed_at,
-                }),
-                crate::cli::output::memory_block(&crate::domain::memory::Memory {
-                    id: None,
-                    uuid: entry.memory_uuid.clone(),
-                    title: String::new(),
-                    keywords: Vec::new(),
-                    topic_key: String::new(),
-                    namespace: String::new(),
-                    memory_type: entry.memory_type.clone(),
-                    content: entry.content.clone(),
-                    state: entry.state,
-                    revision: entry.revision,
-                    deleted: false,
-                    created_at: entry.changed_at.clone(),
-                    updated_at: entry.changed_at.clone(),
-                    deleted_at: None,
-                    purge_after: None,
-                    valid_from: entry.valid_from.clone(),
-                    valid_until: entry.valid_until.clone(),
-                    actor: entry.changed_by.clone(),
-                    channel: String::new(),
-                    assertion_basis: entry.assertion_basis.clone(),
-                }),
-            ))
+            if let Some(entry) = entries.iter().find(|h| h.revision == rev) {
+                return Ok(CommandOutcome::new(
+                    json!({
+                        "uuid": entry.memory_uuid,
+                        "revision": entry.revision,
+                        "memory_type": entry.memory_type,
+                        "state": entry.state.as_str(),
+                        "content": entry.content,
+                        "assertion_basis": entry.assertion_basis,
+                        "valid_from": entry.valid_from,
+                        "valid_until": entry.valid_until,
+                        "changed_by": entry.changed_by,
+                        "change_reason": entry.change_reason,
+                        "changed_at": entry.changed_at,
+                    }),
+                    crate::cli::output::memory_block(&crate::domain::memory::Memory {
+                        id: None,
+                        uuid: entry.memory_uuid.clone(),
+                        title: String::new(),
+                        keywords: Vec::new(),
+                        topic_key: String::new(),
+                        namespace: String::new(),
+                        memory_type: entry.memory_type.clone(),
+                        content: entry.content.clone(),
+                        state: entry.state,
+                        revision: entry.revision,
+                        deleted: false,
+                        created_at: entry.changed_at.clone(),
+                        updated_at: entry.changed_at.clone(),
+                        deleted_at: None,
+                        purge_after: None,
+                        valid_from: entry.valid_from.clone(),
+                        valid_until: entry.valid_until.clone(),
+                        actor: entry.changed_by.clone(),
+                        channel: String::new(),
+                        assertion_basis: entry.assertion_basis.clone(),
+                    }),
+                ));
+            }
+            // The trail records the state a change replaced, so the newest
+            // revision of a record is the live row itself: asking for it is
+            // asking for the record.
+            let live = profile
+                .service_ref()
+                .get(&uuid)?
+                .ok_or_else(|| MnexisError::not_found(format!("memory:{uuid}")))?;
+            if live.revision == rev {
+                return Ok(CommandOutcome::new(
+                    serde_json::to_value(&live).unwrap_or_default(),
+                    crate::cli::output::memory_block(&live),
+                ));
+            }
+            Err(MnexisError::not_found(format!(
+                "memory:{uuid} revision:{rev}"
+            )))
         }
     }
 }

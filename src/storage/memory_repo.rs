@@ -604,28 +604,61 @@ impl MemoryRepository for SqliteMemoryRepository {
     }
 
     fn purge(&mut self, before: Option<&str>, all: bool) -> Result<usize, MnexisError> {
-        if all {
-            let n = self
-                .conn
-                .execute("DELETE FROM memories WHERE deleted = 1", [])
-                .map_err(sql_to_domain)?;
-            Ok(n)
-        } else if let Some(cutoff) = before {
-            let n = self
-                .conn
-                .execute(
-                    "DELETE FROM memories WHERE deleted = 1 \
-                     AND purge_after IS NOT NULL AND purge_after <= ?1",
-                    [cutoff],
-                )
-                .map_err(sql_to_domain)?;
-            Ok(n)
+        // Which records are eligible: the predicate `memories` is deleted
+        // with, repeated on the rows that point at it.
+        let cutoff: Option<String> = before.map(str::to_string);
+        let filter: &str = if all {
+            "deleted = 1"
+        } else if cutoff.is_some() {
+            "deleted = 1 AND purge_after IS NOT NULL AND purge_after <= ?1"
         } else {
-            Err(MnexisError::invalid_argument(
+            return Err(MnexisError::invalid_argument(
                 "before",
                 "either 'before' (ISO-8601 cutoff) or 'all' must be specified",
-            ))
+            ));
+        };
+        let mut bound: Vec<&dyn ToSql> = Vec::new();
+        // `--all` wins over a cutoff, exactly as it did before: the filter
+        // it selects has no placeholder, so the cutoff is not bound.
+        if !all {
+            if let Some(cutoff) = cutoff.as_ref() {
+                bound.push(cutoff);
+            }
         }
+
+        // The trail does not outlive the record it describes: the history
+        // and link rows of the records being purged go first, in the same
+        // transaction. `memory_history.memory_uuid` and the two
+        // `memory_links` columns point at `memories(uuid)` without a
+        // cascade, so without this step a soft-deleted record that has any
+        // trail could never be purged (the foreign keys pinned it), and the
+        // purge failed with BUSY. `memory_tags` already cascades.
+        let tx = self.conn.unchecked_transaction().map_err(sql_to_domain)?;
+        tx.execute(
+            &format!(
+                "DELETE FROM memory_history WHERE memory_uuid IN \
+                 (SELECT uuid FROM memories WHERE {filter})"
+            ),
+            bound.as_slice(),
+        )
+        .map_err(sql_to_domain)?;
+        tx.execute(
+            &format!(
+                "DELETE FROM memory_links \
+                 WHERE older_uuid IN (SELECT uuid FROM memories WHERE {filter}) \
+                    OR newer_uuid IN (SELECT uuid FROM memories WHERE {filter})"
+            ),
+            bound.as_slice(),
+        )
+        .map_err(sql_to_domain)?;
+        let purged = tx
+            .execute(
+                &format!("DELETE FROM memories WHERE {filter}"),
+                bound.as_slice(),
+            )
+            .map_err(sql_to_domain)?;
+        tx.commit().map_err(sql_to_domain)?;
+        Ok(purged)
     }
 
     fn reindex(&mut self) -> Result<usize, MnexisError> {
@@ -841,9 +874,48 @@ impl MemoryRepository for SqliteMemoryRepository {
             }
         }
 
+        // The trail records the state the row had **before** the flip:
+        // the revision the supersede replaces, its content, its pre-flip
+        // state. Read inside the transaction, before the UPDATE, so the
+        // row and the flip cannot disagree.
+        let pre_flip = tx
+            .query_row(
+                "SELECT revision, memory_type, content, state, valid_from, valid_until, \
+                        assertion_basis, actor \
+                 FROM memories WHERE uuid = ?1",
+                params![older_uuid],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(sql_to_domain)?;
+        let Some((
+            revision,
+            memory_type,
+            content,
+            state,
+            valid_from,
+            valid_until,
+            assertion_basis,
+            actor,
+        )) = pre_flip
+        else {
+            return Err(MnexisError::not_found(format!("memory:{older_uuid}")));
+        };
+
         // Older side: flip to superseded under the optimistic guard. Only
-        // state / updated_at / revision change, mirroring what the service
-        // used to write through `update` (no history row, by parity).
+        // state / updated_at / revision change; the trail keeps what the
+        // row was.
         let affected = tx
             .execute(
                 "UPDATE memories SET state = 'superseded', revision = revision + 1, \
@@ -862,6 +934,26 @@ impl MemoryRepository for SqliteMemoryRepository {
                 .map_err(sql_to_domain)?;
             return Err(MnexisError::revision_conflict(current.unwrap_or(0)));
         }
+
+        tx.execute(
+            "INSERT INTO memory_history (memory_uuid, revision, memory_type, content, state, \
+                    valid_from, valid_until, assertion_basis, changed_by, change_reason, changed_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                older_uuid,
+                revision,
+                memory_type,
+                content,
+                state,
+                valid_from,
+                valid_until,
+                assertion_basis,
+                actor,
+                reason,
+                now,
+            ],
+        )
+        .map_err(sql_to_domain)?;
 
         tx.execute(
             "INSERT INTO memory_links (older_uuid, newer_uuid, link_type, reason, created_at) \

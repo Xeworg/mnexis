@@ -20,9 +20,11 @@ Branch: `feat/operational-commands`.
   updated / deleted timestamps), the revision events the store **records**
   (`memory_history` — the revisions of `update`, oldest first), and its
   supersede relations in both directions (from `memory_links`, with reason
-  and date). The store records no history row for a save, a supersede or a
-  soft-delete, so the timeline does not invent one: it reports what is
-  there. An unknown uuid is NOT_FOUND (exit 3), not an empty list. A
+  and date). The store records the state a record had **before** every change that
+  replaces a revision — a save that updates the record the topic key already
+  holds, and a supersede — so the timeline reports what is there. A
+  soft-delete still writes no history row, and the timeline does not invent
+  one: it reports what the store records. An unknown uuid is NOT_FOUND (exit 3), not an empty list. A
   soft-deleted memory is readable — the deletion is part of its life.
 - **S3** — Comparison report §5 item 9, verbatim: "`mnexis project list
   --json` as a stable contract". The command exists (`project list`, the
@@ -67,3 +69,14 @@ Branch: `feat/operational-commands`.
   plus text smokes of `stats` and of both sides of a supersede in
   `timeline`. Native `assess`: risk medium, `reviewDue: false`
   (under_budget) — no review opened, per the RDD switch. Awaiting merge.
+
+**L4** (2026-10-30, A3 — the door-coverage-census phase 0) — **L3's supersede half is now
+false, and S3 was corrected with it.** The engine now writes the state a record had
+**before** the change, on both paths: a save that updates the record, and a supersede (the
+older record's pre-flip state, with the link's reason). The soft-delete half of L3 still
+holds: a soft-delete writes no history row. The rule is one sentence — *before a row
+changes, the trail records the state it had* — and `mnexis show <uuid> --revision N` now
+answers every revision that exists (the live revision is the record itself). The trail no
+longer pins the row it describes: `purge` deletes the record's `memory_history` and
+`memory_links` rows first, so purging a record that has history works instead of failing
+with `BUSY` (exit 10, measured before). No schema change and no store version bump.

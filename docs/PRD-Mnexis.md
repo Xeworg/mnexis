@@ -150,6 +150,8 @@ El borrado se representa aparte con `deleted_at` y `purge_after`.
 
 `memory_update` exige `expected_revision`. En conflicto devuelve la revisión actual y no escribe. Cada cambio conserva contenido y metadatos anteriores en `memory_history` dentro de la transacción.
 
+La fila de `memory_history` guarda el estado **anterior** al cambio, con el número de revisión que ese estado tenía: `history[N]` es la memoria tal como estaba en la revisión N, y `show --revision N` la devuelve. La regla es la misma para `memory_update`, para un guardado que actualiza un tema existente y para `memory_supersede` (que conserva el estado previo de la memoria antigua, con el motivo del enlace).
+
 Actualizar el mismo concepto crea una revisión del mismo ID. Sustituir una memoria por otra de identidad distinta usa `memory_supersede`: activa la nueva, marca la antigua como `superseded` y enlaza ambas de forma atómica. Exige autorización sobre ambas y, en MVP, el mismo namespace. Rechaza ciclos.
 
 `valid_from` y `valid_until` son opcionales, expresados en UTC. La recuperación vigente respeta esos límites. El MVP no ofrece consultas bi-temporales completas. La recencia por sí sola no determina verdad: una preferencia antigua puede seguir vigente.
@@ -275,6 +277,8 @@ Es válido devolver cero memorias. La búsqueda textual usa coincidencias FTS5 y
 | `schema_migrations` | Versiones y migraciones aplicadas |
 
 FTS5 se actualiza mediante triggers o servicio transaccional escogido en el spike. El índice textual operativo contiene memorias no borradas; el estado se filtra al recuperar. Historial no se incluye en búsquedas vigentes. Cada operación de guardar, editar, borrar o restaurar actualiza SQLite y FTS5 en una sola transacción SQL.
+
+`purge` borra las filas de `memory_history` y `memory_links` de los registros que elimina, en la misma transacción: el rastro no sobrevive al registro que describe ni lo fija con una clave foránea.
 
 ### Consistencia y recuperación
 

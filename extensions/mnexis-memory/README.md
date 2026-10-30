@@ -53,8 +53,9 @@ The rule is deliberately narrow. A changed value is a conflict, not a rename,
 and is left alone; a shared number with no shared vocabulary is not one fact;
 records outside the workspace's writable namespace are never touched. Nothing
 is deleted — the superseded record stays visible in `list`, `show` and
-`timeline`, while `mnexis_history` answers that it has no revision, because the
-engine writes no history row on a supersede.
+`timeline`, and the engine keeps the state the supersede replaced in
+`memory_history`: `mnexis_history` answers the record as it stood before the
+flip, and `mnexis show <uuid> --revision <N>` returns that content.
 
 Candidates are found by the value they carry, never by a page of the
 namespace: the engine answers `mnexis list --value <N>` with exactly the
@@ -272,9 +273,10 @@ node --test "extensions/mnexis-memory/test/*.test.js"
 
 The unit tests inject a fake exec, so they need neither the binary nor a
 profile. The fake mirrors the engine where it matters — `list` answers oldest
-first, a supersede writes no history row, `supersede` refuses the way the
-engine refuses — because a fake that disagrees with the engine is how a repair
-can pass its tests and do nothing in a real project.
+first, a change records the state it replaced in `memory_history` (on the
+update and on the supersede path), `supersede` refuses the way the engine
+refuses — because a fake that disagrees with the engine is how a repair can
+pass its tests and do nothing in a real project.
 
 The repair's candidate query and the supersede semantics also have an opt-in
 parity suite against the real binary, which writes only into a temporary data

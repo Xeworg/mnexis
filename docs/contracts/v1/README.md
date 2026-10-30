@@ -19,6 +19,7 @@ Authorize every read and write route, including IDs, history and cursors; resolv
 
 - `proposed`, `disputed`, `superseded`, `archived`, expired, and deleted memories are excluded from default context. Only `active` and currently valid records are eligible.
 - Every update supplies `expected_revision`; a mismatch writes nothing and returns `REVISION_CONFLICT` with current revision.
+- The update path and the supersede path append the state the record had **before** the change to `memory_history`: `history[N]` is the record as it stood at revision N, and `show --revision N` answers it (the live revision is the record itself). Deletion and restore bump the revision without a trail row, as before. The trail never pins the rows it describes: `purge` deletes the history and link rows of the records it purges.
 - A `topic_key` identifies a concept within namespace and never silently overwrites; explicit update is required. Idempotency keys are scoped by actor and namespace; same key/different canonical request is a conflict.
 - Supersede is atomic, same-namespace in MVP, revision-checked on both records, and must reject cycles.
 - Provenance requires actor, channel, and UTC creation time. `assertion_basis` identifies source, not confidence.

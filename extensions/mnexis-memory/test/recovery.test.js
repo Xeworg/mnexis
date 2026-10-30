@@ -25,9 +25,11 @@
  *     (`src/domain/value.rs`). A value that is not three or more digits is an
  *     INVALID_ARGUMENT (exit 2), refused with the engine's own message.
  *   - `history` answers `count: 0` / "no history for <uuid>" when no
- *     `memory_history` row exists, and the engine writes none on save (an
- *     insert) nor on supersede (`src/storage/memory_repo.rs:700-705`). It DOES
- *     write one when a save updates a record it already owns.
+ *     `memory_history` row exists. A row exists only after a change: the
+ *     engine records the state the change replaced, on the update path (a
+ *     save on a title the store already holds) and on the supersede path
+ *     (`src/storage/memory_repo.rs`, `update_with_history_and_tags` and
+ *     `supersede_atomic`). A first save writes no row.
  *   - `supersede` fails the way the engine fails: unknown uuid (NOT_FOUND,
  *     exit 3), cross-namespace and a superseded older record
  *     (INVALID_ARGUMENT, exit 2), with the engine's own messages.
@@ -182,20 +184,19 @@ if (args[0] === "project" && args[1] === "list") {
 			);
 		}
 		// One fact, one record: a save on the same title updates the record
-		// and writes a revision row. That is the engine's only history write
-		// in this corpus, and it is what keeps the "no history after a
-		// supersede" assertion meaningful.
-		occupier.revision += 1;
+		// and appends the state it replaced to the trail — revision N with
+		// the content the record had, exactly as the engine does.
 		config.history.push({
 			memory_uuid: occupier.uuid,
 			revision: occupier.revision,
 			memory_type: occupier.memory_type,
-			content,
-			state: "active",
+			content: occupier.content,
+			state: occupier.state,
 			changed_by: "user",
 			change_reason: "saved again with the topic key \`" + topicKey + "\`",
 			changed_at: stamp(occupier.id),
 		});
+		occupier.revision += 1;
 		occupier.content = content;
 		occupier.title = title;
 		occupier.keywords = keywords;
@@ -430,8 +431,19 @@ if (args[0] === "project" && args[1] === "list") {
 			"invalid argument: newer_uuid: supersede would close a cycle",
 		);
 	}
-	// Only state, revision and updated_at change, and NO history row is
-	// written (src/storage/memory_repo.rs:700-705, "no history row, by parity").
+	// The flip is a change, so the trail keeps the state it replaces: the
+	// revision before the bump, the content it had, and the link's reason
+	// (src/storage/memory_repo.rs, \`supersede_atomic\`).
+	config.history.push({
+		memory_uuid: olderUuid,
+		revision: older.revision,
+		memory_type: older.memory_type,
+		content: older.content,
+		state: older.state,
+		changed_by: "user",
+		change_reason: reason,
+		changed_at: stamp(older.id),
+	});
 	older.state = "superseded";
 	older.revision += 1;
 	older.updated_at = stamp(older.id);
@@ -698,7 +710,11 @@ test("a second save for one fact leaves exactly one live record (S1, S3, S4, S5)
 	assert.match(answer.text, /Puerto de escucha del servicio/, "the older record is named");
 	assert.match(answer.text, /Puerto de la API de pagos/, "the newer record is named");
 	assert.match(answer.text, /8081/, "the shared value is named");
-	assert.doesNotMatch(answer.text, /history/, "the answer claims no history revision");
+	assert.doesNotMatch(
+		answer.text,
+		/history/,
+		"the one line does not narrate the trail; the trail is a store fact the model asks for",
+	);
 
 	// S4: one line per intervention on the extension's diagnostic path.
 	const lines = answer.entries.filter((entry) => entry.type === "mnexis-store-recovery");
@@ -858,7 +874,7 @@ test("a twin behind a page of matches is still found (B1: the answer is exhausti
 	}
 });
 
-test("the superseded row stays visible to list and show, and history invents nothing (S3, B4)", async (t) => {
+test("the superseded row stays visible to list and show, and its trail keeps the state before the flip (S3, B4)", async (t) => {
 	const sc = scenario(t, { store: twinStore() });
 	await save(sc, TWIN_SAVE);
 
@@ -876,24 +892,31 @@ test("the superseded row stays visible to list and show, and history invents not
 	assert.match(listed.text, /"uuid":"u-old"/, "list still shows the row");
 	assert.match(listed.text, /"state":"superseded"/, "list reports it as superseded");
 
-	// The not-invented half: the engine writes no `memory_history` row on
-	// supersede (src/storage/memory_repo.rs:700-705, "no history row, by
-	// parity"), so `mnexis_history` answers "no history for <uuid>". A test
-	// that claims the history shows the supersede locks in a fiction.
+	// The trail half: the supersede is a change, so the engine records the
+	// state it replaced — revision 1, with the content the record had and
+	// the link's reason — and `mnexis_history` answers it. It is the state
+	// BEFORE the flip: the row is not reported as `superseded` there.
 	const history = await runTool(sc, "mnexis_history", { uuid: "u-old" });
 	assert.notEqual(history.result.isError, true, "history answers, it does not fail");
-	assert.equal(history.details.count, 0, "the supersede wrote no revision");
-	assert.deepEqual(history.details.items, [], "and no revision row is fabricated");
-	assert.doesNotMatch(history.text, /superseded/, "history does not claim the supersede");
-	assert.doesNotMatch(history.text, /8081/, "and does not invent a revision carrying the content");
+	assert.equal(history.details.count, 1, "the supersede wrote the replaced revision");
+	assert.equal(history.details.items[0].revision, 1, "with the revision before the bump");
+	assert.equal(
+		history.details.items[0].content,
+		"El servicio payments-api escucha en el puerto 8081 (4 workers).",
+		"carrying the content the record had before the flip",
+	);
+	assert.equal(history.details.items[0].state, "active", "and the state it had");
+	assert.match(history.text, /8081/, "the trail carries the old content");
+	assert.doesNotMatch(history.text, /superseded/, "history is the pre-flip state, not the flip");
 	assert.deepEqual(sc.entries.filter((entry) => entry.type === "revision"), [], "nothing else wrote a row");
 });
 
-test("fidelity: the fake's history is empty only because the engine writes none on supersede", async (t) => {
-	// Guards the assertion above from being vacuous: the same fake DOES write
-	// a revision when a save updates a record it already owns, which is the
-	// engine's other history path. So "count 0 after a supersede" is a fact
-	// about the engine, not about a fake that never has history.
+test("fidelity: the fake records the state a change replaces, on both paths", async (t) => {
+	// Guards the assertions above from being vacuous: the same fake writes a
+	// revision when a save updates a record it already owns, and when a
+	// supersede flips one. Both rows hold the state that was replaced, so
+	// "count 1 after a supersede" is a fact about the engine, not about a
+	// fake that invents history.
 	const sc = scenario(t, { store: [] });
 	const first = await save(sc, {
 		title: "Puerto de escucha",
@@ -908,8 +931,13 @@ test("fidelity: the fake's history is empty only because the engine writes none 
 	});
 	assert.equal(second.supersedes.length, 0, "a save on its own record is not a twin of itself");
 	const history = await runTool(sc, "mnexis_history", { uuid: "u-new" });
-	assert.equal(history.details.count, 1, "the update wrote a revision row");
-	assert.equal(history.details.items[0].revision, 2, "with the new revision number");
+	assert.equal(history.details.count, 1, "the update wrote the replaced revision");
+	assert.equal(history.details.items[0].revision, 1, "with the pre-update revision number");
+	assert.equal(
+		history.details.items[0].content,
+		"El puerto del servicio es 8081.",
+		"and the content the record had before the update",
+	);
 	assert.deepEqual(liveUuids(second.store), ["u-new"], "and the record is one, not two");
 });
 
@@ -1060,9 +1088,11 @@ test("a save that lands on its own record still retires the other live twin", as
 		"superseded",
 		"the other record is history",
 	);
-	// The update is the engine's own history path; the supersede adds no row.
+	// The update writes the revision it replaced for u-old; the supersede
+	// writes one for the OTHER record (u-other), not for u-old.
 	const history = await runTool(sc, "mnexis_history", { uuid: "u-old" });
 	assert.equal(history.details.count, 1, "one revision row for the update");
+	assert.equal(history.details.items[0].revision, 1, "the revision the update replaced");
 });
 
 test("a changed value is a conflict, not a twin: nothing is superseded", async (t) => {

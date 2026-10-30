@@ -140,7 +140,11 @@ fn enter_on_a_memory_shows_detail_with_revision_history() {
     assert_eq!(detail.revision, 2);
     assert_eq!(detail.content, "second wording");
     assert!(!app.history.is_empty(), "history must be visible");
-    assert_eq!(app.history[0].revision, 2, "newest revision first");
+    assert_eq!(
+        app.history[0].revision, 1,
+        "the trail holds the revision the update replaced"
+    );
+    assert_eq!(app.history[0].content, "first wording");
 }
 
 #[test]

@@ -3,9 +3,10 @@
  * S1-S3, L4).
  *
  * The corpus in `recovery.test.js` runs against a fake that mirrors the engine
- * (oldest-first `list`, `list --value` with the maximal-digit-run rule, no
- * `memory_history` row on save or supersede, the engine's supersede
- * failures). A fake can drift from the engine silently —
+ * (oldest-first `list`, `list --value` with the maximal-digit-run rule, the
+ * state a change replaced in `memory_history` on both the update and the
+ * supersede path, the engine's supersede failures). A fake can drift from the
+ * engine silently —
  * that is exactly how the first implementation passed its tests and failed in
  * production (L4/B1, L4/B4) — so this file asks the engine itself.
  *
@@ -179,11 +180,30 @@ test("parity: a twin past the page the engine returns is repaired (B1)", { skip 
 	assert.equal(shown.data?.state, "superseded", "show reports the row as superseded");
 	assert.equal(shown.data?.content, "El servicio payments-api escucha en el puerto 8081 (4 workers).");
 
-	// S3, amended: no `memory_history` row was written, exactly as the engine
-	// behaves — the fiction L4/B4 refused.
+	// S3, amended: the supersede is a change, so the engine records the state
+	// it replaced. Revision 1 answers the old record as it was, and the trail
+	// carries its content.
 	const history = await client.history({ uuid: older.data.uuid }, workDir);
 	assert.equal(history.code, 0);
-	assert.equal(history.data?.count, 0, "the engine wrote no history row on supersede");
+	assert.equal(history.data?.count, 1, "the engine wrote the replaced revision on supersede");
+	assert.equal(history.data?.items?.[0]?.revision, 1, "the revision before the bump");
+	assert.equal(
+		history.data?.items?.[0]?.content,
+		"El servicio payments-api escucha en el puerto 8081 (4 workers).",
+		"the content the record had before the flip",
+	);
+	assert.equal(history.data?.items?.[0]?.state, "active", "the state before the flip");
+
+	const atRevision = await client.run(
+		["show", older.data.uuid, "--revision", "1"],
+		{ json: true, cwd: workDir },
+	);
+	assert.equal(atRevision.code, 0, "the pre-flip revision answers");
+	assert.equal(
+		atRevision.data?.content,
+		"El servicio payments-api escucha en el puerto 8081 (4 workers).",
+		"byte-identical to what the record said before the supersede",
+	);
 
 	const timeline = await client.run(["timeline", older.data.uuid], { json: true, cwd: workDir });
 	assert.equal(timeline.code, 0);
