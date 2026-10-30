@@ -1350,6 +1350,23 @@ default the agent confirms, or the axis as a label that ranks nothing. The crite
 before the numbers: `tmp/bench/types-b1-measurement.md`; the report:
 `tmp/bench/types-b1-report.md` (both gitignored, quoted in the commit).
 
+**B1 round 2 (2026-10-30, the same day) — the rule stabilizes the typing, and the diversity
+was the ambiguity.** The drift analysis (`tmp/bench/types-b1-drift-analysis.md`) traced the
+G1 failure to underdetermination at the type boundaries (same phrasing, different type) on a
+fixture whose five facts are **all config values**, and predicted: an explicit boundary rule
+stabilizes (P1) while the round-1 diversity collapses (P2). The `types2` arm changed exactly
+one thing — the description (680 B): "a value read from the project's config is `knowledge`",
+`decision` must name what it beat, ties by list order — measured at the **arg level** (the
+model's own `type` argument, immune to the round-1 scorer colliders). **R2-G1 HOLDS**:
+port/dsn/retry `knowledge` 10/10, `deploy` `knowledge` 8/10, `contact` 9/10 — every fact ≥8/10,
+the first time G1 passes. **R2-G2 collapsed to 2/10, exactly the prediction** — round 1's
+G2 "pass" was the ambiguity leaking; the drift WAS the diversity. R2-G3 holds (median 152 B),
+57/57 calls typed. **Verdict (pre-registered branch 1): the axis CAN be made stable by rules
+but does not discriminate on config-shaped facts — per-type rules stay inadmissible, now with
+the mechanism proven.** The two honest paths remain (accept the label; collapse the set), and
+the diversity that survives text is the engine-proposed default, not more words. Round-2
+criterion and report: `tmp/bench/types-b1-round2-{measurement,report}.md` (gitignored).
+
 **What the evidence does not settle:** that a structured record serves the agent (nothing
 in the corpus shows an agent asking *why* a decision was made; the steering phase already
 answers "¿por dónde quedamos?" 10/10 with a 70 B reason-free decision); that a bigger

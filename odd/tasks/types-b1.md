@@ -38,6 +38,7 @@ this project wrote it.
 | T4 | S1 | the batch: N=10 × (setup → patch → phase0 → store --json), image `bench-mem:merged`, model `opencode-go/deepseek-v4.1-flash`, the fixture and the prompt verbatim | inline | tmp/bench (gitignored) |
 | T5 | S1-S2 | score the arm, apply the three gates, write the verdict | inline | tmp/bench (gitignored) |
 | T6 | S1-S2 | the report `tmp/bench/types-b1-report.md`, the board item 23 verdict, the commit | inline | this commit |
+| T7 | S1-S3 | the drift analysis and round 2: H1 (the boundary rule) pre-registered, the `types2` arm, the arg-level scorer, the verdict | inline | this commit |
 
 ## Log
 
@@ -56,3 +57,17 @@ this project wrote it.
   the collision-free reading, so the verdict is FAIL either way. **Consequence, as
   pre-registered: no per-type rule is admissible; B2 and B3 do not run.** Full numbers:
   `tmp/bench/types-b1-report.md`.
+- **L4** (2026-10-30, the user): *"no aun no haremos pr podemos hacer varios encadenados
+  pero debemos depurar hasta que el resultado sea mejor que el anterior, investiga que
+  puede estar ocacionando que el resultdo empreore"* — the debugging loop, chained, until
+  the result beats the previous one.
+- **L5** (round 2's verdict, 2026-10-30): the drift was **underdetermination at the type
+  boundaries** (same phrasing, different type) on a fixture whose five facts are all config
+  values; the "worsening" was mostly the scorer's `contacts.example` collider (contact is
+  8/10 at the arg level). H1 (the boundary rule: config value → `knowledge`, `decision`
+  names what it beat, ties by list order; 680 B) **passes R2-G1** (deploy `knowledge` 8/10,
+  contact 9/10, the rest 10/10 — G1's first pass) **and collapses R2-G2 to 2/10, exactly
+  the prediction**: round 1's diversity was the ambiguity. **Round 2 is better than round 1
+  by its pre-registered definition, and the mechanism is now proven: the axis can be made
+  stable by rules but does not discriminate on config-shaped facts — per-type rules stay
+  inadmissible.** Criterion and report: `tmp/bench/types-b1-round2-{measurement,report}.md`.
