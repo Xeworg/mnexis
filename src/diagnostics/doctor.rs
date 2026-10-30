@@ -59,6 +59,7 @@ pub enum CheckId {
     FtsShape,
     FtsInvariant,
     TitleShape,
+    TypeShape,
 }
 
 impl CheckId {
@@ -73,6 +74,7 @@ impl CheckId {
             CheckId::FtsShape => "fts_shape",
             CheckId::FtsInvariant => "fts_invariant",
             CheckId::TitleShape => "title_shape",
+            CheckId::TypeShape => "type_shape",
         }
     }
 
@@ -83,7 +85,7 @@ impl CheckId {
 }
 
 /// Every check id, in the order a full run emits them.
-pub const ALL_CHECK_IDS: [CheckId; 8] = [
+pub const ALL_CHECK_IDS: [CheckId; 9] = [
     CheckId::SchemaVersion,
     CheckId::CanonicalTables,
     CheckId::FtsReadable,
@@ -92,6 +94,7 @@ pub const ALL_CHECK_IDS: [CheckId; 8] = [
     CheckId::FtsShape,
     CheckId::FtsInvariant,
     CheckId::TitleShape,
+    CheckId::TypeShape,
 ];
 
 /// Severity of one check result. `warn` is part of the contract for checks
@@ -138,6 +141,8 @@ pub enum ReasonCode {
     FtsOutOfSync,
     TitlesMissing,
     TitlesUnreadable,
+    TypesUnclassified,
+    TypesUnreadable,
 }
 
 impl ReasonCode {
@@ -159,6 +164,8 @@ impl ReasonCode {
             ReasonCode::FtsOutOfSync => "FTS_OUT_OF_SYNC",
             ReasonCode::TitlesMissing => "TITLES_MISSING",
             ReasonCode::TitlesUnreadable => "TITLES_UNREADABLE",
+            ReasonCode::TypesUnclassified => "TYPES_UNCLASSIFIED",
+            ReasonCode::TypesUnreadable => "TYPES_UNREADABLE",
         }
     }
 
@@ -195,6 +202,13 @@ impl ReasonCode {
             ReasonCode::TitlesUnreadable => {
                 "restore the data directory from a backup; the records cannot be read"
             }
+            ReasonCode::TypesUnclassified => {
+                "give each record a kind with `mnexis update <uuid> --type <kind>` — a type is \
+                 the writer's declaration, and the engine never invents one"
+            }
+            ReasonCode::TypesUnreadable => {
+                "restore the data directory from a backup; the records cannot be read"
+            }
         }
     }
 
@@ -203,7 +217,9 @@ impl ReasonCode {
     /// family is the exception: the store still serves correctly without it.
     /// The title family is the other one: a record without a title is read
     /// and answered, it is just not named — and a doctor that cannot read
-    /// the titles is blind, not broken.
+    /// the titles is blind, not broken. The type family follows it: a
+    /// record nobody classified is read and answered exactly like a typed
+    /// one, and a doctor that cannot count them is blind, not broken.
     fn blocks_service(self) -> bool {
         !matches!(
             self,
@@ -211,6 +227,8 @@ impl ReasonCode {
                 | ReasonCode::WalNotActive
                 | ReasonCode::TitlesMissing
                 | ReasonCode::TitlesUnreadable
+                | ReasonCode::TypesUnclassified
+                | ReasonCode::TypesUnreadable
         )
     }
 }
@@ -689,6 +707,137 @@ fn check_title_shape(conn: &Connection) -> Check {
     Check::warn(CheckId::TitleShape, ReasonCode::TitlesMissing, evidence)
 }
 
+/// i. The records that declare no type, and the share of the store they
+/// carry.
+///
+/// `fact` is the type a save lands on when it declares nothing — the
+/// bucket every write inherits when the caller names no kind. It is not a
+/// failure: an unclassified record is read and answered exactly like a
+/// typed one. The gap is that the type axis cannot select it: a filter by
+/// kind never returns it, so the structure the type promises is invisible
+/// on the part of the store that carries no type at all. The doctor is the
+/// only surface that can answer "how much of the store is unclassified?",
+/// because every other surface reads only what it is asked for.
+///
+/// Read-only, and deliberately without a repair: a type is the writer's
+/// declaration. The engine validates one and keeps the one already there;
+/// it never infers one, because a repaired type would store a guess as a
+/// fact — and the store would then claim an organisation nobody made.
+///
+/// This is a warning, not a failure: nothing about the records changes, so
+/// the run does not fail on it. The live records are the ones that are not
+/// soft-deleted (the same liveness `title_shape` reads); their content
+/// bytes are measured as bytes, not characters, so a text in any script is
+/// priced as the store stores it.
+fn check_type_shape(conn: &Connection) -> Check {
+    // The whole store's live content, the denominator of the share.
+    let totals: (i64, i64) = match conn.query_row(
+        "SELECT count(*), COALESCE(SUM(length(CAST(content AS BLOB))), 0) \
+         FROM memories WHERE deleted = 0",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ) {
+        Ok(totals) => totals,
+        Err(error) => {
+            return Check::fail(
+                CheckId::TypeShape,
+                ReasonCode::TypesUnreadable,
+                format!("cannot read the store: {error}"),
+            );
+        }
+    };
+
+    let mut statement = match conn.prepare(
+        "SELECT uuid, title, length(CAST(content AS BLOB)) FROM memories \
+         WHERE deleted = 0 AND memory_type = ?1 ORDER BY created_at, uuid",
+    ) {
+        Ok(statement) => statement,
+        Err(error) => {
+            return Check::fail(
+                CheckId::TypeShape,
+                ReasonCode::TypesUnreadable,
+                format!("cannot read the types: {error}"),
+            );
+        }
+    };
+    let mut records: Vec<(String, String, i64)> = Vec::new();
+    match statement.query_map([crate::domain::memory_type::DEFAULT_MEMORY_TYPE], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    }) {
+        Ok(rows) => {
+            for row in rows.flatten() {
+                records.push(row);
+            }
+        }
+        Err(error) => {
+            return Check::fail(
+                CheckId::TypeShape,
+                ReasonCode::TypesUnreadable,
+                format!("cannot read the types: {error}"),
+            );
+        }
+    }
+
+    if records.is_empty() {
+        // An empty store passes because it holds nothing, and the evidence
+        // says exactly that: a vacuous pass is not a clean bill of health.
+        let evidence = if totals.0 == 0 {
+            "the store holds no live records, so nothing is unclassified (0 content bytes)"
+                .to_string()
+        } else {
+            format!(
+                "none of the {} live {} is unclassified (0 of {} content bytes)",
+                totals.0,
+                plural(totals.0, "record", "records"),
+                totals.1
+            )
+        };
+        return Check::pass(CheckId::TypeShape, evidence);
+    }
+
+    let unclassified_bytes: i64 = records.iter().map(|(_, _, bytes)| bytes).sum();
+    // Rounded to the nearest whole percent, in integers: no float ever
+    // reaches the evidence string.
+    let share = if totals.1 == 0 {
+        0
+    } else {
+        (unclassified_bytes * 100 + totals.1 / 2) / totals.1
+    };
+    let named: Vec<String> = records
+        .iter()
+        .map(|(uuid, title, bytes)| {
+            let title = title.trim();
+            let name = if title.is_empty() {
+                "(no title)".to_string()
+            } else {
+                format!("\"{title}\"")
+            };
+            format!("{uuid} {name} {bytes} B")
+        })
+        .collect();
+    let evidence = format!(
+        "{} of {} live {} unclassified (the default type '{}'), {} of {} content bytes \
+         ({share}%): {}",
+        records.len(),
+        totals.0,
+        plural(totals.0, "record is", "records are"),
+        crate::domain::memory_type::DEFAULT_MEMORY_TYPE,
+        unclassified_bytes,
+        totals.1,
+        named.join("; ")
+    );
+    Check::warn(CheckId::TypeShape, ReasonCode::TypesUnclassified, evidence)
+}
+
+/// The word that agrees with a count: `singular` or `plural`.
+fn plural<'a>(count: i64, singular: &'a str, plural: &'a str) -> &'a str {
+    if count == 1 { singular } else { plural }
+}
+
 // ---------------------------------------------------------------------------
 // Purge eligibility count
 // ---------------------------------------------------------------------------
@@ -754,6 +903,7 @@ fn check_for_id(conn: &Connection, id: CheckId) -> Check {
         CheckId::FtsShape => check_fts_shape(conn),
         CheckId::FtsInvariant => check_fts_invariant(conn),
         CheckId::TitleShape => check_title_shape(conn),
+        CheckId::TypeShape => check_type_shape(conn),
     }
 }
 
@@ -941,6 +1091,10 @@ fn action_for(conn: &Connection, check: &Check) -> Option<RepairAction> {
         }
         CheckId::WalMode => Some(RepairAction::ReactivateWal),
         CheckId::TitleShape => Some(RepairAction::DeriveTitles),
+        // Nothing repairs an unclassified record: a type is the writer's
+        // declaration, and a repair that guessed one would store a guess
+        // as a fact. The check names the records instead.
+        CheckId::TypeShape => None,
         CheckId::SchemaVersion | CheckId::Integrity => None,
     }
 }

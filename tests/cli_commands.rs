@@ -2086,6 +2086,105 @@ fn a_profile_whose_records_all_have_a_title_is_healthy() {
 }
 
 #[test]
+fn the_doctor_counts_the_records_that_declare_no_type() {
+    let p = Profile::new();
+    // One record that declares the kind of thing it is...
+    save(
+        &p,
+        "never log the payload",
+        &["--title", "el payload no se loguea", "--type", "knowledge"],
+    );
+    // ...and two that declare nothing: the default bucket, and the answer
+    // the doctor is the only surface that carries.
+    let titled = save(
+        &p,
+        "staging-eu is the default",
+        &["--title", "entorno por defecto"],
+    );
+    let bare = save(&p, "the client uses TLS", &[]);
+
+    let out = p
+        .run_silent(&["doctor", "--check", "type_shape"])
+        .unwrap_status("doctor --check type_shape");
+    let json = stdout_json(&out);
+    let checks = json["checks"].as_array().expect("checks array");
+    assert_eq!(checks.len(), 1, "the filter runs one check: {json}");
+    let check = &checks[0];
+    assert_eq!(check["check_id"], "type_shape", "{check}");
+    assert_eq!(check["ok"], false, "the debt is visible: {check}");
+    assert_eq!(
+        check["severity"], "warn",
+        "a record nobody classified does not break the store: {check}"
+    );
+    assert_eq!(
+        check["reason_code"], "TYPES_UNCLASSIFIED",
+        "the machine code names the gap: {check}"
+    );
+    let evidence = check["evidence"].as_str().expect("evidence is a string");
+    assert!(
+        evidence.contains("2 of 3 live records"),
+        "the evidence counts what nobody classified: {evidence}"
+    );
+    assert!(
+        evidence.contains(&titled) && evidence.contains(&bare),
+        "both records are named by their uuid: {evidence}"
+    );
+    assert!(
+        evidence.contains("entorno por defecto") && evidence.contains("(no title)"),
+        "a title is named, and the absence of one is said: {evidence}"
+    );
+    assert!(
+        evidence.contains("25 B") && evidence.contains("19 B"),
+        "each record carries its own byte size: {evidence}"
+    );
+    assert!(
+        check["safe_next_step"].is_string(),
+        "the check says what an operator can do about it: {check}"
+    );
+
+    // C2 — and the full run is still healthy, exits 0, and calls it a
+    // warning instead of a failure.
+    let full = p.run_silent(&["doctor"]).unwrap_status("doctor");
+    let json = stdout_json(&full);
+    assert_eq!(json["status"], "healthy", "the store still serves: {json}");
+    assert!(
+        json["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("type_shape"),
+        "the summary names the warning: {json}"
+    );
+    assert_eq!(
+        check_by_id(&json, "type_shape")["severity"],
+        "warn",
+        "the new check warns, it does not fail: {json}"
+    );
+}
+
+#[test]
+fn a_profile_whose_records_all_declare_a_type_has_nothing_unclassified() {
+    let p = Profile::new();
+    save(
+        &p,
+        "we deploy to staging-eu",
+        &["--title", "entorno por defecto", "--type", "decision"],
+    );
+
+    let out = p.run_silent(&["doctor"]).unwrap_status("doctor");
+    let json = stdout_json(&out);
+    assert_eq!(json["status"], "healthy", "the store is healthy: {json}");
+    let check = check_by_id(&json, "type_shape");
+    assert_eq!(check["ok"], true, "nothing is unclassified: {check}");
+    assert!(
+        check["evidence"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("1 live record"),
+        "the pass says what it looked at: {check}"
+    );
+}
+
+#[test]
 fn the_repair_fills_the_missing_titles_from_the_records_own_text() {
     let p = Profile::new();
     save(

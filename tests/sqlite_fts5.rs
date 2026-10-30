@@ -146,12 +146,16 @@ use mnexis_core::domain::query::MatchMode;
 use mnexis_core::retrieval::{DeletedFilter, NamespaceFilter, StateFilter, search};
 use mnexis_core::storage::sqlite::run_migrations;
 
+/// A record with a title — the identity the priced answers carry — and a
+/// kind it declares. The kind is declared because a record that declares
+/// nothing is the gap `title_shape`'s sibling `type_shape` reports, and a
+/// fixture is meant to be a store the doctor has nothing to say about.
 fn insert_titled(conn: &Connection, uuid: &str, title: &str, topic_key: &str, content: &str) {
     conn.execute(
         "INSERT INTO memories (
             uuid, title, topic_key, namespace, memory_type, content, state,
             actor, channel, assertion_basis
-         ) VALUES (?1, ?2, ?3, 'ns', 'fact', ?4, 'active', 'user', 'cli', 'user_stated')",
+         ) VALUES (?1, ?2, ?3, 'ns', 'knowledge', ?4, 'active', 'user', 'cli', 'user_stated')",
         rusqlite::params![uuid, title, topic_key, content],
     )
     .expect("insert_titled must succeed for the test fixture to be valid");
@@ -441,7 +445,7 @@ fn a_filtered_run_does_not_see_the_checks_it_did_not_run() {
 
 /// The exact ids the operator can filter with (`--check`) and pin tests on,
 /// in the order `run_checks` emits them.
-const ALL_CHECK_IDS: [&str; 8] = [
+const ALL_CHECK_IDS: [&str; 9] = [
     "schema_version",
     "canonical_tables",
     "fts_readable",
@@ -450,6 +454,7 @@ const ALL_CHECK_IDS: [&str; 8] = [
     "fts_shape",
     "fts_invariant",
     "title_shape",
+    "type_shape",
 ];
 
 #[test]
@@ -471,7 +476,7 @@ fn a_healthy_store_reports_the_full_envelope() {
         mnexis_core::diagnostics::doctor::Status::Healthy
     );
     assert!(
-        report.summary.contains("8"),
+        report.summary.contains("9"),
         "summary counts the checks: {}",
         report.summary
     );
@@ -504,7 +509,7 @@ fn the_envelope_serializes_with_the_documented_field_names() {
     assert_eq!(value["status"], "healthy");
     assert!(value["summary"].is_string());
     let checks = value["checks"].as_array().expect("checks array");
-    assert_eq!(checks.len(), 8);
+    assert_eq!(checks.len(), 9);
     for c in checks {
         assert!(c["check_id"].is_string(), "snake_case check_id: {c}");
         assert!(c["ok"].is_boolean());
@@ -1131,4 +1136,242 @@ fn the_doctor_reports_an_index_built_without_the_words() {
         "the rebuilt index passes the shape check"
     );
     assert_eq!(search_ids(&conn, "puerto"), vec!["uuid-puerto".to_string()]);
+}
+
+// ── the type axis: how much of the store is unclassified (types A4) ────────
+
+/// A record that declares the kind of thing it is.
+fn insert_typed(conn: &Connection, uuid: &str, title: &str, content: &str, memory_type: &str) {
+    conn.execute(
+        "INSERT INTO memories (
+            uuid, title, topic_key, namespace, memory_type, content, state,
+            actor, channel, assertion_basis
+         ) VALUES (?1, ?2, '', 'ns', ?3, ?4, 'active', 'user', 'cli', 'user_stated')",
+        rusqlite::params![uuid, title, memory_type, content],
+    )
+    .expect("insert_typed must succeed for the test fixture to be valid");
+}
+
+/// A record that declares nothing: what a save lands on when it names no
+/// type — the `fact` bucket the `type_shape` check counts.
+fn insert_untyped(conn: &Connection, uuid: &str, title: &str, content: &str) {
+    insert_typed(conn, uuid, title, content, "fact");
+}
+
+/// The store the byte share is measured on: three live records, two of
+/// them unclassified, in 11 + 10 + 21 = 42 content bytes, 21 of them
+/// unclassified — half the store.
+fn unclassified_store(path: &Path) -> Connection {
+    let conn = open_sqlite(path).unwrap();
+    insert_untyped(
+        &conn,
+        "uuid-fact-titulado",
+        "puerto del servicio",
+        "port = 8081",
+    );
+    insert_untyped(&conn, "uuid-fact-sin-titulo", "", "staging-eu");
+    insert_typed(
+        &conn,
+        "uuid-con-tipo",
+        "nunca loggear el payload",
+        "never log the payload",
+        "knowledge",
+    );
+    conn
+}
+
+#[test]
+fn the_type_shape_names_every_unclassified_record_with_its_size() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_type_shape.db");
+    let conn = unclassified_store(&path);
+
+    let report = run_checks(&conn);
+    let shape = check(&report, "type_shape");
+
+    // C1 — the count and the byte share of the live content.
+    assert!(!shape.ok, "two records declare no type: {shape:?}");
+    let evidence = &shape.evidence;
+    assert!(
+        evidence.contains("2 of 3 live records"),
+        "the evidence counts the unclassified records against the live ones: {evidence}"
+    );
+    assert!(
+        evidence.contains("21 of 42 content bytes"),
+        "the evidence counts the unclassified bytes against the store's: {evidence}"
+    );
+    assert!(
+        evidence.contains("50%"),
+        "the evidence carries the share: {evidence}"
+    );
+
+    // C1 — every unclassified record is named with its identity and size.
+    assert!(
+        evidence.contains("uuid-fact-titulado"),
+        "the titled record is named: {evidence}"
+    );
+    assert!(
+        evidence.contains("puerto del servicio") && evidence.contains("11 B"),
+        "the titled record carries its title and its 11 bytes: {evidence}"
+    );
+    assert!(
+        evidence.contains("uuid-fact-sin-titulo"),
+        "a record without a title is still named, by its uuid: {evidence}"
+    );
+    assert!(
+        evidence.contains("(no title)") && evidence.contains("10 B"),
+        "the absence of a title is said, and its 10 bytes are counted: {evidence}"
+    );
+    // The record that declared its kind is not named: the check counts one
+    // bucket, not the store.
+    assert!(
+        !evidence.contains("uuid-con-tipo"),
+        "a classified record is not in the worklist: {evidence}"
+    );
+    assert!(
+        shape.safe_next_step.is_some(),
+        "the check says what an operator can do about it: {shape:?}"
+    );
+}
+
+#[test]
+fn the_type_shape_says_so_when_every_record_declares_a_type() {
+    // D1 — the other half of the anti-vacuity criterion: a store where
+    // every record declares a type names none, and says so.
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_type_shape_all_typed.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_typed(&conn, "uuid-uno", "uno", "port = 8081", "knowledge");
+    insert_typed(&conn, "uuid-dos", "dos", "staging-eu", "decision");
+
+    let report = run_checks(&conn);
+    let shape = check(&report, "type_shape");
+    assert!(shape.ok, "nothing is unclassified: {shape:?}");
+    assert!(shape.reason_code.is_none(), "a passing check has no code");
+    assert!(
+        shape.evidence.contains("2 live records"),
+        "the pass says what it looked at: {}",
+        shape.evidence
+    );
+    assert!(
+        shape.evidence.contains("0"),
+        "and that none of the bytes are unclassified: {}",
+        shape.evidence
+    );
+}
+
+#[test]
+fn the_type_shape_is_not_satisfied_by_an_empty_store() {
+    // D1 — an empty store passes vacuously, and the evidence must say that
+    // it saw nothing instead of claiming every record declares a type.
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_type_shape_empty.db");
+    let conn = open_sqlite(&path).unwrap();
+
+    let report = run_checks(&conn);
+    let shape = check(&report, "type_shape");
+    assert!(
+        shape.ok,
+        "an empty store has nothing unclassified: {shape:?}"
+    );
+    assert!(
+        shape.evidence.contains("no live records"),
+        "the pass says it saw nothing, not that every record is classified: {}",
+        shape.evidence
+    );
+}
+
+#[test]
+fn the_type_shape_is_a_warning_the_store_still_serves() {
+    // C2 — the run stays healthy and the exit code stays 0: a record
+    // nobody classified is read and answered like any other.
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_type_shape_warn.db");
+    let conn = unclassified_store(&path);
+
+    let report = run_checks(&conn);
+    let shape = check(&report, "type_shape");
+    assert_eq!(
+        shape.severity,
+        mnexis_core::diagnostics::doctor::Severity::Warn,
+        "the gap is a warning, never a failure: {shape:?}"
+    );
+    assert_eq!(
+        serde_json::to_value(shape.reason_code).unwrap(),
+        serde_json::json!("TYPES_UNCLASSIFIED"),
+        "the machine code names the gap: {shape:?}"
+    );
+    assert_eq!(
+        report.status,
+        mnexis_core::diagnostics::doctor::Status::Healthy,
+        "a warning does not move the store's status: {report:?}"
+    );
+    assert_eq!(
+        failure_exit_code(&report),
+        None,
+        "a warning never fails the run"
+    );
+    assert!(
+        report.summary.contains("type_shape"),
+        "the summary names the warning: {}",
+        report.summary
+    );
+    assert!(
+        report.summary.contains("warned") && !report.summary.contains("failed"),
+        "the summary counts a warning as a warning: {}",
+        report.summary
+    );
+
+    // And no repair is planned for it: a type is the writer's declaration,
+    // and a repair that guessed one would store a guess as a fact.
+    let (repair, _) = plan_repair(&conn);
+    assert!(
+        repair
+            .actions
+            .iter()
+            .all(|a| a.check_id.as_str() != "type_shape"),
+        "nothing repairs an unclassified record: {repair:?}"
+    );
+    assert!(
+        repair
+            .skipped
+            .iter()
+            .any(|c| c.check_id.as_str() == "type_shape"),
+        "the plan says out loud that it will not touch it: {repair:?}"
+    );
+    assert_eq!(
+        repair.skipped.len(),
+        1,
+        "the only warning on this store is the unclassified one: {repair:?}"
+    );
+}
+
+#[test]
+fn an_unclassified_record_moves_no_other_check() {
+    // C3, in the suite: two stores that differ only in the kind their
+    // records declare. The eight checks that predate `type_shape` read
+    // nothing about the type, so their entries must be byte-identical.
+    let typed_dir = tempfile::tempdir_in("target").unwrap();
+    let typed_path = typed_dir.path().join("doctor_type_shape_typed.db");
+    let typed = open_sqlite(&typed_path).unwrap();
+    insert_typed(&typed, "uuid-uno", "uno", "port = 8081", "knowledge");
+    insert_typed(&typed, "uuid-dos", "dos", "staging-eu", "decision");
+
+    let untyped_dir = tempfile::tempdir_in("target").unwrap();
+    let untyped_path = untyped_dir.path().join("doctor_type_shape_untyped.db");
+    let untyped = open_sqlite(&untyped_path).unwrap();
+    insert_untyped(&untyped, "uuid-uno", "uno", "port = 8081");
+    insert_untyped(&untyped, "uuid-dos", "dos", "staging-eu");
+
+    let other_checks = |conn: &Connection| {
+        let mut value = serde_json::to_value(run_checks(conn)).unwrap();
+        let checks = value["checks"].as_array_mut().expect("checks array");
+        checks.retain(|c| c["check_id"] != "type_shape");
+        serde_json::to_string(checks).unwrap()
+    };
+    assert_eq!(
+        other_checks(&typed),
+        other_checks(&untyped),
+        "the eight checks read nothing about the type"
+    );
 }
