@@ -495,6 +495,58 @@ fn a_search_can_be_narrowed_to_the_kinds_of_thing_the_fact_is() {
     );
 }
 
+/// `--explain` is the same search with more detail, so it is narrowed by
+/// the same `--type`. It used to report hits of every kind while the same
+/// query without `--explain` filtered correctly: two answers to the same
+/// question (audit round 2, G3).
+#[test]
+fn an_explained_search_is_narrowed_to_the_kinds_of_thing_the_fact_is() {
+    let p = Profile::new();
+    for kind in [
+        "knowledge",
+        "decision",
+        "preference",
+        "procedure",
+        "project_state",
+        "episode",
+        "fact",
+    ] {
+        save(
+            &p,
+            &format!("el puerto del servicio es 8081 ({kind})"),
+            &["--type", kind],
+        );
+    }
+
+    // The plain search keeps one row: the explanation has to keep it too.
+    let plain = p
+        .run_silent(&["search", "--type", "decision", "puerto"])
+        .unwrap_status("search --type");
+    let plain_json = stdout_json(&plain);
+    assert_eq!(
+        plain_json["count"], 1,
+        "the plain search keeps one row: {plain_json}"
+    );
+
+    let explained = p
+        .run_silent(&["search", "--explain", "--type", "decision", "puerto"])
+        .unwrap_status("search --explain --type");
+    let json = stdout_json(&explained);
+    assert_eq!(
+        json["count"], 1,
+        "the explanation must keep the row the plain search kept: {json}"
+    );
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "{json}");
+    assert_eq!(items[0]["memory_type"], "decision", "{json}");
+    assert!(
+        items[0]["matched_terms"]
+            .as_array()
+            .is_some_and(|terms| !terms.is_empty()),
+        "the row is still explained: {json}"
+    );
+}
+
 #[test]
 fn a_list_can_be_narrowed_to_the_kinds_of_thing_the_fact_is() {
     let p = Profile::new();

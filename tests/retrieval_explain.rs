@@ -49,6 +49,7 @@ fn explain_returns_hit_with_matched_terms_and_rank() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -94,6 +95,7 @@ fn explain_default_excludes_superseded_and_deleted_rows() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("RED stub returns Err; GREEN replaces with Ok(hits)");
@@ -137,6 +139,7 @@ fn explain_finds_a_record_by_the_words_of_its_title() {
         StateFilter::default(),
         DeletedFilter::default(),
         None,
+        &[],
         10,
     )
     .expect("the explanation must run");

@@ -25,6 +25,11 @@
 //! - memory_history: uuid required; optional limit
 //! - memory_get: uuid required
 //! - memory_restore: uuid required
+//!
+//! Every argument object below is closed (`deny_unknown_fields`): a field the
+//! tool does not have is refused instead of dropped. A caller that writes
+//! `type` where the tool names `memory_type` used to get an answer that read
+//! as success and changed nothing — on the tool an agent uses most.
 
 use rmcp::handler::server::tool::IntoCallToolResult;
 use rmcp::model::{CallToolResponse, CallToolResult, ContentBlock};
@@ -39,6 +44,7 @@ use crate::domain::memory::MemoryState;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SaveArgs {
     /// Memory content (required)
     pub content: String,
@@ -46,7 +52,9 @@ pub struct SaveArgs {
     #[serde(default)]
     pub namespace: Option<String>,
     /// Memory type: knowledge, decision, preference, procedure,
-    /// project_state, episode or fact. The default is the generic kind.
+    /// project_state, episode or fact. Omit it and a new record gets the
+    /// generic kind, while a save by an existing `topic_key` keeps the kind
+    /// the record already has.
     #[serde(default)]
     pub memory_type: Option<String>,
     /// Assertion basis (default: "user_stated")
@@ -88,11 +96,13 @@ pub struct SaveArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetArgs {
     pub uuid: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListArgs {
     /// Namespace filter (default: all authorised namespaces)
     #[serde(default)]
@@ -124,6 +134,7 @@ pub struct ListArgs {
 
 /// Arguments for `memory_session_start`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SessionStartArgs {
     /// The session id: the caller's own (the agent never invents one).
     pub session_id: String,
@@ -137,6 +148,7 @@ pub struct SessionStartArgs {
 
 /// Arguments for `memory_session_end`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SessionEndArgs {
     /// The session id.
     pub session_id: String,
@@ -147,6 +159,7 @@ pub struct SessionEndArgs {
 
 /// Arguments for `memory_save_prompt`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SavePromptArgs {
     /// What the user said, verbatim.
     pub content: String,
@@ -161,6 +174,7 @@ pub struct SavePromptArgs {
 
 /// Arguments for `memory_suggest_topic_key`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SuggestTopicKeyArgs {
     /// The title of the fact you are about to record.
     pub title: String,
@@ -172,6 +186,7 @@ pub struct SuggestTopicKeyArgs {
 
 /// Arguments for `memory_search_prompts`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SearchPromptsArgs {
     /// The query, in plain language.
     pub query: String,
@@ -188,6 +203,7 @@ pub struct SearchPromptsArgs {
 
 /// Arguments for `memory_context`: the one-call door.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContextArgs {
     /// The task in one line: what you are about to do.
     pub task: String,
@@ -248,6 +264,7 @@ pub struct UpdateArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct HistoryArgs {
     pub uuid: String,
     /// Max history entries to return (default: all)
@@ -256,6 +273,7 @@ pub struct HistoryArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SupersedeArgs {
     pub older_uuid: String,
     pub newer_uuid: String,
@@ -268,6 +286,7 @@ pub struct SupersedeArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DeleteArgs {
     pub uuid: String,
     /// Required: current revision of the memory.
@@ -275,11 +294,13 @@ pub struct DeleteArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RestoreArgs {
     pub uuid: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SearchArgs {
     /// The query, in plain language (required). The engine compiles it:
     /// every word counts, a hyphen is part of a word.

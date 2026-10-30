@@ -51,6 +51,39 @@ fn save_tagged(profile: &mut Profile, ns: &str, content: &str, tags: Vec<String>
     uuid
 }
 
+fn save_kind(
+    profile: &mut Profile,
+    ns: &str,
+    content: &str,
+    kind: &str,
+    topic_key: &str,
+) -> String {
+    let uuid = uuid_v4().unwrap();
+    profile
+        .service_mut()
+        .save(SaveRequest {
+            uuid: uuid.clone(),
+            title: String::new(),
+            topic_key: topic_key.to_string(),
+            namespace: ns.to_string(),
+            memory_type: Some(kind.to_string()),
+            content: content.to_string(),
+            actor: "user".to_string(),
+            channel: "cli".to_string(),
+            assertion_basis: "user_stated".to_string(),
+            valid_from: None,
+            valid_until: None,
+            tags: Vec::new(),
+            idempotency_key: None,
+            keywords: Vec::new(),
+            replace_keywords: false,
+            state: MemoryState::Active,
+            now: now_rfc3339(),
+        })
+        .expect("save memory");
+    uuid
+}
+
 fn list(profile: &Profile, ns: &str) -> Vec<mnexis_core::domain::memory::Memory> {
     profile
         .service_ref()
@@ -103,7 +136,19 @@ fn save_form_prefills_defaults_and_writes_through_the_service() {
         "ns-a",
         "current selection prefilled"
     );
-    assert_eq!(form.value("type"), "fact");
+    assert_eq!(
+        form.value("type"),
+        "",
+        "the form does not claim a kind it was never told"
+    );
+    assert_eq!(
+        form.fields
+            .iter()
+            .find(|f| f.label == "type")
+            .map(|f| f.hint),
+        Some("blank keeps current"),
+        "and the hint says what a blank means"
+    );
     assert_eq!(form.value("basis"), "user_stated");
     assert_eq!(form.value("state"), "active");
 
@@ -146,6 +191,74 @@ fn save_form_prefills_defaults_and_writes_through_the_service() {
         Some(stored[0].uuid.clone()),
         "the new memory is selected"
     );
+}
+
+/// A save by a topic key the namespace already holds replaces the record: a
+/// blank kind means "the record's current kind", not "the default kind".
+/// The form used to send `Some("fact")` for a field nobody touched, so a
+/// re-save from the TUI demoted a decision to a fact (audit round 2, G2).
+#[test]
+fn save_form_blank_type_keeps_the_kind_the_record_has() {
+    let (_guard, mut p) = profile(SCOPE);
+    let uuid = save_kind(
+        &mut p,
+        "ns-a",
+        "el puerto del servicio es 8081",
+        "decision",
+        "puerto.servicio",
+    );
+
+    let mut app = App::new(p.service_ref());
+    app.apply(Action::StartSave, p.service_mut());
+    type_text(&mut app, &mut p, "el puerto del servicio es 8082");
+    // content -> namespace -> type -> basis -> topic_key
+    next_fields(&mut app, &mut p, 4);
+    assert_eq!(
+        app.form.as_ref().unwrap().focused().unwrap().label,
+        "topic_key"
+    );
+    type_text(&mut app, &mut p, "puerto.servicio");
+    app.apply(Action::Submit, p.service_mut());
+
+    assert_eq!(app.mode, Mode::Normal, "the re-save is accepted");
+    let stored = p.service_ref().get(&uuid).unwrap().unwrap();
+    assert_eq!(stored.revision, 2, "the save landed on the existing record");
+    assert_eq!(stored.content, "el puerto del servicio es 8082");
+    assert_eq!(
+        stored.memory_type, "decision",
+        "a blank kind keeps the kind the record has"
+    );
+}
+
+/// The field still carries a kind the human names: making blank meaningful
+/// must not cost the ability to reclassify.
+#[test]
+fn save_form_a_named_type_is_still_written() {
+    let (_guard, mut p) = profile(SCOPE);
+    let uuid = save_kind(
+        &mut p,
+        "ns-a",
+        "el puerto del servicio es 8081",
+        "fact",
+        "puerto.servicio",
+    );
+
+    let mut app = App::new(p.service_ref());
+    app.apply(Action::StartSave, p.service_mut());
+    type_text(&mut app, &mut p, "el puerto del servicio es 8082");
+    // content -> namespace -> type
+    next_fields(&mut app, &mut p, 2);
+    assert_eq!(app.form.as_ref().unwrap().focused().unwrap().label, "type");
+    type_text(&mut app, &mut p, "decision");
+    // type -> basis -> topic_key
+    next_fields(&mut app, &mut p, 2);
+    type_text(&mut app, &mut p, "puerto.servicio");
+    app.apply(Action::Submit, p.service_mut());
+
+    assert_eq!(app.mode, Mode::Normal);
+    let stored = p.service_ref().get(&uuid).unwrap().unwrap();
+    assert_eq!(stored.revision, 2);
+    assert_eq!(stored.memory_type, "decision");
 }
 
 #[test]

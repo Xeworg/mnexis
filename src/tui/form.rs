@@ -129,7 +129,10 @@ impl Form {
             fields: vec![
                 Field::multi("content", ""),
                 Field::single("namespace", namespace).hint("required"),
-                Field::single("type", "fact"),
+                // Blank means "unspecified": a new record gets the default
+                // kind, and a save by an existing topic_key keeps the kind
+                // the record has. A prefilled "fact" demoted a decision.
+                Field::single("type", "").hint("blank keeps current"),
                 Field::single("basis", "user_stated"),
                 Field::single("topic_key", "").hint("a-z0-9.- only"),
                 Field::single("idempotency_key", ""),
@@ -375,7 +378,9 @@ impl Form {
         let content = self.required("content")?;
         check_bytes("content", &content, service.config().max_content_bytes)?;
         let namespace = self.required("namespace")?;
-        let memory_type = self.required("type")?;
+        // A blank kind is not the default kind: the engine decides for a new
+        // record and keeps the stored kind when the topic key already exists.
+        let memory_type = blank_to_none(self.value("type"));
         let basis = self.required("basis")?;
         let topic_key = self.value("topic_key").to_string();
         let idempotency_key = blank_to_none(self.value("idempotency_key"));
@@ -385,7 +390,7 @@ impl Form {
         let req: SaveRequest = commands::save_request(
             "tui",
             namespace.clone(),
-            Some(memory_type),
+            memory_type,
             Some(basis),
             blank_to_none(&topic_key),
             idempotency_key,

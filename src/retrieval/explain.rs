@@ -29,10 +29,10 @@ pub struct ExplainedHit {
     pub matched_terms: Vec<String>,
 }
 
-/// Explain a query. Same SQL filter semantics as `fts5::search`; each
-/// returned hit includes the subset of query tokens that appeared in the
-/// row's content. A query with no matching documents returns an empty
-/// `Vec`, not an error.
+/// Explain a query. Same SQL filter semantics as `fts5::search`, including
+/// the kinds the answer is narrowed to; each returned hit includes the
+/// subset of query tokens that appeared in the row's content. A query with
+/// no matching documents returns an empty `Vec`, not an error.
 #[allow(clippy::too_many_arguments)]
 pub fn explain(
     conn: &Connection,
@@ -42,6 +42,7 @@ pub fn explain(
     state: StateFilter,
     deleted: DeletedFilter,
     valid_window: Option<ValidWindow>,
+    memory_types: &[String],
     limit: usize,
 ) -> Result<Vec<ExplainedHit>, MnexisError> {
     // The same compilation as the search path: the explanation has to
@@ -99,6 +100,17 @@ pub fn explain(
         if let Some(vu) = &window.valid_until {
             sql.push_str(" AND (m.valid_until IS NULL OR m.valid_until >= ?)");
             params.push(vu);
+        }
+    }
+
+    // The kind of thing the fact is: the same exact match `fts5::search`
+    // applies, and before the limit, so the explanation describes the rows
+    // the plain search would have returned.
+    if !memory_types.is_empty() {
+        let placeholders = vec!["?"; memory_types.len()].join(", ");
+        sql.push_str(&format!(" AND m.memory_type IN ({placeholders})"));
+        for memory_type in memory_types {
+            params.push(memory_type);
         }
     }
 

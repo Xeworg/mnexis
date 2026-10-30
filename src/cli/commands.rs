@@ -551,6 +551,9 @@ pub fn search(
             StateFilter::default(),
             DeletedFilter::default(),
             None,
+            // The kinds the caller named narrow the explanation exactly as
+            // they narrow the plain search: one question, one answer.
+            &memory_types,
             limit,
         )?;
         let explained_uuids: Vec<String> = explained.iter().map(|h| h.uuid.clone()).collect();
