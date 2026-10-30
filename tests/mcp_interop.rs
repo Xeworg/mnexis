@@ -707,6 +707,330 @@ async fn memory_update_correct_revision_increments() -> Result<(), Box<dyn std::
 }
 
 // ---------------------------------------------------------------------------
+// memory_update carries the kind of the fact (types B1 G1)
+// ---------------------------------------------------------------------------
+
+/// A client that reclassifies a record says so in the update itself: the tool
+/// carries the kind to the service, the stored record becomes it, and the
+/// answer names the kind the record now has. Before this, `memory_type` was
+/// not one of the tool's arguments, so the revision bumped and the kind never
+/// changed.
+#[tokio::test]
+async fn memory_update_carries_the_type_the_client_asks_for()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // The tool's schema is a claim about the arguments: the kind is one of
+    // them, and its doc names the kinds the caller can ask for.
+    let tools = client.list_all_tools().await?;
+    let schema = tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == "memory_update")
+        .expect("memory_update present in the tool list")
+        .input_schema
+        .clone();
+    let kind_doc = schema
+        .get("properties")
+        .and_then(|properties| properties.get("memory_type"))
+        .and_then(|prop| prop.get("description"))
+        .and_then(|doc| doc.as_str())
+        .unwrap_or_else(|| panic!("the schema must name memory_type: {schema:?}"))
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        kind_doc.contains("decision"),
+        "the arg doc must name the kinds the caller can ask for: {kind_doc:?}"
+    );
+
+    // A record saved without a kind is the generic one.
+    let saved: serde_json::Value = serde_json::from_str(
+        &call_tool_text(
+            &client,
+            "memory_save",
+            serde_json::json!({ "content": "el puerto del servicio es 8081" }),
+        )
+        .await?,
+    )?;
+    let uuid = saved["uuid"].as_str().expect("uuid").to_string();
+    let before: serde_json::Value = serde_json::from_str(
+        &call_tool_text(&client, "memory_get", serde_json::json!({ "uuid": uuid })).await?,
+    )?;
+    assert_eq!(before["memory_type"], "fact", "{before}");
+
+    // The update names the kind: the record becomes the decision it says.
+    let updated: serde_json::Value = serde_json::from_str(
+        &call_tool_text(
+            &client,
+            "memory_update",
+            serde_json::json!({
+                "uuid": uuid,
+                "expected_revision": 1,
+                "reason": "reclassify the port as a decision",
+                "memory_type": "decision",
+            }),
+        )
+        .await?,
+    )?;
+    assert_eq!(updated["revision"], 2, "{updated}");
+    assert_eq!(
+        updated["memory_type"], "decision",
+        "the answer must carry the kind the record now has: {updated}"
+    );
+    assert_eq!(
+        updated["state"], "active",
+        "an update keeps the state it was not asked to change: {updated}"
+    );
+
+    // The stored record changed, not only the answer.
+    let after: serde_json::Value = serde_json::from_str(
+        &call_tool_text(&client, "memory_get", serde_json::json!({ "uuid": uuid })).await?,
+    )?;
+    assert_eq!(after["memory_type"], "decision", "{after}");
+    assert_eq!(
+        after["content"], "el puerto del servicio es 8081",
+        "a type change touches nothing else: {after}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
+/// The anti-demotion guarantee: an update that says nothing about the kind
+/// keeps the one the record has. Reading "no type" as "the default type"
+/// would demote a decision on every content edit.
+#[tokio::test]
+async fn memory_update_without_a_type_keeps_the_stored_one()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let saved: serde_json::Value = serde_json::from_str(
+        &call_tool_text(
+            &client,
+            "memory_save",
+            serde_json::json!({
+                "content": "el puerto del servicio es 8081",
+                "memory_type": "decision",
+            }),
+        )
+        .await?,
+    )?;
+    let uuid = saved["uuid"].as_str().expect("uuid").to_string();
+
+    // The update says nothing about the kind: only the content changes.
+    let updated: serde_json::Value = serde_json::from_str(
+        &call_tool_text(
+            &client,
+            "memory_update",
+            serde_json::json!({
+                "uuid": uuid,
+                "expected_revision": 1,
+                "reason": "the port moved to 8082",
+                "content": "el puerto del servicio es 8082",
+            }),
+        )
+        .await?,
+    )?;
+    assert_eq!(updated["revision"], 2, "{updated}");
+    assert_eq!(
+        updated["memory_type"], "decision",
+        "an update that names no kind keeps the one the record has: {updated}"
+    );
+
+    let after: serde_json::Value = serde_json::from_str(
+        &call_tool_text(&client, "memory_get", serde_json::json!({ "uuid": uuid })).await?,
+    )?;
+    assert_eq!(after["memory_type"], "decision", "{after}");
+    assert_eq!(
+        after["content"], "el puerto del servicio es 8082",
+        "{after}"
+    );
+    assert_eq!(after["revision"], 2, "{after}");
+
+    client.cancel().await?;
+    Ok(())
+}
+
+/// An argument the tool does not have is an error, not a silent no-op: a
+/// typo'd field used to bump the revision and change nothing, and the caller
+/// was never told.
+#[tokio::test]
+async fn memory_update_refuses_an_unknown_argument_instead_of_ignoring_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let saved: serde_json::Value = serde_json::from_str(
+        &call_tool_text(
+            &client,
+            "memory_save",
+            serde_json::json!({ "content": "el puerto del servicio es 8081" }),
+        )
+        .await?,
+    )?;
+    let uuid = saved["uuid"].as_str().expect("uuid").to_string();
+
+    // `memory_typo` is not an argument of the tool. rmcp answers a parameter
+    // it cannot deserialize as an error result (is_error), so the caller
+    // sees the refusal in the answer instead of a bumped revision.
+    let refused = client
+        .call_tool(
+            CallToolRequestParams::new("memory_update").with_arguments(
+                serde_json::json!({
+                    "uuid": uuid,
+                    "expected_revision": 1,
+                    "reason": "reclassify with a typo'd field",
+                    "memory_typo": "decision",
+                })
+                .as_object()
+                .expect("static object")
+                .clone(),
+            ),
+        )
+        .await
+        .expect("the refusal is an answer, not a transport failure");
+    assert_eq!(
+        refused.is_error,
+        Some(true),
+        "an unknown argument must be an error result, not a silent no-op: {refused:?}"
+    );
+    let message = refused
+        .content
+        .iter()
+        .find_map(|b| match b {
+            ContentBlock::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .expect("the refusal carries a message");
+    assert!(
+        message.contains("unknown field"),
+        "the refusal must name the problem: {message}"
+    );
+    assert!(
+        message.contains("memory_typo"),
+        "the refusal must name the argument it did not recognise: {message}"
+    );
+
+    // Nothing was written: the revision did not move and the kind is intact.
+    let intact: serde_json::Value = serde_json::from_str(
+        &call_tool_text(&client, "memory_get", serde_json::json!({ "uuid": uuid })).await?,
+    )?;
+    assert_eq!(intact["revision"], 1, "{intact}");
+    assert_eq!(intact["memory_type"], "fact", "{intact}");
+
+    // The same update, spelled right, still works.
+    let updated: serde_json::Value = serde_json::from_str(
+        &call_tool_text(
+            &client,
+            "memory_update",
+            serde_json::json!({
+                "uuid": uuid,
+                "expected_revision": 1,
+                "reason": "reclassify as a decision",
+                "memory_type": "decision",
+            }),
+        )
+        .await?,
+    )?;
+    assert_eq!(updated["revision"], 2, "{updated}");
+    assert_eq!(updated["memory_type"], "decision", "{updated}");
+
+    client.cancel().await?;
+    Ok(())
+}
+
+/// The set of kinds is closed: a value outside it is refused with the stable
+/// domain label, and the record keeps the kind it had.
+#[tokio::test]
+async fn memory_update_refuses_a_kind_outside_the_closed_set()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let saved: serde_json::Value = serde_json::from_str(
+        &call_tool_text(
+            &client,
+            "memory_save",
+            serde_json::json!({ "content": "el puerto del servicio es 8081" }),
+        )
+        .await?,
+    )?;
+    let uuid = saved["uuid"].as_str().expect("uuid").to_string();
+
+    let error = client
+        .call_tool(
+            CallToolRequestParams::new("memory_update").with_arguments(
+                serde_json::json!({
+                    "uuid": uuid,
+                    "expected_revision": 1,
+                    "reason": "reclassify as something nobody can filter",
+                    "memory_type": "meeting",
+                })
+                .as_object()
+                .expect("static object")
+                .clone(),
+            ),
+        )
+        .await
+        .expect_err("a kind outside the closed set must fail the tool call");
+    let message = format!("{error}");
+    for expected in [
+        "-32050",
+        "INVALID_ARGUMENT",
+        "unknown memory type 'meeting'",
+    ] {
+        assert!(
+            message.contains(expected),
+            "the refusal must carry {expected}: {message}"
+        );
+    }
+
+    // The record is untouched: same revision, same kind.
+    let intact: serde_json::Value = serde_json::from_str(
+        &call_tool_text(&client, "memory_get", serde_json::json!({ "uuid": uuid })).await?,
+    )?;
+    assert_eq!(intact["revision"], 1, "{intact}");
+    assert_eq!(intact["memory_type"], "fact", "{intact}");
+
+    client.cancel().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // memory_history after update → 1 entry, holding the replaced revision (S6, S9)
 // ---------------------------------------------------------------------------
 

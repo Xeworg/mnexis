@@ -11,7 +11,8 @@
 //!   expected_new_revision, reason (all required)
 //! - memory_delete: uuid + expected_revision (required)
 //! - memory_update: uuid, expected_revision, reason (required); optional
-//!   content/state/tags/assertion_basis
+//!   content/memory_type/state/tags/assertion_basis. A field the tool does not
+//!   have is an error: an argument nobody reads must not look like it worked.
 //! - memory_save: content required; optional namespace, memory_type (default
 //!   "fact"), assertion_basis (default "user_stated"), topic_key (default "",
 //!   allowed characters: lowercase letters, digits, '.', '-' and '/'),
@@ -214,7 +215,13 @@ pub(crate) fn default_token_budget() -> i64 {
     1024
 }
 
+/// The arguments of `memory_update`.
+///
+/// Unknown fields are refused: an argument the tool does not have (a typo'd
+/// `memory_type`, say) used to be dropped by serde and the call answered with
+/// a bumped revision, which reads as success and changes nothing.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateArgs {
     pub uuid: String,
     /// Required: the revision the caller believes is current.
@@ -224,6 +231,11 @@ pub struct UpdateArgs {
     /// New content (optional)
     #[serde(default)]
     pub content: Option<String>,
+    /// New kind (optional): knowledge, decision, preference, procedure,
+    /// project_state, episode or fact. Omit it and the record keeps the kind
+    /// it already has.
+    #[serde(default)]
+    pub memory_type: Option<String>,
     /// New state (optional)
     #[serde(default)]
     pub state: Option<String>,
