@@ -1221,6 +1221,9 @@ is closed: the 2 000-record ceiling the store repair declared is **gone**,
 not raised. The engine has a filter by value, the repair asks it, and the
 walk behind the ceiling no longer exists.
 
+**Merged: PR #105** (`feat/value-filter`, issue #104, label `type:feature`, 5
+commits, 1 440 authored lines), `main` = `e5f429c`.
+
 **The surface.** `mnexis list --value <N>`, and the same filter on the MCP
 tool `memory_list` (an optional `value`) and on the extension's own
 `mnexis_list`. It lives on `list` and not on `search` because `list` is the
