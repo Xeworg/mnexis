@@ -2407,6 +2407,129 @@ async fn memory_recall_answers_what_a_session_was() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// memory_session_start: the session lands in the workspace's namespace
+// (memory-types A1)
+// ---------------------------------------------------------------------------
+
+/// A git repository bound to `namespace` in the profile's registry, and the
+/// namespace's key: the workspace the MCP server is spawned in, so the
+/// server's own resolution — the same rule the CLI applies to its writes —
+/// finds the binding.
+fn bind_workspace(
+    data_dir: &std::path::Path,
+    namespace: &str,
+) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir_in("target")?;
+    let remote = format!("https://github.com/Xeworg/{namespace}.git");
+    let key = format!("git:github.com-xeworg-{namespace}");
+    for args in [
+        vec!["init", "-q", "."],
+        vec!["remote", "add", "origin", remote.as_str()],
+    ] {
+        let output = std::process::Command::new("git")
+            .args(&args)
+            .current_dir(dir.path())
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+    }
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let output = std::process::Command::new(&binary)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .args(["project", "bind", namespace, "--key", key.as_str()])
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "project bind failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(dir)
+}
+
+/// The session answers in the namespace the workspace writes into, not in the
+/// profile's default one, so the two axes of the store are the same axis.
+#[tokio::test]
+async fn memory_session_start_lands_in_the_workspace_namespace()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+    // Two writable namespaces, and the default is deliberately NOT the
+    // workspace's: a session that ignores the workspace lands in `default`.
+    std::fs::write(
+        data_dir.join("mnexis.toml"),
+        "default_namespace = \"default\"\nread_namespaces = [\"default\", \"equipo\"]\nwrite_namespaces = [\"default\", \"equipo\"]\nallow_read_all = false\nallow_global = false\nexistence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n",
+    )?;
+    let workspace = bind_workspace(data_dir, "equipo")?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir")
+                .arg(data_dir)
+                .arg("mcp")
+                .arg("serve")
+                .current_dir(workspace.path());
+        }))?;
+    let client = ().serve(transport).await?;
+
+    let started = call_tool_text(
+        &client,
+        "memory_session_start",
+        serde_json::json!({ "session_id": "01JX", "directory": "/work/project" }),
+    )
+    .await?;
+    let started: serde_json::Value = serde_json::from_str(&started)?;
+    assert_eq!(
+        started["namespace"], "equipo",
+        "the session must land in the namespace this workspace's memories land in: {started}"
+    );
+
+    let saved = call_tool_text(
+        &client,
+        "memory_save",
+        serde_json::json!({ "content": "el servicio escucha en 8081", "namespace": "equipo" }),
+    )
+    .await?;
+    let saved: serde_json::Value = serde_json::from_str(&saved)?;
+    let uuid = saved["uuid"].as_str().expect("uuid").to_string();
+    call_tool_text(
+        &client,
+        "memory_session_end",
+        serde_json::json!({ "session_id": "01JX", "summary": "el puerto del servicio" }),
+    )
+    .await?;
+
+    // The session is now where `--previous` looks for it, so the window it
+    // opens holds what was saved during it.
+    let text = call_tool_text(
+        &client,
+        "memory_recall",
+        serde_json::json!({ "previous": true }),
+    )
+    .await?;
+    let recall: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(recall["session"]["id"], "01JX", "{recall}");
+    assert_eq!(recall["session"]["namespace"], "equipo", "{recall}");
+    assert_eq!(
+        recall["memories_in_window"][0]["uuid"],
+        uuid.as_str(),
+        "the window holds the memories saved during the session: {recall}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn memory_recall_is_priced_preview_by_default_full_on_request()
 -> Result<(), Box<dyn std::error::Error>> {

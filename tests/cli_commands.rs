@@ -3672,6 +3672,177 @@ fn recall_previous_never_reaches_a_namespace_the_profile_cannot_read() {
     assert!(out.stdout.is_empty());
 }
 
+// --- a session belongs to its workspace's namespace (memory-types A1) ---
+//
+// The session axis is a join only when both sides agree on the namespace: the
+// memories live in the workspace's namespace, so the session has to land in
+// the same one. A session started from a bound workspace lands where that
+// workspace's saves land; `recall --previous` then answers it from the same
+// workspace, with the memories written inside its window; and the door's
+// session state carries that session instead of `null`. Outside any known
+// workspace the session keeps landing in the profile's default namespace, and
+// a caller that names a namespace keeps it.
+
+/// The uuid of the memory a save answered with.
+fn saved_uuid(out: &Output, ctx: &str) -> String {
+    stdout_json(out)["uuid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{ctx}: no uuid in the save answer"))
+        .to_string()
+}
+
+#[test]
+fn a_session_in_a_bound_workspace_lands_in_the_workspace_namespace() {
+    // The profile's own default is `default`; the workspace is bound elsewhere,
+    // so a session that ignores the workspace is visible in the answer.
+    let p = two_project_profile();
+    let ws = Workspace::bound(&p, BOUND_NAMESPACE);
+
+    // The argv the pi extension sends (index.js:1280): the id, the directory
+    // and the workspace as the working directory, and no namespace.
+    let out = p
+        .run_in_dir(
+            ws.path(),
+            &[
+                "session",
+                "--id",
+                "S1",
+                "--directory",
+                ws.path().to_str().expect("utf-8 workspace"),
+            ],
+        )
+        .unwrap_status("session in a bound workspace");
+    let json = stdout_json(&out);
+    assert_eq!(json["id"], "S1", "{json}");
+    assert_eq!(
+        json["namespace"], BOUND_NAMESPACE,
+        "the session must land in the namespace this workspace's memories land in: {json}"
+    );
+}
+
+#[test]
+fn recall_previous_in_a_bound_workspace_answers_its_session_and_its_window() {
+    let p = two_project_profile();
+    let ws = Workspace::bound(&p, BOUND_NAMESPACE);
+    p.run_in_dir(ws.path(), &["session", "--id", "S1"])
+        .unwrap_status("session in a bound workspace");
+    // Saved during the session, naming no namespace: the workspace decides.
+    let inside = saved_uuid(
+        &p.run_in_dir(ws.path(), &["save", "el puerto del servicio es 8081"])
+            .unwrap_status("save during the session"),
+        "save during the session",
+    );
+    p.run_in_dir(
+        ws.path(),
+        &["end", "--id", "S1", "--summary", "el puerto del servicio"],
+    )
+    .unwrap_status("end");
+
+    let out = p
+        .run_in_dir(ws.path(), &["recall", "--previous"])
+        .unwrap_status("recall --previous from the workspace");
+    let json = stdout_json(&out);
+    assert_eq!(json["session"]["id"], "S1", "{json}");
+    assert_eq!(
+        json["session"]["summary"], "el puerto del servicio",
+        "{json}"
+    );
+    assert_eq!(json["window"]["namespace"], BOUND_NAMESPACE, "{json}");
+    assert_eq!(
+        json["window"]["open"], false,
+        "the session is finished, so its window is closed: {json}"
+    );
+    let uuids: Vec<&str> = json["memories_in_window"]
+        .as_array()
+        .unwrap_or_else(|| panic!("memories_in_window array: {json}"))
+        .iter()
+        .map(|memory| memory["uuid"].as_str().expect("memory uuid"))
+        .collect();
+    assert_eq!(
+        uuids,
+        vec![inside.as_str()],
+        "the window must hold the memories saved during the session: {json}"
+    );
+}
+
+#[test]
+fn the_door_in_a_bound_workspace_carries_the_previous_session_of_the_namespace() {
+    let p = two_project_profile();
+    let ws = Workspace::bound(&p, BOUND_NAMESPACE);
+    p.run_in_dir(ws.path(), &["session", "--id", "S1"])
+        .unwrap_status("session in a bound workspace");
+    p.run_in_dir(ws.path(), &["save", "el puerto del servicio es 8081"])
+        .unwrap_status("save during the session");
+    p.run_in_dir(
+        ws.path(),
+        &["end", "--id", "S1", "--summary", "el puerto del servicio"],
+    )
+    .unwrap_status("end");
+
+    let out = p
+        .run_in_dir(ws.path(), &["context", "donde quedamos"])
+        .unwrap_status("context from the workspace");
+    let json = stdout_json(&out);
+    assert_eq!(json["searched_namespace"], BOUND_NAMESPACE, "{json}");
+    assert_eq!(
+        json["session_state"]["session"]["id"], "S1",
+        "the block carries the session `recall --previous` answers with: {json}"
+    );
+    assert_eq!(
+        json["session_state"]["session"]["namespace"], BOUND_NAMESPACE,
+        "{json}"
+    );
+}
+
+#[test]
+fn a_session_outside_any_workspace_still_lands_in_the_profile_default_namespace() {
+    // The profile runs from a directory outside every repository: the
+    // allowlist decides, exactly as it did before the workspace existed.
+    let p = Profile::new();
+    let out = p
+        .run_silent(&["session", "--id", "S1"])
+        .unwrap_status("session outside any workspace");
+    let json = stdout_json(&out);
+    assert_eq!(json["namespace"], "default", "{json}");
+}
+
+#[test]
+fn a_session_in_an_unbound_workspace_falls_back_to_the_profile_default_namespace() {
+    // A repository no binding names: a save without `--namespace` is refused
+    // (auto-namespace S5), and the session still registers. A session records
+    // the process, not a fact of the project, so it never refuses for want of
+    // a binding it would not write into anyway.
+    let p = Profile::new();
+    let ws = Workspace::bare();
+    let out = p
+        .run_in_dir(ws.path(), &["session", "--id", "S1"])
+        .unwrap_status("session in an unbound workspace");
+    let json = stdout_json(&out);
+    assert_eq!(json["namespace"], "default", "{json}");
+}
+
+#[test]
+fn a_session_that_names_a_namespace_keeps_it() {
+    // The workspace resolution is a default, never an override.
+    let p = Profile::new().with_config(&Profile::namespaces(&[
+        "default",
+        BOUND_NAMESPACE,
+        OTHER_NAMESPACE,
+    ]));
+    let ws = Workspace::bound(&p, BOUND_NAMESPACE);
+    let out = p
+        .run_in_dir(
+            ws.path(),
+            &["session", "--id", "S1", "--namespace", OTHER_NAMESPACE],
+        )
+        .unwrap_status("session with an explicit namespace");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["namespace"], OTHER_NAMESPACE,
+        "a caller that names a namespace keeps it: {json}"
+    );
+}
+
 // --- identity visibility (identity-visibility S1) ---
 //
 // The title is the identity of a fact. Every read surface carries it, so a

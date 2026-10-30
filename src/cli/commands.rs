@@ -784,6 +784,19 @@ pub fn list(
 // --- sessions and prompts ---
 
 /// `mnexis session --id <id>` — register the session this process runs in.
+///
+/// The session belongs to the namespace this workspace's **memories** land in
+/// (memory-types A1): the two axes of the store are one join, and it breaks the
+/// moment the session keeps a namespace of its own. A caller that names a
+/// namespace keeps it — the workspace resolution is a default, never an
+/// override — and a caller that names none takes the workspace's namespace,
+/// through the same [`WorkspaceGuard`] `save` uses.
+///
+/// A workspace that names no namespace is not a refusal here, the way it is for
+/// a save (auto-namespace S5): a session records the process, not a fact of the
+/// project, so it keeps landing in the profile's default namespace instead of
+/// disappearing from a repository that could not write a memory in the first
+/// place. The scope still refuses a namespace this profile may not write.
 pub fn start_session(
     profile: &mut Profile,
     id: String,
@@ -791,6 +804,10 @@ pub fn start_session(
     directory: String,
 ) -> Result<CommandOutcome, MnexisError> {
     let now = crate::cli::profile::now_rfc3339();
+    let namespace = match namespace {
+        Some(namespace) => Some(namespace),
+        None => WorkspaceGuard::resolve(profile)?.namespace,
+    };
     let session =
         profile
             .service_mut()

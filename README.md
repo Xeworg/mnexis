@@ -103,6 +103,12 @@ canonical key of the repository (`git:github.com-owner-repo`) — never the raw
 URL, which can carry credentials. A session that did not happen in a
 repository records none of it: no git is not an error.
 
+A session belongs to the namespace the project's **memories** land in: started
+from a bound workspace it lands there — so `mnexis recall --previous` answers
+that session, with its window holding the memories saved during it, and
+`mnexis context` carries the same session in its state block — while outside
+any known workspace it keeps landing in the profile's default namespace.
+
 A search query is plain language: every word counts, a hyphen is part of a
 word, and `--match all` narrows it to the memories that hold every word.
 

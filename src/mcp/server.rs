@@ -319,15 +319,24 @@ impl McpServer {
     }
 
     /// Register the session the caller runs in.
+    ///
+    /// The session obeys the same namespace rule as a memory write on this
+    /// surface: the caller's namespace wins, and one the caller names none takes
+    /// the namespace the workspace this server runs in writes into — the same
+    /// one [`McpServer::authorize_write`] enforces, so the session and the
+    /// memories it covers cannot disagree about where the project is
+    /// (memory-types A1). Outside any known workspace the service's default
+    /// namespace decides, as it always did.
     fn do_session_start(&self, args: SessionStartArgs) -> Result<String, McpError> {
         let mut svc = self
             .service
             .lock()
             .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
         let now = crate::cli::profile::now_rfc3339();
+        let namespace = args.namespace.or_else(|| self.workspace_namespace.clone());
         let session = svc.start_session(
             &args.session_id,
-            args.namespace.as_deref(),
+            namespace.as_deref(),
             args.directory.as_deref().unwrap_or_default(),
             &now,
         )?;

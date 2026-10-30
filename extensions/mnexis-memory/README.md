@@ -168,6 +168,15 @@ Writes are not: `mnexis_save` always targets the workspace namespace, and
 mnexis CLI enforces the same boundary for writes run from a bound
 workspace, so the rule holds even when the agent uses the shell.
 
+The session the extension opens belongs to that same namespace: the
+`session_start` hook registers it from the session's directory, so the CLI
+resolves the workspace exactly as it does for a save and the session lands
+where the project's memories land. The two axes are one join — the session
+and the memories it covers cannot disagree about which project they are —
+and `mnexis_recall` with `previous` finds that session with its window
+holding what was saved during it. Outside any known workspace the session
+keeps landing in the profile's default namespace.
+
 ## How the namespace is resolved
 
 The model never picks a namespace, and the engine owns the identity of the
