@@ -3119,6 +3119,103 @@ fn import_validation_rejects_oversized_content() {
     assert_eq!(out.status.code(), Some(2));
 }
 
+/// One importable record in the canonical shape — the JSONL the engine's
+/// own `export` writes.
+fn import_line(uuid: &str, memory_type: &str, content: &str) -> String {
+    serde_json::json!({
+        "uuid": uuid,
+        "topic_key": "",
+        "namespace": "ns-a",
+        "memory_type": memory_type,
+        "content": content,
+        "state": "active",
+        "revision": 1,
+        "deleted": false,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "deleted_at": null,
+        "purge_after": null,
+        "valid_from": null,
+        "valid_until": null,
+        "actor": "user",
+        "channel": "cli",
+        "assertion_basis": "user_stated"
+    })
+    .to_string()
+}
+
+#[test]
+fn import_refuses_a_record_whose_type_is_outside_the_closed_set() {
+    let b = namespaced_profile(&["ns-a"]);
+    // Line 1 is importable; line 2 carries a type that no `--type` filter and
+    // no state block can ever select — exactly the record an import must not
+    // store, because nothing would ever find it again. The file is refused
+    // as a whole: an import that half-applied would leave the store holding
+    // a record the operator was told had failed.
+    let invalid = "00000000-0000-4000-8000-000000000002";
+    let body = format!(
+        "{}\n{}\n",
+        import_line(
+            "00000000-0000-4000-8000-000000000001",
+            "decision",
+            "a record the file would write if the file were valid",
+        ),
+        import_line(invalid, "Decision", "the type nobody can filter"),
+    );
+    let path = write_tmp("bad-type.jsonl", &body);
+
+    let out = b.run_silent(&["import", "--input", path.to_str().expect("utf8")]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a type outside the closed set is INVALID_ARGUMENT: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(stderr.contains("INVALID_ARGUMENT"), "stderr: {stderr}");
+    assert!(
+        stderr.contains(&format!("import line 2 (uuid {invalid})")),
+        "the error names the offending record: {stderr}"
+    );
+    assert!(
+        stderr.contains("unknown memory type 'Decision'"),
+        "the error names the value: {stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "valid types: knowledge, decision, preference, procedure, project_state, episode, fact"
+        ),
+        "the error names the valid set: {stderr}"
+    );
+
+    // Nothing landed — not even the valid record that preceded the bad one.
+    let listed = stdout_json(&b.run_silent(&["list"]).unwrap_status("list"));
+    assert_eq!(
+        listed["count"], 0,
+        "the refused file wrote nothing: {listed}"
+    );
+
+    // A dry run classifies exactly what a real run would: the same refusal,
+    // before anything can be written.
+    let dry = b.run_silent(&[
+        "import",
+        "--dry-run",
+        "--input",
+        path.to_str().expect("utf8"),
+    ]);
+    assert_eq!(
+        dry.status.code(),
+        Some(2),
+        "the dry run refuses it too: {:?}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&dry.stderr).to_string(),
+        stderr,
+        "a dry run classifies identically to a real run"
+    );
+}
+
 // --- context (E3) ---
 
 #[test]

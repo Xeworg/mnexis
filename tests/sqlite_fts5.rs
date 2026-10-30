@@ -789,6 +789,15 @@ fn check<'a>(
         })
 }
 
+/// The wire form of the reason code the `type_shape` check emitted.
+fn type_shape_code(report: &mnexis_core::diagnostics::doctor::DoctorReport) -> String {
+    serde_json::to_value(check(report, "type_shape").reason_code)
+        .expect("a reason code serialises")
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
 #[test]
 fn the_doctor_reports_an_index_built_without_the_title() {
     let directory = tempfile::tempdir_in("target").unwrap();
@@ -1231,6 +1240,164 @@ fn the_type_shape_names_every_unclassified_record_with_its_size() {
     assert!(
         shape.safe_next_step.is_some(),
         "the check says what an operator can do about it: {shape:?}"
+    );
+}
+
+#[test]
+fn the_type_shape_sees_the_junk_and_does_not_call_a_declared_fact_unclassified() {
+    // A store the check has to tell apart: a declared kind, the generic
+    // label written on purpose, and a value no filter can select — what a
+    // store that predates the validation, or a hand edit, leaves behind.
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_type_shape_unknown.db");
+    let conn = open_sqlite(&path).unwrap();
+    let decision_content = "we deploy to staging-eu";
+    let fact_content = "port = 8081";
+    let junk_content = "esto es una nota";
+    insert_typed(
+        &conn,
+        "uuid-decision",
+        "deploy",
+        decision_content,
+        "decision",
+    );
+    insert_typed(&conn, "uuid-fact", "puerto", fact_content, "fact");
+    insert_typed(&conn, "uuid-junk", "una nota", junk_content, "note");
+
+    let report = run_checks(&conn);
+    let shape = check(&report, "type_shape");
+    let evidence = &shape.evidence;
+
+    // The junk row is counted and named, with the value the store holds:
+    // every other surface reads only what it is asked for, so the doctor is
+    // the one that can say it is there at all.
+    assert!(
+        evidence.contains("unknown type"),
+        "the evidence says the type is outside the valid set: {evidence}"
+    );
+    assert!(
+        evidence.contains("1 record: uuid-junk") && evidence.contains("(stored 'note')"),
+        "the junk row is counted and named with the value it stores: {evidence}"
+    );
+    assert!(
+        !evidence.contains("uuid-decision"),
+        "a declared kind is not in the worklist: {evidence}"
+    );
+
+    // And it is inside the share, not only the denominator: the bytes of a
+    // row nothing can select are counted as unselectable, so the share the
+    // check reports is not understated.
+    let unselectable = (fact_content.len() + junk_content.len()) as i64;
+    let total = (fact_content.len() + junk_content.len() + decision_content.len()) as i64;
+    assert!(
+        evidence.contains(&format!("{unselectable} of {total} content bytes")),
+        "the junk row is in the numerator, not only in the denominator: {evidence}"
+    );
+
+    // The `fact` row is counted under the default label, and the evidence
+    // states the documented limit instead of asserting a `fact` was never
+    // classified: the store keeps the value and nothing else, so it cannot
+    // tell an agent-declared `fact` from a defaulted one.
+    assert!(
+        evidence.contains("uuid-fact"),
+        "the default-labelled row is named: {evidence}"
+    );
+    assert!(
+        evidence.contains("declared or defaulted") && evidence.contains("cannot tell them apart"),
+        "the evidence states the limit the store cannot get past: {evidence}"
+    );
+    assert!(
+        !evidence.contains("unclassified"),
+        "the check no longer claims a `fact` was never classified: {evidence}"
+    );
+    assert!(
+        evidence.contains("the default label 'fact'") && evidence.contains("an unknown type"),
+        "the evidence names both buckets, the default label and the unknown type: {evidence}"
+    );
+
+    // A warning, never a failure: a store with a junk type still serves
+    // every read it is asked for.
+    assert_eq!(
+        shape.severity,
+        mnexis_core::diagnostics::doctor::Severity::Warn,
+        "the gap is a warning, never a failure: {shape:?}"
+    );
+    assert_eq!(
+        serde_json::to_value(shape.reason_code).unwrap(),
+        serde_json::json!("TYPES_UNKNOWN"),
+        "both buckets are populated, so the code names the harder defect: {shape:?}"
+    );
+    assert_eq!(
+        report.status,
+        mnexis_core::diagnostics::doctor::Status::Healthy,
+        "a warning does not move the store's status: {report:?}"
+    );
+    assert_eq!(
+        failure_exit_code(&report),
+        None,
+        "a warning never fails the run"
+    );
+}
+
+#[test]
+fn the_type_shape_emits_a_code_for_each_bucket() {
+    // `Check` carries one reason code, so the buckets are told apart by the
+    // code the check emits: the default label keeps the published
+    // `TYPES_UNCLASSIFIED`, and a value outside the closed set emits the
+    // additive `TYPES_UNKNOWN`. The two stores below are the two buckets,
+    // one each, and together they are the set of codes a run can emit.
+    let default_only_dir = tempfile::tempdir_in("target").unwrap();
+    let default_only =
+        open_sqlite(&default_only_dir.path().join("doctor_type_shape_default.db")).unwrap();
+    insert_untyped(&default_only, "uuid-fact", "puerto", "port = 8081");
+    let default_report = run_checks(&default_only);
+
+    let unknown_only_dir = tempfile::tempdir_in("target").unwrap();
+    let unknown_only =
+        open_sqlite(&unknown_only_dir.path().join("doctor_type_shape_junk.db")).unwrap();
+    insert_typed(
+        &unknown_only,
+        "uuid-junk",
+        "una nota",
+        "esto es una nota",
+        "note",
+    );
+    let unknown_report = run_checks(&unknown_only);
+
+    let mut codes = std::collections::BTreeSet::new();
+    codes.insert(type_shape_code(&default_report));
+    codes.insert(type_shape_code(&unknown_report));
+    assert!(
+        codes.contains("TYPES_UNCLASSIFIED") && codes.contains("TYPES_UNKNOWN"),
+        "the check emits a code per bucket: {codes:?}"
+    );
+
+    // A junk type is not a failure either: the store still serves reads,
+    // so the run stays healthy and exits 0.
+    let junk = check(&unknown_report, "type_shape");
+    assert!(
+        junk.evidence.contains("uuid-junk") && junk.evidence.contains("(stored 'note')"),
+        "the junk bucket is named even when it is the only one: {junk:?}"
+    );
+    assert_eq!(
+        junk.severity,
+        mnexis_core::diagnostics::doctor::Severity::Warn,
+        "an unknown type is a warning: {junk:?}"
+    );
+    assert_eq!(
+        unknown_report.status,
+        mnexis_core::diagnostics::doctor::Status::Healthy,
+        "and the store is still healthy: {unknown_report:?}"
+    );
+    assert_eq!(
+        failure_exit_code(&unknown_report),
+        None,
+        "a warning never fails the run"
+    );
+    assert_eq!(
+        default_report.status,
+        mnexis_core::diagnostics::doctor::Status::Healthy,
+        "the default label alone does not move the status either: {default_report:?}"
     );
 }
 

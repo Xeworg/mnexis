@@ -9,7 +9,9 @@
 //! One JSON object per line, the canonical `Memory` shape (the same
 //! envelope `serde_json::to_value(&mem)` produces). No manifest line, no
 //! version header. Limits from PRD §8: 16 KiB per memory, 50 MiB per
-//! import file, 100 000 records per file.
+//! import file, 100 000 records per file. The `memory_type` of every record
+//! must be one of the seven known types: the file is refused, by line and
+//! uuid, before a single row is written (see [`parse_jsonl`]).
 //!
 //! ## Conflict resolution
 //!
@@ -209,6 +211,12 @@ pub fn records_canonical_match(a: &Memory, b: &ImportRecord) -> bool {
 ///   the 1-indexed line number (so the user can locate bad data).
 /// - Rejects input that exceeds `MAX_IMPORT_BYTES` or `MAX_IMPORT_RECORDS`.
 /// - Validates the per-memory content length against `max_content_bytes`.
+/// - Validates the record's `memory_type` against the closed set, the same
+///   way a save does. The type is the one thing an import could otherwise
+///   carry verbatim into a column with no `CHECK`, and a value outside the
+///   set matches no `--type` filter and no state block: the record would be
+///   stored and then never selectable again. So the file is refused, by
+///   line and uuid, instead of writing a row nobody can find.
 pub fn parse_jsonl(
     body: &[u8],
     max_content_bytes: usize,
@@ -249,6 +257,19 @@ pub fn parse_jsonl(
                     record.content.len()
                 ),
             ));
+        }
+        // The type is part of the record's identity on every surface that
+        // reads it. `validate_memory_type` owns the set and the wording of
+        // the refusal; this adds the one thing it cannot know — which line
+        // and which record the value came in on.
+        if let Err(error) = crate::domain::memory_type::validate_memory_type(&record.memory_type) {
+            return Err(match error {
+                MnexisError::InvalidArgument { message, .. } => MnexisError::invalid_argument(
+                    "type",
+                    format!("import line {} (uuid {}): {message}", idx + 1, record.uuid),
+                ),
+                other => other,
+            });
         }
         out.push(record);
     }
@@ -508,5 +529,50 @@ mod tests {
         let err = parse_jsonl(body.as_bytes(), 16_384).unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("line 2"), "{msg}");
+    }
+
+    #[test]
+    fn parse_jsonl_refuses_a_type_outside_the_closed_set() {
+        // A canonical record except for the type: `Decision` is not one of
+        // the seven, so no `--type` filter and no state block can ever
+        // select the record it would create.
+        let body = "{\"uuid\":\"u-mayuscula\",\"topic_key\":\"\",\"namespace\":\"ns\",\
+                    \"memory_type\":\"Decision\",\"content\":\"a\",\"state\":\"active\",\
+                    \"revision\":1,\"deleted\":false,\
+                    \"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\
+                    \"actor\":\"user\",\"channel\":\"cli\",\"assertion_basis\":\"user_stated\"}\n";
+        let error = parse_jsonl(body.as_bytes(), 16_384).expect_err("a bad type is refused");
+        assert!(
+            matches!(&error, MnexisError::InvalidArgument { field, .. } if field == "type"),
+            "the refusal is an invalid argument about the type: {error}"
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains("import line 1 (uuid u-mayuscula)"),
+            "the error names the line and the record: {message}"
+        );
+        assert!(
+            message.contains("unknown memory type 'Decision'"),
+            "the error names the value: {message}"
+        );
+        assert!(
+            message.contains(
+                "valid types: knowledge, decision, preference, procedure, project_state, \
+                 episode, fact"
+            ),
+            "the error names the valid set: {message}"
+        );
+    }
+
+    #[test]
+    fn parse_jsonl_keeps_a_type_inside_the_closed_set() {
+        let body = "{\"uuid\":\"u-decision\",\"topic_key\":\"\",\"namespace\":\"ns\",\
+                    \"memory_type\":\"decision\",\"content\":\"a\",\"state\":\"active\",\
+                    \"revision\":1,\"deleted\":false,\
+                    \"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\
+                    \"actor\":\"user\",\"channel\":\"cli\",\"assertion_basis\":\"user_stated\"}\n";
+        let records = parse_jsonl(body.as_bytes(), 16_384).expect("a valid record parses");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].memory_type, "decision");
     }
 }

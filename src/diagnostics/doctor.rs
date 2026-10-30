@@ -22,6 +22,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::error::MnexisError;
+use crate::domain::memory_type::{DEFAULT_MEMORY_TYPE, MEMORY_TYPES, is_memory_type};
 use crate::storage::sqlite::{MEMORIES_FTS_COLUMNS, missing_fts_columns, rebuild_memories_fts};
 
 /// The binary's current schema version — the highest migration number in
@@ -142,6 +143,7 @@ pub enum ReasonCode {
     TitlesMissing,
     TitlesUnreadable,
     TypesUnclassified,
+    TypesUnknown,
     TypesUnreadable,
 }
 
@@ -165,6 +167,7 @@ impl ReasonCode {
             ReasonCode::TitlesMissing => "TITLES_MISSING",
             ReasonCode::TitlesUnreadable => "TITLES_UNREADABLE",
             ReasonCode::TypesUnclassified => "TYPES_UNCLASSIFIED",
+            ReasonCode::TypesUnknown => "TYPES_UNKNOWN",
             ReasonCode::TypesUnreadable => "TYPES_UNREADABLE",
         }
     }
@@ -202,7 +205,7 @@ impl ReasonCode {
             ReasonCode::TitlesUnreadable => {
                 "restore the data directory from a backup; the records cannot be read"
             }
-            ReasonCode::TypesUnclassified => {
+            ReasonCode::TypesUnclassified | ReasonCode::TypesUnknown => {
                 "give each record a kind with `mnexis update <uuid> --type <kind>` — a type is \
                  the writer's declaration, and the engine never invents one"
             }
@@ -218,8 +221,11 @@ impl ReasonCode {
     /// The title family is the other one: a record without a title is read
     /// and answered, it is just not named — and a doctor that cannot read
     /// the titles is blind, not broken. The type family follows it: a
-    /// record nobody classified is read and answered exactly like a typed
-    /// one, and a doctor that cannot count them is blind, not broken.
+    /// record whose type is the default label is read and answered exactly
+    /// like a typed one, and a record whose type is outside the closed set
+    /// is still read by an unfiltered read — it is *selection* that never
+    /// returns it, not service — and a doctor that cannot count them is
+    /// blind, not broken.
     fn blocks_service(self) -> bool {
         !matches!(
             self,
@@ -228,6 +234,7 @@ impl ReasonCode {
                 | ReasonCode::TitlesMissing
                 | ReasonCode::TitlesUnreadable
                 | ReasonCode::TypesUnclassified
+                | ReasonCode::TypesUnknown
                 | ReasonCode::TypesUnreadable
         )
     }
@@ -707,17 +714,34 @@ fn check_title_shape(conn: &Connection) -> Check {
     Check::warn(CheckId::TitleShape, ReasonCode::TitlesMissing, evidence)
 }
 
-/// i. The records that declare no type, and the share of the store they
-/// carry.
+/// i. The records whose type is the default label or an unknown value,
+/// and the share of the store they carry.
 ///
 /// `fact` is the type a save lands on when it declares nothing — the
-/// bucket every write inherits when the caller names no kind. It is not a
-/// failure: an unclassified record is read and answered exactly like a
-/// typed one. The gap is that the type axis cannot select it: a filter by
-/// kind never returns it, so the structure the type promises is invisible
-/// on the part of the store that carries no type at all. The doctor is the
-/// only surface that can answer "how much of the store is unclassified?",
-/// because every other surface reads only what it is asked for.
+/// bucket every write inherits when the caller names no kind. It is also a
+/// value an agent may write on purpose, and the store keeps the value and
+/// nothing else: **the doctor cannot tell a declared `fact` from a
+/// defaulted one**. That is a documented limit of the column, not a gap in
+/// the check, and the evidence says so instead of claiming the record was
+/// never classified.
+///
+/// The second bucket is the rows whose `memory_type` is not one of the
+/// seven valid types. Nothing that writes a record can produce one today —
+/// save, update and import all validate the closed set — but a store that
+/// predates that validation, or that was edited outside the engine, can
+/// hold one, and such a row is worse than a default: a `--type` filter and
+/// a state block both compare the value exactly, so the row is permanently
+/// unselectable and silently absent from every filtered answer. It sits in
+/// the denominator whether or not it is named, so it is named, and its
+/// bytes are counted in the share next to the `fact` bucket's.
+///
+/// The check carries one reason code per run, so the two buckets are told
+/// apart by the code: `TYPES_UNCLASSIFIED` (the published one) when only
+/// the default label is populated, and the additive `TYPES_UNKNOWN` when a
+/// value outside the closed set exists. A junk type is the harder defect —
+/// nothing selects it and only rewriting the value repairs it — so it owns
+/// the code when both buckets are populated, and the evidence keeps
+/// counting and naming both either way.
 ///
 /// Read-only, and deliberately without a repair: a type is the writer's
 /// declaration. The engine validates one and keeps the one already there;
@@ -730,26 +754,13 @@ fn check_title_shape(conn: &Connection) -> Check {
 /// bytes are measured as bytes, not characters, so a text in any script is
 /// priced as the store stores it.
 fn check_type_shape(conn: &Connection) -> Check {
-    // The whole store's live content, the denominator of the share.
-    let totals: (i64, i64) = match conn.query_row(
-        "SELECT count(*), COALESCE(SUM(length(CAST(content AS BLOB))), 0) \
-         FROM memories WHERE deleted = 0",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    ) {
-        Ok(totals) => totals,
-        Err(error) => {
-            return Check::fail(
-                CheckId::TypeShape,
-                ReasonCode::TypesUnreadable,
-                format!("cannot read the store: {error}"),
-            );
-        }
-    };
-
+    // One read of the live store: every row either bucket can name, and the
+    // denominator of the share. `title` and `memory_type` are NOT NULL with
+    // a default, so a row that cannot be read here is a store problem (the
+    // check fails) — never a row silently dropped from the count.
     let mut statement = match conn.prepare(
-        "SELECT uuid, title, length(CAST(content AS BLOB)) FROM memories \
-         WHERE deleted = 0 AND memory_type = ?1 ORDER BY created_at, uuid",
+        "SELECT uuid, title, memory_type, length(CAST(content AS BLOB)) FROM memories \
+         WHERE deleted = 0 ORDER BY created_at, uuid",
     ) {
         Ok(statement) => statement,
         Err(error) => {
@@ -760,17 +771,27 @@ fn check_type_shape(conn: &Connection) -> Check {
             );
         }
     };
-    let mut records: Vec<(String, String, i64)> = Vec::new();
-    match statement.query_map([crate::domain::memory_type::DEFAULT_MEMORY_TYPE], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i64>(2)?,
-        ))
+    let mut rows: Vec<LiveTypeRow> = Vec::new();
+    match statement.query_map([], |row| {
+        Ok(LiveTypeRow {
+            uuid: row.get(0)?,
+            title: row.get(1)?,
+            memory_type: row.get(2)?,
+            bytes: row.get(3)?,
+        })
     }) {
-        Ok(rows) => {
-            for row in rows.flatten() {
-                records.push(row);
+        Ok(mapped) => {
+            for row in mapped {
+                match row {
+                    Ok(row) => rows.push(row),
+                    Err(error) => {
+                        return Check::fail(
+                            CheckId::TypeShape,
+                            ReasonCode::TypesUnreadable,
+                            format!("cannot read the types: {error}"),
+                        );
+                    }
+                }
             }
         }
         Err(error) => {
@@ -782,55 +803,129 @@ fn check_type_shape(conn: &Connection) -> Check {
         }
     }
 
-    if records.is_empty() {
+    let total = rows.len() as i64;
+    let total_bytes: i64 = rows.iter().map(|row| row.bytes).sum();
+    if rows.is_empty() {
         // An empty store passes because it holds nothing, and the evidence
         // says exactly that: a vacuous pass is not a clean bill of health.
-        let evidence = if totals.0 == 0 {
-            "the store holds no live records, so nothing is unclassified (0 content bytes)"
-                .to_string()
-        } else {
-            format!(
-                "none of the {} live {} is unclassified (0 of {} content bytes)",
-                totals.0,
-                plural(totals.0, "record", "records"),
-                totals.1
-            )
-        };
-        return Check::pass(CheckId::TypeShape, evidence);
+        return Check::pass(
+            CheckId::TypeShape,
+            "the store holds no live records, so no record carries a default label or an \
+             unknown type (0 content bytes)"
+                .to_string(),
+        );
     }
 
-    let unclassified_bytes: i64 = records.iter().map(|(_, _, bytes)| bytes).sum();
+    let defaulted: Vec<&LiveTypeRow> = rows
+        .iter()
+        .filter(|row| row.memory_type == DEFAULT_MEMORY_TYPE)
+        .collect();
+    let unknown: Vec<&LiveTypeRow> = rows
+        .iter()
+        .filter(|row| !is_memory_type(&row.memory_type))
+        .collect();
+
+    if defaulted.is_empty() && unknown.is_empty() {
+        return Check::pass(
+            CheckId::TypeShape,
+            format!(
+                "none of the {total} live {} carries the default label '{}' or a type outside \
+                 the {} valid ones (0 of {total_bytes} content bytes)",
+                plural(total, "record", "records"),
+                DEFAULT_MEMORY_TYPE,
+                MEMORY_TYPES.len()
+            ),
+        );
+    }
+
+    let unselectable_bytes: i64 = defaulted
+        .iter()
+        .chain(unknown.iter())
+        .map(|row| row.bytes)
+        .sum();
     // Rounded to the nearest whole percent, in integers: no float ever
     // reaches the evidence string.
-    let share = if totals.1 == 0 {
+    let share = if total_bytes == 0 {
         0
     } else {
-        (unclassified_bytes * 100 + totals.1 / 2) / totals.1
+        (unselectable_bytes * 100 + total_bytes / 2) / total_bytes
     };
-    let named: Vec<String> = records
-        .iter()
-        .map(|(uuid, title, bytes)| {
-            let title = title.trim();
+    // The count is one number for both buckets, because the question the
+    // check answers is one: how much of the store does the type axis fail to
+    // describe? Each bucket is then counted and named on its own, so a junk
+    // type is never hidden behind the default label.
+    let mut evidence = format!(
+        "{} of {total} live {} carry the default label or an unknown type, \
+         {unselectable_bytes} of {total_bytes} content bytes ({share}%)",
+        defaulted.len() + unknown.len(),
+        plural(total, "record", "records")
+    );
+    if !defaulted.is_empty() {
+        evidence.push_str(&format!(
+            "; the default label '{DEFAULT_MEMORY_TYPE}' (declared or defaulted — the store \
+             cannot tell them apart): {} {}: {}",
+            defaulted.len(),
+            plural(defaulted.len() as i64, "record", "records"),
+            named_type_rows(&defaulted, false)
+        ));
+    }
+    if !unknown.is_empty() {
+        evidence.push_str(&format!(
+            "; an unknown type, outside the {} valid types ({}): {} {}: {}",
+            MEMORY_TYPES.len(),
+            MEMORY_TYPES.join(", "),
+            unknown.len(),
+            plural(unknown.len() as i64, "record", "records"),
+            named_type_rows(&unknown, true)
+        ));
+    }
+    // One code, and one code cannot say two things. When both buckets are
+    // populated the code names the harder defect — a type outside the
+    // closed set is selected by nothing and correctable only by rewriting
+    // the value, while the default label is ambiguous by design — and the
+    // evidence still counts and names both, so nothing hides behind the
+    // code. A bucket on its own keeps its own code.
+    let reason = if unknown.is_empty() {
+        ReasonCode::TypesUnclassified
+    } else {
+        ReasonCode::TypesUnknown
+    };
+    Check::warn(CheckId::TypeShape, reason, evidence)
+}
+
+/// One live record as `type_shape` reads it: the identity it is named by,
+/// the value the column holds, and the content bytes it costs.
+struct LiveTypeRow {
+    uuid: String,
+    title: String,
+    memory_type: String,
+    bytes: i64,
+}
+
+/// The worklist one bucket of the evidence carries: each row's uuid, its
+/// title (or the absence of one, said out loud), its content bytes and, for
+/// an unknown type, the value the store holds — the one thing an operator
+/// needs to know to put it right.
+fn named_type_rows(rows: &[&LiveTypeRow], with_type: bool) -> String {
+    rows.iter()
+        .map(|row| {
+            let title = row.title.trim();
             let name = if title.is_empty() {
                 "(no title)".to_string()
             } else {
                 format!("\"{title}\"")
             };
-            format!("{uuid} {name} {bytes} B")
+            if with_type {
+                format!(
+                    "{} {name} {} B (stored '{}')",
+                    row.uuid, row.bytes, row.memory_type
+                )
+            } else {
+                format!("{} {name} {} B", row.uuid, row.bytes)
+            }
         })
-        .collect();
-    let evidence = format!(
-        "{} of {} live {} unclassified (the default type '{}'), {} of {} content bytes \
-         ({share}%): {}",
-        records.len(),
-        totals.0,
-        plural(totals.0, "record is", "records are"),
-        crate::domain::memory_type::DEFAULT_MEMORY_TYPE,
-        unclassified_bytes,
-        totals.1,
-        named.join("; ")
-    );
-    Check::warn(CheckId::TypeShape, ReasonCode::TypesUnclassified, evidence)
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// The word that agrees with a count: `singular` or `plural`.
