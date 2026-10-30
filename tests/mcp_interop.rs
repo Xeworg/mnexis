@@ -965,6 +965,124 @@ async fn memory_update_refuses_an_unknown_argument_instead_of_ignoring_it()
     Ok(())
 }
 
+/// `memory_save` refuses an argument it does not have for the same reason
+/// `memory_update` does: `type` is not the name of the kind (`memory_type`
+/// is), so a save that sends it used to be read as a save that said nothing
+/// about the kind and answered with a bumped revision — a silent no-op on
+/// the tool an agent uses most (audit round 2, A11).
+#[tokio::test]
+async fn memory_save_refuses_an_unknown_argument_instead_of_ignoring_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // The decision the caller means to re-save, under the topic key the
+    // re-save will name.
+    let saved: serde_json::Value = serde_json::from_str(
+        &call_tool_text(
+            &client,
+            "memory_save",
+            serde_json::json!({
+                "content": "el puerto del servicio es 8081",
+                "memory_type": "decision",
+                "topic_key": "puerto.servicio",
+            }),
+        )
+        .await?,
+    )?;
+    let uuid = saved["uuid"].as_str().expect("uuid").to_string();
+
+    // `type` is not an argument of the tool. rmcp answers a parameter it
+    // cannot deserialize as an error result (is_error), and the store is
+    // never reached.
+    let refused = client
+        .call_tool(
+            CallToolRequestParams::new("memory_save").with_arguments(
+                serde_json::json!({
+                    "content": "el puerto del servicio es 8082",
+                    "topic_key": "puerto.servicio",
+                    "type": "decision",
+                })
+                .as_object()
+                .expect("static object")
+                .clone(),
+            ),
+        )
+        .await
+        .expect("the refusal is an answer, not a transport failure");
+    assert_eq!(
+        refused.is_error,
+        Some(true),
+        "an unknown argument must be an error result, not a silent no-op: {refused:?}"
+    );
+    let message = refused
+        .content
+        .iter()
+        .find_map(|b| match b {
+            ContentBlock::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .expect("the refusal carries a message");
+    assert!(
+        message.contains("unknown field"),
+        "the refusal must name the problem: {message}"
+    );
+    assert!(
+        message.contains("type"),
+        "the refusal must name the argument it did not recognise: {message}"
+    );
+
+    // Nothing was written: the record is still the decision it was, at the
+    // revision it had, with the content it had.
+    let intact: serde_json::Value = serde_json::from_str(
+        &call_tool_text(&client, "memory_get", serde_json::json!({ "uuid": uuid })).await?,
+    )?;
+    assert_eq!(intact["revision"], 1, "{intact}");
+    assert_eq!(intact["memory_type"], "decision", "{intact}");
+    assert_eq!(
+        intact["content"], "el puerto del servicio es 8081",
+        "{intact}"
+    );
+
+    // The same save, spelled right, still works and still carries the kind.
+    let resaved: serde_json::Value = serde_json::from_str(
+        &call_tool_text(
+            &client,
+            "memory_save",
+            serde_json::json!({
+                "content": "el puerto del servicio es 8082",
+                "memory_type": "decision",
+                "topic_key": "puerto.servicio",
+            }),
+        )
+        .await?,
+    )?;
+    assert_eq!(
+        resaved["uuid"], intact["uuid"],
+        "the re-save lands on the same record: {resaved}"
+    );
+    let after: serde_json::Value = serde_json::from_str(
+        &call_tool_text(&client, "memory_get", serde_json::json!({ "uuid": uuid })).await?,
+    )?;
+    assert_eq!(after["revision"], 2, "{after}");
+    assert_eq!(after["memory_type"], "decision", "{after}");
+    assert_eq!(
+        after["content"], "el puerto del servicio es 8082",
+        "{after}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
 /// The set of kinds is closed: a value outside it is refused with the stable
 /// domain label, and the record keeps the kind it had.
 #[tokio::test]
