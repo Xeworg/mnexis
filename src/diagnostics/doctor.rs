@@ -28,7 +28,7 @@ use crate::storage::sqlite::{MEMORIES_FTS_COLUMNS, missing_fts_columns, rebuild_
 /// The binary's current schema version — the highest migration number in
 /// `storage::sqlite::run_migrations`. Read from that module directly so it
 /// stays in sync.
-const EXPECTED_SCHEMA_VERSION: i64 = 8;
+const EXPECTED_SCHEMA_VERSION: i64 = 9;
 
 /// The canonical tables that must be present.
 const CANONICAL_TABLES: &[&str] = &[

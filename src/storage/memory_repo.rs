@@ -1018,13 +1018,14 @@ impl MemoryRepository for SqliteMemoryRepository {
             let rows = tx
                 .execute(
                     "UPDATE memories SET \
-                       content = ?1, state = ?2, revision = revision + 1, \
-                       updated_at = ?3, assertion_basis = ?4, \
-                       topic_key = ?5, memory_type = ?6, \
-                       valid_from = ?7, valid_until = ?8, \
-                       actor = ?9, channel = ?10, keywords = ?11 \
-                     WHERE uuid = ?12 AND revision = ?13",
+                       title = ?1, content = ?2, state = ?3, revision = revision + 1, \
+                       updated_at = ?4, assertion_basis = ?5, \
+                       topic_key = ?6, memory_type = ?7, \
+                       valid_from = ?8, valid_until = ?9, \
+                       actor = ?10, channel = ?11, keywords = ?12 \
+                     WHERE uuid = ?13 AND revision = ?14",
                     params![
+                        updated.title,
                         updated.content,
                         updated.state.as_str(),
                         updated.updated_at,

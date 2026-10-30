@@ -67,8 +67,11 @@ one-call door as a pi tool (#64), the doctor's check and repair for the
 records without a title (#65, #71, #72), the type of a memory as a closed set
 the agent writes (#66), and the session state riding the door's answer by
 default — the call-budget experiment's pre-registered ascension (#68, #70).
-The schema is at version 8 (migration 008 added the anchor of a session) and
-there is no downgrade: an old binary refuses to open a newer store.
+The schema is at version 9 (migration 009 re-creates the two `AFTER UPDATE`
+triggers of the index, so a store migrated before the guard existed stops
+writing the index row twice on every live update; migration 008 added the
+anchor of a session) and there is no downgrade: an old binary refuses to open
+a newer store.
 
 **Merged: PR #92** (`feat/door-priced-answer`, 4 commits, ~1 100 authored
 lines) — the door's answer is **priced** and declares its **coverage**

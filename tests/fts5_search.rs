@@ -35,8 +35,11 @@
 //! the price of one index write is measured in the same run instead of
 //! assumed.
 
+use mnexis_core::application::{MemoryService, SaveRequest, ServiceConfig};
 use mnexis_core::domain::memory::{Memory, MemoryState};
+use mnexis_core::domain::query::MatchMode;
 use mnexis_core::domain::repository::MemoryRepository;
+use mnexis_core::domain::scope::{AccessScope, Operation};
 use mnexis_core::open_sqlite;
 use mnexis_core::storage::memory_repo::SqliteMemoryRepository;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -56,6 +59,62 @@ fn repository(name: &str) -> (SqliteMemoryRepository, tempfile::TempDir) {
         SqliteMemoryRepository::new(open_sqlite(&path).unwrap()),
         directory,
     )
+}
+
+/// A service over a scratch profile, bounded to the namespace `fact` saves in.
+/// The save path — including the occupancy re-save — is the one under test.
+fn service(name: &str) -> (MemoryService<SqliteMemoryRepository>, tempfile::TempDir) {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join(format!("{name}.db"));
+    let repo = SqliteMemoryRepository::new(open_sqlite(&path).unwrap());
+    let scope = AccessScope::new(
+        vec!["pagos".to_string()],
+        vec!["pagos".to_string()],
+        "pagos".to_string(),
+        false,
+        vec![
+            Operation::Save,
+            Operation::Get,
+            Operation::Search,
+            Operation::Update,
+        ],
+    );
+    (
+        MemoryService::new(repo, scope, ServiceConfig::default()),
+        directory,
+    )
+}
+
+/// A save that names its own key, title and content: the shape that lands on
+/// the record already holding the key.
+fn save_request(uuid: &str, topic_key: &str, title: &str, content: &str) -> SaveRequest {
+    SaveRequest {
+        uuid: uuid.to_string(),
+        title: title.to_string(),
+        topic_key: topic_key.to_string(),
+        namespace: "pagos".to_string(),
+        memory_type: Some("fact".to_string()),
+        content: content.to_string(),
+        actor: "user".to_string(),
+        channel: "cli".to_string(),
+        assertion_basis: "user_stated".to_string(),
+        valid_from: None,
+        valid_until: None,
+        tags: Vec::new(),
+        keywords: Vec::new(),
+        replace_keywords: false,
+        idempotency_key: None,
+        state: MemoryState::Active,
+        now: "2026-01-01T00:00:00Z".to_string(),
+    }
+}
+
+/// The schema version the store records.
+fn schema_version(conn: &Connection) -> i64 {
+    conn.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+        row.get(0)
+    })
+    .expect("the ledger must be readable")
 }
 
 /// An active fact that carries all four indexed columns.
@@ -364,10 +423,107 @@ fn an_update_with_history_reindexes_the_row() {
     assert_eq!(keywords, "port");
     assert_eq!(hits(repo.connection(), "8081"), 0);
     assert_eq!(hits(repo.connection(), "9090"), 1);
-    // This writer does not persist `title` (it is not in its SET list), so the
-    // check is that the index carries whatever the canonical row holds: the
-    // two never disagree, whatever the writer persisted.
     assert_index_matches_canonical(repo.connection(), "fact-1");
+}
+
+#[test]
+fn an_update_with_history_carries_the_title() {
+    let (mut repo, _guard) = repository("fts_update_history_title");
+    let saved = save(&mut repo, &fact("fact-1", "el puerto del servicio es 8081"));
+
+    // The writer receives a record whose title moved on. Nothing else about
+    // the record changes except what a caller would send anyway.
+    let mut renamed = saved.clone();
+    renamed.title = "puerto del servicio de pagos".to_string();
+    renamed.updated_at = "2026-01-02T00:00:00Z".to_string();
+    let history = mnexis_core::domain::memory::MemoryHistory {
+        id: None,
+        memory_uuid: saved.uuid.clone(),
+        revision: saved.revision,
+        memory_type: saved.memory_type.clone(),
+        content: saved.content.clone(),
+        state: saved.state,
+        valid_from: saved.valid_from.clone(),
+        valid_until: saved.valid_until.clone(),
+        assertion_basis: saved.assertion_basis.clone(),
+        changed_by: "user".to_string(),
+        change_reason: "retitled".to_string(),
+        changed_at: "2026-01-02T00:00:00Z".to_string(),
+    };
+    let written = repo
+        .update_with_history_and_tags(&renamed, saved.revision, &history, None)
+        .expect("the write must run");
+
+    assert_eq!(
+        written.title, "puerto del servicio de pagos",
+        "the title the caller sent must be the title on disk, not the one the \
+         record already had"
+    );
+    assert_eq!(
+        must_be_indexed(repo.connection(), "fact-1").1,
+        "puerto del servicio de pagos",
+        "the index carries the title the canonical row now holds"
+    );
+    assert_eq!(
+        hits(repo.connection(), "pagos"),
+        1,
+        "a word only the new title has is searchable"
+    );
+    assert_index_matches_canonical(repo.connection(), "fact-1");
+}
+
+#[test]
+fn a_resave_of_the_same_topic_key_keeps_the_title_it_was_given() {
+    let (mut svc, _guard) = service("fts_resave_title");
+
+    // A record that holds the key and has no title: a fact saved before the
+    // engine named facts (migration 005 gives it the empty default).
+    let first = svc
+        .save(save_request(
+            "uuid-1",
+            "topic.fact-1",
+            "",
+            "el puerto del servicio es 8081",
+        ))
+        .expect("the first save must run");
+    assert_eq!(first.title, "", "the fixture starts without a title");
+
+    // The same key, saved again, now with the title of the fact. The save lands
+    // on the record that holds the key, and it carries the title it was given
+    // (the occupancy re-save writes through `update_with_history_and_tags`).
+    let saved = svc
+        .save(save_request(
+            "uuid-2",
+            "topic.fact-1",
+            "escucha del puerto",
+            "el puerto del servicio es 8081",
+        ))
+        .expect("the re-save must run");
+
+    assert_eq!(
+        saved.uuid, "uuid-1",
+        "the re-save lands on the record that holds the key"
+    );
+    assert_eq!(
+        saved.title, "escucha del puerto",
+        "the re-save carries the title it was given"
+    );
+    assert_eq!(
+        svc.get("uuid-1")
+            .expect("the read must run")
+            .expect("the record still reads back")
+            .title,
+        "escucha del puerto",
+        "the title is on disk, not only in the answer"
+    );
+    let hits = svc
+        .search("escucha", Some("pagos"), 10, MatchMode::Any)
+        .expect("the search must run");
+    assert_eq!(
+        hits.len(),
+        1,
+        "a word only the title has is searchable: the re-save reached the index"
+    );
 }
 
 #[test]
@@ -586,5 +742,112 @@ fn a_rebuilt_index_still_answers_an_update_once() {
         content_writes(repo.connection()) - baseline,
         1,
         "a rebuilt index must not resurrect the double write"
+    );
+}
+
+// ── migration 009: an existing store heals when it is opened ───────────────
+
+/// The two `AFTER UPDATE` triggers exactly as a store at schema version 8
+/// carries them: the transition trigger has no guard, so it answers a live
+/// update together with the content trigger, and the row's text is paid for
+/// twice. Written out here because the fixture has to be the shape that
+/// existed, not the shape the code has now.
+const PRE_009_TRIGGERS: &str = r#"
+DROP TRIGGER IF EXISTS memories_after_update_into_active;
+CREATE TRIGGER memories_after_update_into_active
+AFTER UPDATE OF state, deleted ON memories
+WHEN new.state = 'active' AND new.deleted = 0
+BEGIN
+    DELETE FROM memories_fts WHERE rowid = new.id;
+    INSERT INTO memories_fts(rowid, content, title, topic_key, keywords)
+    VALUES (new.id, new.content, new.title, new.topic_key, new.keywords);
+END;
+
+DROP TRIGGER IF EXISTS memories_after_update_content;
+CREATE TRIGGER memories_after_update_content
+AFTER UPDATE OF content, title, topic_key, keywords ON memories
+WHEN new.deleted = 0
+BEGIN
+    UPDATE memories_fts
+    SET content = new.content, title = new.title, topic_key = new.topic_key,
+        keywords = new.keywords
+    WHERE rowid = new.id;
+END;
+"#;
+
+#[test]
+fn migration_009_gives_an_existing_store_the_single_write_trigger() {
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("mig009.db");
+
+    // The store a version-8 binary left behind: everything migrated, the index
+    // in its current shape and holding a live fact, and the two `AFTER UPDATE`
+    // triggers without the guard.
+    let store = open_sqlite(&path).expect("the store must open");
+    store
+        .execute(
+            "INSERT INTO memories (uuid, title, topic_key, namespace, memory_type, content, \
+             keywords, state, actor, channel, assertion_basis) \
+             VALUES ('fact-1', 'puerto del servicio', 'topic.fact-1', 'pagos', 'fact', \
+             'el puerto del servicio es 8081', 'puerto, listen-port', 'active', \
+             'user', 'cli', 'user_stated')",
+            [],
+        )
+        .expect("the fixture fact must be stored");
+    store
+        .execute_batch(PRE_009_TRIGGERS)
+        .expect("the pre-009 triggers must be installable");
+    store
+        .execute("DELETE FROM schema_migrations WHERE version >= 9", [])
+        .expect("the ledger must go back to version 8");
+    assert_eq!(
+        schema_version(&store),
+        8,
+        "the fixture is a store at schema version 8"
+    );
+    drop(store);
+
+    // Opening it with this binary is the whole migration path.
+    let conn = open_sqlite(&path).expect("the store must open again");
+    assert_eq!(schema_version(&conn), 9, "the migration is recorded");
+    assert_eq!(
+        must_be_indexed(&conn, "fact-1"),
+        (
+            "el puerto del servicio es 8081".to_string(),
+            "puerto del servicio".to_string(),
+            "topic.fact-1".to_string(),
+            "puerto, listen-port".to_string(),
+        ),
+        "the migration re-creates triggers only: the index keeps its rows"
+    );
+
+    stand_in_for_the_index(&conn);
+    conn.execute(
+        "INSERT INTO memories_fts (rowid, content, title, topic_key, keywords) \
+         SELECT id, content, title, topic_key, keywords FROM memories WHERE uuid = 'fact-1'",
+        [],
+    )
+    .expect("the stand-in must hold what the index held");
+    let baseline = content_writes(&conn);
+    assert_eq!(baseline, 1, "the store starts with one index row");
+
+    // The shape every writer sends: the new content plus the state the row
+    // already has.
+    conn.execute(
+        "UPDATE memories SET content = ?1, state = 'active' WHERE uuid = 'fact-1'",
+        ["the port of the service is 8081"],
+    )
+    .expect("the update must run");
+
+    assert_eq!(
+        content_writes(&conn) - baseline,
+        1,
+        "an existing store must get the guard when it is opened: one UPDATE of \
+         a live fact writes the index row once, and 2 means the pre-009 triggers \
+         survived migration 009"
+    );
+    assert!(
+        indexed_row(&conn, "fact-1").is_some(),
+        "the row must still be in the index after the update"
     );
 }
