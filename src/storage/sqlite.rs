@@ -336,6 +336,102 @@ fn ensure_session_anchor_columns(conn: &Connection) -> Result<(), MnexisError> {
 /// another language, in another jargon, in another document.
 pub const MEMORIES_FTS_COLUMNS: [&str; 4] = ["content", "title", "topic_key", "keywords"];
 
+/// The table of `memories_fts`.
+///
+/// Dropped and re-created rather than altered: an FTS5 table cannot change its
+/// shape in place, and the drop keeps the definition and what a store already
+/// carries from drifting apart when a column is added.
+///
+/// Column order is the order a weighted `bm25(memories_fts, ...)` would read,
+/// in case weights ever become necessary. Today bm25 is left unweighted on
+/// purpose: `retrieval::fts5::search` and `retrieval::explain` both score with
+/// the bare `bm25(memories_fts)` expression, and that is public behaviour.
+const MEMORIES_FTS_TABLE: &str = r#"
+DROP TABLE IF EXISTS memories_fts;
+CREATE VIRTUAL TABLE memories_fts USING fts5(content, title, topic_key, keywords);
+"#;
+
+/// Insert trigger: index into FTS5 only when the new memory is active and not
+/// deleted (maintains the invariant state='active' AND deleted=0 ⇔ row in FTS5).
+const MEMORIES_FTS_TRIGGER_INSERT: &str = r#"
+DROP TRIGGER IF EXISTS memories_after_insert_content;
+CREATE TRIGGER memories_after_insert_content
+AFTER INSERT ON memories
+WHEN new.state = 'active' AND new.deleted = 0
+BEGIN
+    INSERT INTO memories_fts(rowid, content, title, topic_key, keywords)
+    VALUES (new.id, new.content, new.title, new.topic_key, new.keywords);
+END;
+"#;
+
+/// The row enters the index on a **transition** into the indexed state and
+/// only then: `old.state IS NOT 'active' OR old.deleted != 0` is exactly the
+/// condition that the row had no index row before the statement. Keeping an
+/// active row active is the content trigger's job below, and every writer
+/// sends `state` in its SET list (`storage::memory_repo`), so without this
+/// guard both triggers answered the same UPDATE and FTS5 tokenised the row
+/// twice: an FTS5 row UPDATE is internally a delete plus an insert, so the
+/// DELETE + INSERT here and the UPDATE there pay for the same text again
+/// (`tests/fts5_search.rs` holds the count at one).
+///
+/// It is a constant of its own because migration 009 re-creates it — together
+/// with the content trigger — for a store that was migrated before the guard
+/// existed: a healed store carries this text, not a copy of it.
+const MEMORIES_FTS_TRIGGER_INTO_ACTIVE: &str = r#"
+DROP TRIGGER IF EXISTS memories_after_update_into_active;
+CREATE TRIGGER memories_after_update_into_active
+AFTER UPDATE OF state, deleted ON memories
+WHEN new.state = 'active' AND new.deleted = 0
+ AND (old.state IS NOT 'active' OR old.deleted != 0)
+BEGIN
+    DELETE FROM memories_fts WHERE rowid = new.id;
+    INSERT INTO memories_fts(rowid, content, title, topic_key, keywords)
+    VALUES (new.id, new.content, new.title, new.topic_key, new.keywords);
+END;
+"#;
+
+/// The row leaves the index when it stops being live: a state change out of
+/// `active` or a soft delete. Nothing is inserted, so the index only shrinks.
+const MEMORIES_FTS_TRIGGER_OUT_OF_ACTIVE: &str = r#"
+DROP TRIGGER IF EXISTS memories_after_update_out_of_active;
+CREATE TRIGGER memories_after_update_out_of_active
+AFTER UPDATE OF state, deleted ON memories
+WHEN NOT (new.state = 'active' AND new.deleted = 0)
+BEGIN
+    DELETE FROM memories_fts WHERE rowid = new.id;
+END;
+"#;
+
+/// The indexed text of a memory is four columns now, so a title, a topic key or
+/// a word that changes re-indexes the row exactly like a content change does.
+/// The body updates an existing row instead of inserting one, so a memory that
+/// is not alive stays out of the index.
+///
+/// It is a constant of its own for migration 009's reason: the two `AFTER
+/// UPDATE` triggers of a healed store are these two, character for character.
+const MEMORIES_FTS_TRIGGER_CONTENT: &str = r#"
+DROP TRIGGER IF EXISTS memories_after_update_content;
+CREATE TRIGGER memories_after_update_content
+AFTER UPDATE OF content, title, topic_key, keywords ON memories
+WHEN new.deleted = 0
+BEGIN
+    UPDATE memories_fts
+    SET content = new.content, title = new.title, topic_key = new.topic_key,
+        keywords = new.keywords
+    WHERE rowid = new.id;
+END;
+"#;
+
+/// A deleted record has no row in the index, whatever it held.
+const MEMORIES_FTS_TRIGGER_DELETE: &str = r#"
+DROP TRIGGER IF EXISTS memories_after_delete;
+CREATE TRIGGER memories_after_delete
+AFTER DELETE ON memories
+BEGIN
+    DELETE FROM memories_fts WHERE rowid = old.id;
+END;
+"#;
+
 /// The one definition of `memories_fts`: the table and the five triggers that
 /// keep it in step with `memories`.
 ///
@@ -349,86 +445,32 @@ pub const MEMORIES_FTS_COLUMNS: [&str; 4] = ["content", "title", "topic_key", "k
 ///
 /// Migration 006, [`rebuild_memories_fts`] and therefore
 /// `retrieval::reindex::reindex_all` and `doctor --repair` all build the index
-/// from this constant, so the migrated index and the rebuilt one cannot drift
+/// from this definition, so the migrated index and the rebuilt one cannot drift
 /// apart. The batch is safe to apply to any state of the table and of the
 /// triggers: the table is dropped and re-created, every trigger is dropped and
 /// re-created, and the caller re-indexes the canonical rows afterwards.
 ///
-/// Column order is the order a weighted `bm25(memories_fts, ...)` would read,
-/// in case weights ever become necessary. Today bm25 is left unweighted on
-/// purpose: `retrieval::fts5::search` and `retrieval::explain` both score with
-/// the bare `bm25(memories_fts)` expression, and that is public behaviour.
-const MEMORIES_FTS_SCHEMA: &str = r#"
-DROP TABLE IF EXISTS memories_fts;
-CREATE VIRTUAL TABLE memories_fts USING fts5(content, title, topic_key, keywords);
-
--- Insert trigger: index into FTS5 only when the new memory is active and not
--- deleted (maintains the invariant state='active' AND deleted=0 ⇔ row in FTS5).
-DROP TRIGGER IF EXISTS memories_after_insert_content;
-CREATE TRIGGER memories_after_insert_content
-AFTER INSERT ON memories
-WHEN new.state = 'active' AND new.deleted = 0
-BEGIN
-    INSERT INTO memories_fts(rowid, content, title, topic_key, keywords)
-    VALUES (new.id, new.content, new.title, new.topic_key, new.keywords);
-END;
-
--- The row enters the index on a **transition** into the indexed state and
--- only then: `old.state IS NOT 'active' OR old.deleted != 0` is exactly the
--- condition that the row had no index row before the statement. Keeping an
--- active row active is the content trigger's job below, and every writer
--- sends `state` in its SET list (`storage::memory_repo`), so without this
--- guard both triggers answered the same UPDATE and FTS5 tokenised the row
--- twice: an FTS5 row UPDATE is internally a delete plus an insert, so the
--- DELETE + INSERT here and the UPDATE there pay for the same text again
--- (`tests/fts5_search.rs` holds the count at one).
-DROP TRIGGER IF EXISTS memories_after_update_into_active;
-CREATE TRIGGER memories_after_update_into_active
-AFTER UPDATE OF state, deleted ON memories
-WHEN new.state = 'active' AND new.deleted = 0
- AND (old.state IS NOT 'active' OR old.deleted != 0)
-BEGIN
-    DELETE FROM memories_fts WHERE rowid = new.id;
-    INSERT INTO memories_fts(rowid, content, title, topic_key, keywords)
-    VALUES (new.id, new.content, new.title, new.topic_key, new.keywords);
-END;
-
-DROP TRIGGER IF EXISTS memories_after_update_out_of_active;
-CREATE TRIGGER memories_after_update_out_of_active
-AFTER UPDATE OF state, deleted ON memories
-WHEN NOT (new.state = 'active' AND new.deleted = 0)
-BEGIN
-    DELETE FROM memories_fts WHERE rowid = new.id;
-END;
-
--- The indexed text of a memory is four columns now, so a title, a topic key or
--- a word that changes re-indexes the row exactly like a content change does.
--- The body updates an existing row instead of inserting one, so a memory that
--- is not alive stays out of the index.
-DROP TRIGGER IF EXISTS memories_after_update_content;
-CREATE TRIGGER memories_after_update_content
-AFTER UPDATE OF content, title, topic_key, keywords ON memories
-WHEN new.deleted = 0
-BEGIN
-    UPDATE memories_fts
-    SET content = new.content, title = new.title, topic_key = new.topic_key,
-        keywords = new.keywords
-    WHERE rowid = new.id;
-END;
-
-DROP TRIGGER IF EXISTS memories_after_delete;
-CREATE TRIGGER memories_after_delete
-AFTER DELETE ON memories
-BEGIN
-    DELETE FROM memories_fts WHERE rowid = old.id;
-END;
-"#;
+/// Migration 009 applies the two `AFTER UPDATE` triggers alone — the guard it
+/// carries is the whole point of that migration — and it reads them from the
+/// same constants this batch is built from, so a store healed by the migration
+/// and a store rebuilt by [`rebuild_memories_fts`] carry the same text.
+fn memories_fts_schema() -> String {
+    [
+        MEMORIES_FTS_TABLE,
+        MEMORIES_FTS_TRIGGER_INSERT,
+        MEMORIES_FTS_TRIGGER_INTO_ACTIVE,
+        MEMORIES_FTS_TRIGGER_OUT_OF_ACTIVE,
+        MEMORIES_FTS_TRIGGER_CONTENT,
+        MEMORIES_FTS_TRIGGER_DELETE,
+    ]
+    .concat()
+}
 
 /// Rebuild `memories_fts` from canonical data: the one implementation behind
 /// migration 006, `retrieval::reindex::reindex_all` and `doctor --repair`.
 ///
 /// Drops the index, rebuilds the table and the triggers from
-/// [`MEMORIES_FTS_SCHEMA`], then re-indexes every `state = 'active' AND
+/// [`memories_fts_schema`], then re-indexes every `state = 'active' AND
 /// deleted = 0` row with its content, title, topic key and keywords. Returns
 /// the number of rows indexed.
 ///
@@ -455,7 +497,7 @@ pub fn rebuild_memories_fts(conn: &Connection) -> Result<usize, MnexisError> {
 }
 
 fn rebuild_memories_fts_inner(conn: &Connection) -> Result<usize, MnexisError> {
-    conn.execute_batch(MEMORIES_FTS_SCHEMA)
+    conn.execute_batch(&memories_fts_schema())
         .map_err(|e| MnexisError::busy(format!("rebuild memories_fts: {e}")))?;
     conn.execute(
         "INSERT INTO memories_fts(rowid, content, title, topic_key, keywords) \
@@ -464,6 +506,25 @@ fn rebuild_memories_fts_inner(conn: &Connection) -> Result<usize, MnexisError> {
         [],
     )
     .map_err(|e| MnexisError::busy(format!("rebuild memories_fts rows: {e}")))
+}
+
+/// Re-create the two `AFTER UPDATE` triggers of `memories_fts` from the
+/// canonical text: the one implementation behind migration 009.
+///
+/// The index and its rows are untouched — only the triggers are replaced — so
+/// nothing has to be re-indexed and nothing has to be probed: every statement
+/// drops its trigger before it creates it, which makes the batch safe to apply
+/// to any state, including the one a migration that failed halfway leaves
+/// behind. A store whose triggers are already the canonical ones ends exactly
+/// as it started.
+fn rebuild_fts_update_triggers(conn: &Connection) -> Result<(), MnexisError> {
+    let batch = [
+        MEMORIES_FTS_TRIGGER_INTO_ACTIVE,
+        MEMORIES_FTS_TRIGGER_CONTENT,
+    ]
+    .concat();
+    conn.execute_batch(&batch)
+        .map_err(|e| MnexisError::busy(format!("migration 009: {e}")))
 }
 
 /// The columns of [`MEMORIES_FTS_COLUMNS`] that `memories_fts` does not
@@ -497,7 +558,7 @@ pub fn missing_fts_columns(conn: &Connection) -> Result<Vec<&'static str>, Mnexi
 }
 
 /// Applies pending migrations. Creates the `schema_migrations` ledger if
-/// absent. Applies migrations 001 through 008 if not already recorded. A
+/// absent. Applies migrations 001 through 009 if not already recorded. A
 /// recorded version higher than the binary's known migrations returns
 /// `MnexisError::UnsupportedVersion` (no-downgrade rule).
 pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
@@ -517,7 +578,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
         )
         .map_err(|e| MnexisError::busy(format!("read schema_migrations: {e}")))?;
 
-    if applied > 8 {
+    if applied > 9 {
         return Err(MnexisError::unsupported_version(applied));
     }
 
@@ -635,6 +696,27 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
             .map_err(|e| MnexisError::busy(format!("record migration 008: {e}")))?;
     }
 
+    if applied < 9 {
+        // Migration 009: the guard reaches a store that already exists.
+        //
+        // Migration 006 rebuilt the index and its triggers from the canonical
+        // schema, so the guard on `memories_after_update_into_active` — the
+        // one that stops the transition trigger and the content trigger from
+        // answering the same `UPDATE` and paying for the row's text twice —
+        // reached a store only when its index had to be rebuilt. A store
+        // already past 006 kept the unguarded trigger, and kept the double
+        // write, until `reindex` or `doctor --repair` ran.
+        //
+        // The migration re-creates the two `AFTER UPDATE` triggers and nothing
+        // else: the index keeps its shape and its rows, so there is nothing to
+        // re-index and nothing to probe. Dropping a trigger before creating it
+        // is what makes the batch safe to repeat, which is what a migration
+        // that failed halfway needs on its second run.
+        rebuild_fts_update_triggers(conn)?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (9)", [])
+            .map_err(|e| MnexisError::busy(format!("record migration 009: {e}")))?;
+    }
+
     Ok(())
 }
 
@@ -654,7 +736,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 8, "migrations 001 through 008 should be recorded");
+        assert_eq!(version, 9, "migrations 001 through 009 should be recorded");
 
         // Migration 003 added the persisted supersede reason column.
         let (col_type, dflt, notnull): (String, String, i64) = conn
@@ -676,7 +758,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version_again, 8, "008 must not double-record on a re-run");
+        assert_eq!(version_again, 9, "009 must not double-record on a re-run");
     }
 
     #[test]
@@ -753,7 +835,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 8, "the migration was applied");
+        assert_eq!(version, 9, "the migration was applied");
     }
 
     #[test]
@@ -787,7 +869,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 8, "the ledger records the migration");
+        assert_eq!(version, 9, "the ledger records the migration");
 
         // The session survived, and reads back with no anchor: it happened
         // before the engine knew how to record one.
@@ -848,7 +930,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 8, "the ledger records it");
+        assert_eq!(version, 9, "the ledger records it");
     }
 
     #[test]
@@ -902,7 +984,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 8, "the ledger records it");
+        assert_eq!(version, 9, "the ledger records it");
     }
 
     #[test]
