@@ -71,3 +71,31 @@ this project wrote it.
   by its pre-registered definition, and the mechanism is now proven: the axis can be made
   stable by rules but does not discriminate on config-shaped facts — per-type rules stay
   inadmissible.** Criterion and report: `tmp/bench/types-b1-round2-{measurement,report}.md`.
+- **L6** (round 3's verdict, 2026-10-30): the round-2 caveat was fixture-bounded and round 3
+  tests it. Same text, same model, **heterogeneous fixture** (ADR with the rejected
+  alternatives, rollback runbook, 2026-09-14 postmortem, CONTRIBUTING rules). Pre-registered
+  composite **FAILS**: R3-G1 (per-fact stability) collapses because the model *groups* facts
+  into one record and coins titles per run — the scorer's one-record-per-fact assumption is
+  broken, the same class of defect the round-1 judges caught; R3-G3 misses by 12 B on a 256 B
+  bar derived from a config-only fixture. But **R3-G2 (diversity) HOLDS 9/10** — granularity-free
+  — and the post-hoc record-level check (labelled as such) finds **3 of 3 recurring titles keep
+  one type at 100 %**. So: **on heterogeneous facts the axis discriminates and repeats stably;
+  round 2's "does not discriminate" was the fixture.** The composite verdict stands (a broken
+  gate is not fixed after the numbers) and B2/B3 are not reopened unilaterally: the human picks
+  between a round 4 with a granularity-agnostic criterion, keeping B2/B3 cancelled, or shipping
+  the round-2 text as the stable-label option. Full numbers: `tmp/bench/types-b1-round3-report.md`.
+- **L7** (2026-10-30, the user): *"sigue mal entonces continua buscando fallos pon agentes en
+  paralelo si es necesario / que revisen el codigo"* — three read-only reviewers, one per layer.
+  **Cleared first:** args→store mismatch 0 across three runs; the engine's upsert preserves a
+  type when a re-save omits it. **Found:** the extension reports every upsert as "Saved" (the CLI
+  JSON never emits `revision`, so the "Updated" branch is dead) and never names the landed type;
+  the MCP `memory_update` hardcodes `memory_type: None` without `deny_unknown_fields` (silent
+  no-op — opencode cannot reclassify); the TUI always sends `Some("fact")` (demotes on a
+  topic-key upsert); `search --explain` drops `--type`; `import` writes unvalidated types; the
+  `type_shape` doctor check cannot tell a declared `fact` from a defaulted one. In my own harness:
+  13 defects, of which **three manufactured round 3's gate table** (24 % of saves unmapped by
+  regex-argmax, 41 % discarded by last-wins, overlapping patterns stealing cells) and one printed
+  a hardcoded round-2 verdict over a round-3 gate. **Corrected measurement** (save-level, same
+  transcripts, no model calls): diversity **10/10**, title stability **3/3 at 100 %**, **143
+  landed saves, 0 untyped** (19 refused), median **264 B** — the only gate that genuinely fails is
+  the 256 B bar, by 8 bytes. Full table: `tmp/bench/types-b1-defect-hunt.md`.
