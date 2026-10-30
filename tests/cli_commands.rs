@@ -308,6 +308,102 @@ fn save_show_round_trip() {
     assert_eq!(json["revision"], 1);
 }
 
+// --- the envelope of a save ---
+//
+// The save answer names the record it landed on, not the request it was
+// given: `revision` tells a create from an upsert, and `memory_type` is the
+// type the engine resolved — which may differ from the one the call named,
+// and is the only place an agent can read what it stored.
+
+#[test]
+fn a_save_answers_with_the_revision_and_the_type_of_the_record() {
+    let p = Profile::new();
+    // No type is requested: the engine resolves the one the record ends up
+    // with, so a save that merely echoed the request could not answer `fact`.
+    let out = p
+        .run_silent(&["save", "PR #1 merged in main 5635d44"])
+        .unwrap_status("save with no type");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["revision"], 1,
+        "a new record answers with its first revision: {json}"
+    );
+    assert_eq!(
+        json["memory_type"], "fact",
+        "the type the engine resolved, though the save named none: {json}"
+    );
+    // The keys the answer already carried are still there, with the same
+    // shapes: the two new ones are additive.
+    assert!(json["uuid"].is_string(), "the uuid stays: {json}");
+    assert!(
+        json["row_id"].as_i64().is_some(),
+        "the row id stays: {json}"
+    );
+    assert!(json["title"].is_string(), "the title stays: {json}");
+    assert!(json["keywords"].is_array(), "the words stay: {json}");
+    assert!(json["topic_key"].is_string(), "the topic key stays: {json}");
+}
+
+#[test]
+fn an_upsert_answers_with_the_bumped_revision_and_the_type_it_keeps() {
+    let p = Profile::new();
+    let first = stdout_json(
+        &p.run_silent(&[
+            "save",
+            "--type",
+            "decision",
+            "--title",
+            "el deploy",
+            "el deploy va a staging-eu",
+        ])
+        .unwrap_status("save a decision"),
+    );
+    let uuid = first["uuid"].as_str().expect("uuid").to_string();
+    assert_eq!(
+        first["revision"], 1,
+        "the create answers with revision 1: {first}"
+    );
+    assert_eq!(
+        first["memory_type"], "decision",
+        "and with the type the caller named: {first}"
+    );
+
+    // The same title lands on the same record: the answer says so with the
+    // bumped revision, and a save that names no type keeps the record's own
+    // instead of demoting it.
+    let again = stdout_json(
+        &p.run_silent(&["save", "--title", "el deploy", "el deploy va a staging-us"])
+            .unwrap_status("re-save on the same title"),
+    );
+    assert_eq!(
+        again["uuid"], uuid,
+        "the same title lands on the same record: {again}"
+    );
+    assert_eq!(
+        again["revision"], 2,
+        "an upsert answers with the bumped revision: {again}"
+    );
+    assert_eq!(
+        again["memory_type"], "decision",
+        "a save that names no type answers with the one the record keeps: {again}"
+    );
+
+    // Once more, still without a type: the guarantee holds at every revision,
+    // and the answer never falls back to the request.
+    let third = stdout_json(
+        &p.run_silent(&["save", "--title", "el deploy", "el deploy va a staging-ap"])
+            .unwrap_status("a third save on the same title"),
+    );
+    assert_eq!(
+        third["revision"], 3,
+        "the second upsert answers with revision 3: {third}"
+    );
+    assert_eq!(
+        third["memory_type"], "decision",
+        "and still with the type the record holds: {third}"
+    );
+}
+
 // --- the type of a memory (the closed set, #55) ---
 
 #[test]

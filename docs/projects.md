@@ -179,9 +179,17 @@ Bound git:github.com-Xeworg-mnexis to namespace mnexis in /home/xeworg/.local/sh
 $ mnexis config allow-namespace mnexis
 Allowed namespace mnexis for read and write in /home/xeworg/.local/share/mnexis/mnexis.toml
 
-$ mnexis save --namespace mnexis "PR #1 merged in main 5635d44"
-{"row_id":1,"uuid":"191cc344-9560-46cb-b05b-fc1bbe48b8cb"}
+$ mnexis save --json --namespace mnexis "PR #1 merged in main 5635d44"
+{"keywords":[],"memory_type":"fact","revision":1,"row_id":1,"title":"","topic_key":"","uuid":"191cc344-9560-46cb-b05b-fc1bbe48b8cb"}
 
 $ mnexis project list
 git:github.com-Xeworg-mnexis -> mnexis (/home/xeworg/Proyectos/mnexis)
 ```
+
+The answer names the record the save landed on, not the request it was given.
+`revision` is `1` for a create and higher for an upsert: the same title lands
+on the same record, so a second save of the same fact answers with revision
+`2` and the uuid it updated instead of a second row. `memory_type` is the type
+the engine resolved for the record — which may differ from the one the call
+asked for, because a save that names no type keeps the type the record already
+has instead of demoting it to `fact`.
