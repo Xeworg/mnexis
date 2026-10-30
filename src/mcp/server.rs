@@ -573,7 +573,9 @@ impl McpServer {
             .transpose()?;
         let req = crate::application::UpdateRequest {
             uuid: args.uuid.clone(),
-            memory_type: None,
+            // None means "not specified": the service keeps the type the
+            // record already has (types B1 G1).
+            memory_type: args.memory_type,
             expected_revision: args.expected_revision,
             content: args.content,
             state,
@@ -592,6 +594,7 @@ impl McpServer {
         let json = serde_json::json!({
             "uuid": updated.uuid,
             "revision": updated.revision,
+            "memory_type": updated.memory_type,
             "state": updated.state.as_str(),
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
@@ -856,7 +859,7 @@ impl McpServer {
 
     #[tool(
         name = "memory_update",
-        description = "Update a memory's content/state/tags. Requires expected_revision for optimistic locking."
+        description = "Update a memory's content/type/state/tags. Requires expected_revision for optimistic locking. A memory_type you name replaces the record's kind; omit it and the record keeps the one it has."
     )]
     fn memory_update(&self, Parameters(args): Parameters<UpdateArgs>) -> Result<String, McpError> {
         self.do_update(args)
