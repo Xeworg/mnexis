@@ -22,7 +22,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::error::MnexisError;
-use crate::domain::memory_type::{DEFAULT_MEMORY_TYPE, MEMORY_TYPES, is_memory_type};
+use crate::domain::memory_type::{DEFAULT_MEMORY_TYPE, MEMORY_TYPES};
 use crate::storage::sqlite::{MEMORIES_FTS_COLUMNS, missing_fts_columns, rebuild_memories_fts};
 
 /// The binary's current schema version — the highest migration number in
@@ -572,18 +572,46 @@ fn check_integrity(conn: &Connection) -> Check {
 }
 
 /// f. FTS5 invariant: count(active AND deleted=0) == count(memories_fts).
+///
+/// A count that could not be read is not a count. The two reads are kept
+/// apart on purpose: comparing two failures (a sentinel standing in for
+/// each) would make every unreadable store compare equal to itself and
+/// pass the check, which is the one answer a doctor must never give about
+/// a store it could not read. So an unreadable side fails the check with
+/// `FTS_UNREADABLE`, and the evidence says which counts could be read.
 fn check_fts_invariant(conn: &Connection) -> Check {
-    let canonical: i64 = conn
-        .query_row(
-            "SELECT count(*) FROM memories WHERE state = 'active' AND deleted = 0",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(-1);
+    let canonical = conn.query_row(
+        "SELECT count(*) FROM memories WHERE state = 'active' AND deleted = 0",
+        [],
+        |r| r.get::<_, i64>(0),
+    );
 
-    let fts: i64 = conn
-        .query_row("SELECT count(*) FROM memories_fts", [], |r| r.get(0))
-        .unwrap_or(-1);
+    let fts = conn.query_row("SELECT count(*) FROM memories_fts", [], |r| {
+        r.get::<_, i64>(0)
+    });
+
+    let (canonical, fts) = match (canonical, fts) {
+        (Ok(canonical), Ok(fts)) => (canonical, fts),
+        (canonical, fts) => {
+            // Name the side that could not be read and the one that could:
+            // the operator needs to know whether the index or the records
+            // are out of reach.
+            let side = |name: &str, count: &rusqlite::Result<i64>| match count {
+                Ok(count) => format!("{name} ({count})"),
+                Err(error) => format!("{name} (unreadable: {error})"),
+            };
+            return Check::fail(
+                CheckId::FtsInvariant,
+                ReasonCode::FtsUnreadable,
+                format!(
+                    "the counts could not be read — {} vs {} — so the index cannot be shown \
+                     to be in sync (INDEX_UNAVAILABLE)",
+                    side("canonical active+non-deleted", &canonical),
+                    side("FTS5 rows", &fts),
+                ),
+            );
+        }
+    };
 
     if canonical == fts {
         Check::pass(
@@ -753,16 +781,24 @@ fn check_title_shape(conn: &Connection) -> Check {
 /// soft-deleted (the same liveness `title_shape` reads); their content
 /// bytes are measured as bytes, not characters, so a text in any script is
 /// priced as the store stores it.
+///
+/// The counts come from one aggregate row and the names from a bounded
+/// read: the evidence counts the whole bucket and names at most
+/// [`NAMED_TYPE_ROWS`] records plus `(+N more)` — the same cap
+/// `title_shape` uses. Counting and naming are two different reads because
+/// they answer two different questions: how much of the store the type axis
+/// fails to describe (every live record, aggregated by the store) and what
+/// an operator would work through first (a worklist of five). A store whose
+/// writes never declare a type puts every record in the `fact` bucket, so
+/// naming them all would carry the store's own size inside one JSON field.
 fn check_type_shape(conn: &Connection) -> Check {
-    // One read of the live store: every row either bucket can name, and the
-    // denominator of the share. `title` and `memory_type` are NOT NULL with
-    // a default, so a row that cannot be read here is a store problem (the
-    // check fails) — never a row silently dropped from the count.
-    let mut statement = match conn.prepare(
-        "SELECT uuid, title, memory_type, length(CAST(content AS BLOB)) FROM memories \
-         WHERE deleted = 0 ORDER BY created_at, uuid",
-    ) {
-        Ok(statement) => statement,
+    // One aggregate row: the counts, the byte share's denominator, and the
+    // bytes the union of both buckets carries. `title` and `memory_type`
+    // are NOT NULL with a default, so a row the aggregate cannot read is a
+    // store problem (the check fails) — never a row silently dropped from
+    // the count.
+    let aggregate = match type_shape_aggregate(conn) {
+        Ok(aggregate) => aggregate,
         Err(error) => {
             return Check::fail(
                 CheckId::TypeShape,
@@ -771,41 +807,10 @@ fn check_type_shape(conn: &Connection) -> Check {
             );
         }
     };
-    let mut rows: Vec<LiveTypeRow> = Vec::new();
-    match statement.query_map([], |row| {
-        Ok(LiveTypeRow {
-            uuid: row.get(0)?,
-            title: row.get(1)?,
-            memory_type: row.get(2)?,
-            bytes: row.get(3)?,
-        })
-    }) {
-        Ok(mapped) => {
-            for row in mapped {
-                match row {
-                    Ok(row) => rows.push(row),
-                    Err(error) => {
-                        return Check::fail(
-                            CheckId::TypeShape,
-                            ReasonCode::TypesUnreadable,
-                            format!("cannot read the types: {error}"),
-                        );
-                    }
-                }
-            }
-        }
-        Err(error) => {
-            return Check::fail(
-                CheckId::TypeShape,
-                ReasonCode::TypesUnreadable,
-                format!("cannot read the types: {error}"),
-            );
-        }
-    }
 
-    let total = rows.len() as i64;
-    let total_bytes: i64 = rows.iter().map(|row| row.bytes).sum();
-    if rows.is_empty() {
+    let total = aggregate.live;
+    let total_bytes = aggregate.live_bytes;
+    if total == 0 {
         // An empty store passes because it holds nothing, and the evidence
         // says exactly that: a vacuous pass is not a clean bill of health.
         return Check::pass(
@@ -816,16 +821,7 @@ fn check_type_shape(conn: &Connection) -> Check {
         );
     }
 
-    let defaulted: Vec<&LiveTypeRow> = rows
-        .iter()
-        .filter(|row| row.memory_type == DEFAULT_MEMORY_TYPE)
-        .collect();
-    let unknown: Vec<&LiveTypeRow> = rows
-        .iter()
-        .filter(|row| !is_memory_type(&row.memory_type))
-        .collect();
-
-    if defaulted.is_empty() && unknown.is_empty() {
+    if aggregate.defaulted == 0 && aggregate.unknown == 0 {
         return Check::pass(
             CheckId::TypeShape,
             format!(
@@ -838,11 +834,7 @@ fn check_type_shape(conn: &Connection) -> Check {
         );
     }
 
-    let unselectable_bytes: i64 = defaulted
-        .iter()
-        .chain(unknown.iter())
-        .map(|row| row.bytes)
-        .sum();
+    let unselectable_bytes = aggregate.unselectable_bytes;
     // Rounded to the nearest whole percent, in integers: no float ever
     // reaches the evidence string.
     let share = if total_bytes == 0 {
@@ -857,26 +849,49 @@ fn check_type_shape(conn: &Connection) -> Check {
     let mut evidence = format!(
         "{} of {total} live {} carry the default label or an unknown type, \
          {unselectable_bytes} of {total_bytes} content bytes ({share}%)",
-        defaulted.len() + unknown.len(),
+        aggregate.defaulted + aggregate.unknown,
         plural(total, "record", "records")
     );
-    if !defaulted.is_empty() {
+    // The naming pass runs only for a populated bucket, and it reads at most
+    // five rows: a bucket the aggregate counted as empty has nothing to
+    // name, and a bucket of thirty thousand rows names the same five.
+    if aggregate.defaulted > 0 {
+        let named = match named_type_rows(conn, TypeBucket::Defaulted) {
+            Ok(named) => named,
+            Err(error) => {
+                return Check::fail(
+                    CheckId::TypeShape,
+                    ReasonCode::TypesUnreadable,
+                    format!("cannot read the types: {error}"),
+                );
+            }
+        };
         evidence.push_str(&format!(
             "; the default label '{DEFAULT_MEMORY_TYPE}' (declared or defaulted — the store \
              cannot tell them apart): {} {}: {}",
-            defaulted.len(),
-            plural(defaulted.len() as i64, "record", "records"),
-            named_type_rows(&defaulted, false)
+            aggregate.defaulted,
+            plural(aggregate.defaulted, "record", "records"),
+            named_type_evidence(&named, aggregate.defaulted, false)
         ));
     }
-    if !unknown.is_empty() {
+    if aggregate.unknown > 0 {
+        let named = match named_type_rows(conn, TypeBucket::Unknown) {
+            Ok(named) => named,
+            Err(error) => {
+                return Check::fail(
+                    CheckId::TypeShape,
+                    ReasonCode::TypesUnreadable,
+                    format!("cannot read the types: {error}"),
+                );
+            }
+        };
         evidence.push_str(&format!(
             "; an unknown type, outside the {} valid types ({}): {} {}: {}",
             MEMORY_TYPES.len(),
             MEMORY_TYPES.join(", "),
-            unknown.len(),
-            plural(unknown.len() as i64, "record", "records"),
-            named_type_rows(&unknown, true)
+            aggregate.unknown,
+            plural(aggregate.unknown, "record", "records"),
+            named_type_evidence(&named, aggregate.unknown, true)
         ));
     }
     // One code, and one code cannot say two things. When both buckets are
@@ -885,7 +900,7 @@ fn check_type_shape(conn: &Connection) -> Check {
     // the value, while the default label is ambiguous by design — and the
     // evidence still counts and names both, so nothing hides behind the
     // code. A bucket on its own keeps its own code.
-    let reason = if unknown.is_empty() {
+    let reason = if aggregate.unknown == 0 {
         ReasonCode::TypesUnclassified
     } else {
         ReasonCode::TypesUnknown
@@ -893,21 +908,135 @@ fn check_type_shape(conn: &Connection) -> Check {
     Check::warn(CheckId::TypeShape, reason, evidence)
 }
 
-/// One live record as `type_shape` reads it: the identity it is named by,
-/// the value the column holds, and the content bytes it costs.
-struct LiveTypeRow {
+/// How many records one bucket's worklist names before it counts the rest:
+/// the cap `title_shape` already applies to its own worklist.
+const NAMED_TYPE_ROWS: usize = 5;
+
+/// The numbers `type_shape` counts, as one row of the store's own aggregate.
+struct TypeShapeAggregate {
+    /// Every live record: `deleted = 0`, whatever its state.
+    live: i64,
+    /// Their content bytes: the denominator of the byte share.
+    live_bytes: i64,
+    /// The live records carrying the default label.
+    defaulted: i64,
+    /// The live records carrying a value outside the closed set.
+    unknown: i64,
+    /// The content bytes of the union of the two buckets: the share's
+    /// numerator. The buckets are disjoint — the default label is one of the
+    /// valid types — so this is their sum, computed once by the store.
+    unselectable_bytes: i64,
+}
+
+/// The aggregate `type_shape` counts from: one row, no allocations, and no
+/// dependence on how many records are live.
+fn type_shape_aggregate(conn: &Connection) -> rusqlite::Result<TypeShapeAggregate> {
+    let closed_set = memory_type_placeholders();
+    let sql = format!(
+        "SELECT count(*), \
+                coalesce(sum(length(CAST(content AS BLOB))), 0), \
+                coalesce(sum(memory_type = '{DEFAULT_MEMORY_TYPE}'), 0), \
+                coalesce(sum(memory_type NOT IN ({closed_set})), 0), \
+                coalesce(sum(CASE WHEN memory_type = '{DEFAULT_MEMORY_TYPE}' \
+                                   OR memory_type NOT IN ({closed_set}) \
+                              THEN length(CAST(content AS BLOB)) ELSE 0 END), 0) \
+         FROM memories WHERE deleted = 0"
+    );
+    conn.query_row(&sql, rusqlite::params_from_iter(MEMORY_TYPES), |row| {
+        Ok(TypeShapeAggregate {
+            live: row.get(0)?,
+            live_bytes: row.get(1)?,
+            defaulted: row.get(2)?,
+            unknown: row.get(3)?,
+            unselectable_bytes: row.get(4)?,
+        })
+    })
+}
+
+/// The closed set as the numbered parameters the aggregate binds, once per
+/// `NOT IN (...)` it contains. Built from [`MEMORY_TYPES`], so a type added
+/// to the closed set joins every query that compares against it.
+fn memory_type_placeholders() -> String {
+    (1..=MEMORY_TYPES.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// One bucket of the type axis: the default label, or a value outside the
+/// closed set.
+#[derive(Clone, Copy)]
+enum TypeBucket {
+    Defaulted,
+    Unknown,
+}
+
+impl TypeBucket {
+    /// The bounded read of one bucket: at most [`NAMED_TYPE_ROWS`] records,
+    /// in the leaf order `title_shape` also uses, so the worklist is the
+    /// same on every run against the same store.
+    fn sql(self) -> String {
+        let predicate = match self {
+            TypeBucket::Defaulted => format!("memory_type = '{DEFAULT_MEMORY_TYPE}'"),
+            TypeBucket::Unknown => {
+                format!("memory_type NOT IN ({})", memory_type_placeholders())
+            }
+        };
+        format!(
+            "SELECT uuid, title, memory_type, length(CAST(content AS BLOB)) FROM memories \
+             WHERE deleted = 0 AND {predicate} ORDER BY created_at, uuid LIMIT {NAMED_TYPE_ROWS}"
+        )
+    }
+}
+
+/// One record a bucket names: the identity it is named by, the value the
+/// column holds, and the content bytes it costs.
+struct NamedTypeRow {
     uuid: String,
     title: String,
     memory_type: String,
     bytes: i64,
 }
 
-/// The worklist one bucket of the evidence carries: each row's uuid, its
-/// title (or the absence of one, said out loud), its content bytes and, for
-/// an unknown type, the value the store holds — the one thing an operator
-/// needs to know to put it right.
-fn named_type_rows(rows: &[&LiveTypeRow], with_type: bool) -> String {
-    rows.iter()
+/// The bounded worklist of one bucket: what the evidence names, never what
+/// it counts.
+fn named_type_rows(conn: &Connection, bucket: TypeBucket) -> rusqlite::Result<Vec<NamedTypeRow>> {
+    // The default bucket compares one literal; the unknown bucket compares
+    // the whole closed set.
+    let closed_set: Vec<&dyn rusqlite::ToSql> = MEMORY_TYPES
+        .iter()
+        .map(|value| value as &dyn rusqlite::ToSql)
+        .collect();
+    let params: &[&dyn rusqlite::ToSql] = match bucket {
+        TypeBucket::Defaulted => &[],
+        TypeBucket::Unknown => &closed_set,
+    };
+
+    let mut statement = conn.prepare(&bucket.sql())?;
+    let mut rows = statement.query(params)?;
+    let mut named = Vec::with_capacity(NAMED_TYPE_ROWS);
+    while let Some(row) = rows.next()? {
+        named.push(NamedTypeRow {
+            uuid: row.get(0)?,
+            title: row.get(1)?,
+            memory_type: row.get(2)?,
+            bytes: row.get(3)?,
+        });
+    }
+    Ok(named)
+}
+
+/// The worklist one bucket of the evidence carries: each named row's uuid,
+/// its title (or the absence of one, said out loud), its content bytes and,
+/// for an unknown type, the value the store holds — the one thing an
+/// operator needs to know to put it right.
+///
+/// `total` is the aggregate's count of the bucket, never the length of the
+/// sample, so the `(+N more)` the marker reports is the work the operator
+/// has not been shown. A bucket at or under the cap carries no marker.
+fn named_type_evidence(rows: &[NamedTypeRow], total: i64, with_type: bool) -> String {
+    let mut evidence = rows
+        .iter()
         .map(|row| {
             let title = row.title.trim();
             let name = if title.is_empty() {
@@ -925,7 +1054,12 @@ fn named_type_rows(rows: &[&LiveTypeRow], with_type: bool) -> String {
             }
         })
         .collect::<Vec<_>>()
-        .join("; ")
+        .join("; ");
+    let more = total.saturating_sub(rows.len() as i64);
+    if more > 0 {
+        evidence.push_str(&format!(" (+{more} more)"));
+    }
+    evidence
 }
 
 /// The word that agrees with a count: `singular` or `plural`.
