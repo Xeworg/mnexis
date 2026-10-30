@@ -1277,3 +1277,71 @@ decides exactly in Rust.
 **The debt that remains** is the door's re-measurement against the released
 binary, which needs the bench environment (docker image plus the model
 provider).
+
+### 23. The memory types, the session axis and the prompt type — the analysis, and the four cheap fixes it puts first
+
+The human's question: what structure do the memory types have, are we keeping specific
+questions per type, is the context leak "bigger memories", do we need a `prompt` type, and
+does supersede carry the whole context or only the last one. Ten independent agents (one
+per type, plus the prompt type, the supersede semantics and the session/type organisation)
+read the code and measured against the shipped binary on scratch stores. The report:
+`odd/reports/memory-types-analysis.md`.
+
+**The premise is right and the order is wrong.** The store's problem is not that the
+records are too big. It is that **the type axis selects nothing** (1 197 of 1 198
+`mnexis_save` calls in the corpus declare no type; the same fact is `decision` in 21 of
+149 writes and `fact` in 108; hand-classifying the 37 live `fact` records leaves **zero**
+as `fact`), the **session axis is dead** (156 sessions, **100 % in `default`** while the
+memories live in `mnexis`/`nodexar`; **0 of 156** sessions have a non-empty window;
+`recall --previous` answers NOT_FOUND from the workspace; the door's `session_state.session`
+is null everywhere), and **supersede carries nothing** — not the whole context, not the
+last one: it copies no field, and the trail is empty on the supersede path and stores the
+**new** content on the update path, so revision 1 exists nowhere.
+
+**Three leaks, and only one of them is "memories too big".** In the trigger phase's door
+answer, only **23 %** of the bytes are content — **77 % is the envelope**. The
+session-state block costs **2 068 tokens against the items' 1 101** (2.8×) and **drops 3
+of 28 live state records in silence** at its 25-candidate cap. The records themselves:
+median 784-1 934 B, max 5 981, against a global cap of 16 384 B with no per-type bound.
+
+**The four fixes the evidence puts first** — all four are measurable on a scratch store
+with the shipped binary, **no model, no migration, no bench**:
+
+- **A1 — the session goes to the workspace's namespace.** `start_session` resolves
+  `target_namespace(None)` (`service.rs:993-999`) while `save` resolves the workspace's.
+  That one line is why every session in the store recalls "none". Criterion: `recall
+  --previous` from a bound workspace returns **its** finished session, the window holds
+  the memories saved in it, and the door's block carries a non-null session. **Today 0/3.**
+- **A2 — the user's message is captured without the model.** `user_prompts` has the
+  schema, the FTS index, the CLI, the MCP tool and a pi tool, and the answer is literally
+  *"No prompts stored yet"*: the extension has no user-message hook and the shipped skill
+  never says the word "prompt". The human's verbatim decisions survive only paraphrased.
+  Criterion: 10 fixture prompts → 10 rows byte-identical, each with its session's id,
+  0 model calls.
+- **A3 — the supersede writes the OLD content into the trail**, and the FK stops pinning
+  the rows it describes (`memory_history.memory_uuid REFERENCES memories(uuid)` with no
+  `ON DELETE CASCADE`: a soft-deleted record with history **cannot be purged** —
+  `BUSY`, exit 10, measured). Criterion: `show <old> --revision 1` returns the old
+  content byte-identical, `history <old>` ≥ 1 row, `show <new>` byte-identical, the store
+  grows ≤ old content + 150 B, **the door's answer byte-identical**, and `purge` succeeds.
+- **A4 — a warn-level doctor check `type_shape`**, because the doctor is the only surface
+  that can answer "how much of the store is unclassified?".
+
+**After them, and only if they hold:** the measurement that decides whether the whole
+"structure the types" programme is admissible at all — *does the agent write the type?*
+Same fact, same type in ≥ 8/10 runs (today ≤ 5/10), the other facts not typed the same
+way, the median typed record ≤ 256 B. **If the type is not written, no per-type rule is
+admissible.** Only then: the per-type cap (512 B — a **store-wide** change: 76 of 98 live
+records already exceed it), and the door organised by type.
+
+**What the evidence does not settle:** that a structured record serves the agent (nothing
+in the corpus shows an agent asking *why* a decision was made; the steering phase already
+answers "¿por dónde quedamos?" 10/10 with a 70 B reason-free decision); that a bigger
+`procedure` is better (the store holds **zero** procedures); and **what Engram's session
+model actually is** — this repository never measured it, only Engram's retrieval cost and
+its one-consolidated-observation store shape. The human's premise about "newer = more
+relevant" is **false in this engine**: the search is bm25 only, and the door's tie-break
+is `created_at` ASC — the oldest first.
+
+**Evidence:** `odd/reports/memory-types-analysis.md` (the ten analyses, condensed, with
+the file:line and the measured numbers behind every claim).
