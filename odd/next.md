@@ -1329,11 +1329,17 @@ with the shipped binary, **no model, no migration, no bench**:
 
 **B1 — measured (2026-10-30), and it FAILS.** The arm: the merged binary with ONE
 intervention — the `mnexis_save` `type` parameter description taught with the engine's
-own definitions (`memory_type.rs:16-27`), +394 B on every call's tool schema. The agent
-**writes the type 64/64** (the corpus baseline: 1 197 of 1 198 calls declare none — the
-shipped description literally said "the engine decides"), **G2 holds 9/10** (baseline
-1/10: the agent typed by run-mood — six runs all-`fact`, three all-`knowledge`, one
-mixed), **G3 holds** (median 148 B) — but **G1 fails: `deploy` keeps `decision` in only
+own definitions (`memory_type.rs:16-27`), +382 B on every call's tool schema. The agent
+**writes the type: 64/64 calls carried the argument, 57/57 successful writes landed typed
+records** (7 calls never reached the engine: 2 revision conflicts in run 1, 5 schema
+rejections in run 7). The contrast is not "writes vs never writes": the merged baseline
+wrote explicit types too, but by run-mood — seven runs all-`fact`, two all-`knowledge`,
+one mixed — and those types are agent-written (its surviving write-phase transcript shows
+7 of 7 saves typed, all `knowledge`; the engine never infers a type). The corpus-wide
+"1 197 of 1 198 calls declare none" belongs to the older corpus in
+`odd/reports/memory-types-analysis.md`, not to this pair; with the taught description
+typing is universal and fact-level. **G2 holds 9/10** (baseline 1/10), **G3 holds**
+(median 148 B) — but **G1 fails: `deploy` keeps `decision` in only
 7/10 (the fact the engine's own doc example coaches!), `contact` 6/10** (8/10 after
 excluding the fixture's `config/contacts.example` pattern collisions — the verdict is
 FAIL under both readings; port/dsn/retry are `knowledge` 10/10). **Per the
