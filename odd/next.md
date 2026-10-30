@@ -1327,12 +1327,22 @@ with the shipped binary, **no model, no migration, no bench**:
 - **A4 — a warn-level doctor check `type_shape`**, because the doctor is the only surface
   that can answer "how much of the store is unclassified?".
 
-**After them, and only if they hold:** the measurement that decides whether the whole
-"structure the types" programme is admissible at all — *does the agent write the type?*
-Same fact, same type in ≥ 8/10 runs (today ≤ 5/10), the other facts not typed the same
-way, the median typed record ≤ 256 B. **If the type is not written, no per-type rule is
-admissible.** Only then: the per-type cap (512 B — a **store-wide** change: 76 of 98 live
-records already exceed it), and the door organised by type.
+**B1 — measured (2026-10-30), and it FAILS.** The arm: the merged binary with ONE
+intervention — the `mnexis_save` `type` parameter description taught with the engine's
+own definitions (`memory_type.rs:16-27`), +394 B on every call's tool schema. The agent
+**writes the type 64/64** (the corpus baseline: 1 197 of 1 198 calls declare none — the
+shipped description literally said "the engine decides"), **G2 holds 9/10** (baseline
+1/10: the agent typed by run-mood — six runs all-`fact`, three all-`knowledge`, one
+mixed), **G3 holds** (median 148 B) — but **G1 fails: `deploy` keeps `decision` in only
+7/10 (the fact the engine's own doc example coaches!), `contact` 6/10** (8/10 after
+excluding the fixture's `config/contacts.example` pattern collisions — the verdict is
+FAIL under both readings; port/dsn/retry are `knowledge` 10/10). **Per the
+pre-registration, no per-type rule is admissible: B2 (the 512 B per-type cap) and B3
+(the door organised by type) do not run.** If the human wants the axis anyway, the
+honest paths: fewer types (collapse to what the model agrees on), an engine-proposed
+default the agent confirms, or the axis as a label that ranks nothing. The criterion
+before the numbers: `tmp/bench/types-b1-measurement.md`; the report:
+`tmp/bench/types-b1-report.md` (both gitignored, quoted in the commit).
 
 **What the evidence does not settle:** that a structured record serves the agent (nothing
 in the corpus shows an agent asking *why* a decision was made; the steering phase already
