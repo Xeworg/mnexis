@@ -247,3 +247,29 @@ recall's unbudgeted 100 × 16 KB is a pricing hole that exists today.
   tokens and 2 calls against mnexis's 4 111 and 8) and the fact that Engram's store holds
   one consolidated observation where mnexis holds six records read one by one. The
   human's premise about Engram's sessions is, in this repository, **unverified**.
+
+---
+
+## 8. The order (the parent's call, from the evidence above)
+
+**A1 → A2 → A3 → A4.** The order is not by size but by **dependency and blast radius**:
+
+1. **A1 first** — it is the cheapest (≈10 lines, no migration, no bytes) and it revives a
+   whole dead axis. It is also a **precondition for A2**: if the session keeps living in
+   `default`, the captured prompt would carry a foreign `session_id` and a foreign
+   namespace — the prompt would be captured and still unreachable.
+2. **A2 second** — it depends on A1 (same namespace, same session id) and it is the
+   capture of the human's verbatim words, which is the store's emptiest promise.
+3. **A3 third** — it changes what the trail *means*, which moves `mnexis history`,
+   `mnexis show --revision`, the TUI panel and the MCP `memory_history`: four pinned
+   consumers, a differential and the most review of the four. It also fixes two real
+   defects (the lost revision 1 and the `purge` that fails with `BUSY`).
+4. **A4 last** — it is a read-only instrument for a criterion that does not exist yet. It
+   belongs with the Phase-1 feature that writes that criterion, not before it.
+
+**A1's criterion (written before the numbers, deterministic, no model):** from a bound
+workspace, `mnexis recall --previous` returns **its** finished session, its window is
+**non-empty** and holds the memories saved in it, and the door's `session_state.session`
+is non-null for that namespace; a session started from an unbound cwd still lands in the
+profile's default namespace; every other surface answers byte-identically against the base
+commit `e5f429c`. **The measurement today: 0 of 3.**
