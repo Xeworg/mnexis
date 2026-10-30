@@ -531,15 +531,33 @@ function hasKeywordField(item) {
 }
 
 /**
+ * True when the two records can be the same kind of fact, judged on the type
+ * each one declares.
+ *
+ * The type is part of what a fact IS: a `knowledge` record and a `decision`
+ * record that quote the same value and share a word are two facts the team
+ * keeps separately, and superseding one onto the other loses the kind of one
+ * of them (A4). A type the answer does not carry cannot be compared, and this
+ * rule never refuses on a field it cannot read: the record is read whole
+ * before a pair is formed.
+ */
+function sameKnownType(left, right) {
+	const a = typeof left?.memory_type === "string" ? left.memory_type.trim() : "";
+	const b = typeof right?.memory_type === "string" ? right.memory_type.trim() : "";
+	return a === "" || b === "" || a === b;
+}
+
+/**
  * True when `item` could be the live twin of the record a save just wrote,
  * judged on the identity a ranked hit already answers (S2.1, S2.3).
  *
  * The cheap half of the rule, deliberately: a search hit carries the uuid,
- * the state, the namespace and the words, so everything except the numeric
- * signature and the summary test is decided before a record is read whole. A
- * superseded row is history, not a second live record; a record in another
- * namespace is another project's; no shared keyword is another fact that
- * happens to carry the same number (L2).
+ * the state, the namespace, the words and the type, so everything except the
+ * numeric signature and the summary test is decided before a record is read
+ * whole. A superseded row is history, not a second live record; a record in
+ * another namespace is another project's; a record of another type is another
+ * kind of fact (A4); no shared keyword is another fact that happens to carry
+ * the same number (L2).
  */
 export function sharesIdentity(saved, item, namespace) {
 	if (!saved || typeof saved !== "object" || !item || typeof item !== "object") {
@@ -558,6 +576,11 @@ export function sharesIdentity(saved, item, namespace) {
 		return false;
 	}
 	if (item.namespace !== namespace) {
+		return false;
+	}
+	// The kind of thing the record is: another type is another fact, never a
+	// second live record of this one (A4).
+	if (!sameKnownType(saved, item)) {
 		return false;
 	}
 	return !hasKeywordField(item) || sharesKeyword(saved.keywords, item.keywords);
@@ -650,6 +673,16 @@ export function twinRepairLine(pair) {
 	);
 }
 
+/**
+ * The article the type of a fact reads with: `an episode`, `a fact`.
+ *
+ * Only the first sound matters for the closed set of types the engine accepts
+ * (`src/domain/memory_type.rs`), and the answer is read by a human.
+ */
+function typeArticle(type) {
+	return /^[aeiou]/i.test(String(type ?? "")) ? "an" : "a";
+}
+
 export default function mnexisMemoryExtension(pi) {
 	// One client and one resolution cache per extension instance (per session).
 	const client = createClient({
@@ -727,11 +760,8 @@ export default function mnexisMemoryExtension(pi) {
 		return resolution;
 	}
 
-	/** Read the profile allowlist once per session, initializing it if needed. */
-	async function getWriteNamespaces(cwd) {
-		if (writeNamespaces) {
-			return writeNamespaces;
-		}
+	/** Read the write allowlist from the engine, initializing the profile if needed. */
+	async function readProfileAllowlist(cwd) {
 		let config = await client.configShow(cwd);
 		if (config.code !== 0) {
 			throw new Error(describeFailure({ code: config.code, stderr: config.stderr }));
@@ -748,7 +778,22 @@ export default function mnexisMemoryExtension(pi) {
 				throw new Error(describeFailure({ code: config.code, stderr: config.stderr }));
 			}
 		}
-		writeNamespaces = readWriteNamespaces(config.data);
+		return readWriteNamespaces(config.data);
+	}
+
+	/**
+	 * The session's write allowlist, read once and re-read on demand.
+	 *
+	 * The cache is a cost saver, never a verdict about the human's profile:
+	 * `fresh` reads the profile again, because a grant the human made in
+	 * another terminal is what the retry promised by the refusal must find
+	 * (A1).
+	 */
+	async function getWriteNamespaces(cwd, { fresh = false } = {}) {
+		if (!fresh && writeNamespaces) {
+			return writeNamespaces;
+		}
+		writeNamespaces = await readProfileAllowlist(cwd);
 		return writeNamespaces;
 	}
 
@@ -759,7 +804,14 @@ export default function mnexisMemoryExtension(pi) {
 	 * authorize anything and report the exact command a human must run.
 	 */
 	async function ensureWritable(namespace, ctx) {
-		const allowed = await getWriteNamespaces(ctx.cwd);
+		let allowed = await getWriteNamespaces(ctx.cwd);
+		if (!allowed.includes(namespace)) {
+			// The refusal below promises that running the command makes the
+			// retry work, so a cached allowlist is never the last word: the
+			// profile is read again before the write is refused (A1). An
+			// authorized write still pays for one read per session.
+			allowed = await getWriteNamespaces(ctx.cwd, { fresh: true });
+		}
 		const decision = decideAuthorization({
 			namespace,
 			writeNamespaces: allowed,
@@ -1009,6 +1061,32 @@ export default function mnexisMemoryExtension(pi) {
 	}
 
 	/**
+	 * Journal a compaction summary the store did not take.
+	 *
+	 * A compaction that cannot be stored never stops the session, and the
+	 * summary cannot be replayed either: the context it described is gone. A
+	 * refusal that only lived in a swallowed exit code would be invisible, so
+	 * the code and the engine's own message reach the host's entry journal —
+	 * and never the summary's text, which stays the human's conversation.
+	 */
+	function journalCompactionSkip(ctx, data) {
+		if (typeof pi.appendEntry !== "function") {
+			return;
+		}
+		try {
+			pi.appendEntry("mnexis-compaction", {
+				ts: new Date().toISOString(),
+				kind: "compaction-capture",
+				action: "skipped",
+				session: sessionIdOf(ctx),
+				...data,
+			});
+		} catch {
+			// The journal is a report, never a precondition.
+		}
+	}
+
+	/**
 	 * The records that carry a value, as the engine answers them (S2, B1).
 	 *
 	 * The engine has a filter by value (`mnexis list --value <N>`): it
@@ -1172,6 +1250,15 @@ export default function mnexisMemoryExtension(pi) {
 			keywords: Array.isArray(answer?.keywords)
 				? answer.keywords
 				: keywordList(params?.keywords),
+			// The type the record ended up with: the engine names it, and a save
+			// that names none keeps the one the record already has. With neither,
+			// the type is unknown here and the twin rule does not judge it (A4).
+			memory_type:
+				typeof answer?.memory_type === "string" && answer.memory_type.trim() !== ""
+					? answer.memory_type
+					: typeof params?.type === "string" && params.type.trim() !== ""
+						? params.type
+						: "",
 		};
 		try {
 			const allowed = await getWriteNamespaces(ctx.cwd);
@@ -1226,6 +1313,7 @@ export default function mnexisMemoryExtension(pi) {
 							code: superseded.code,
 							stderr: superseded.stderr,
 							namespace,
+							command: "supersede",
 						}),
 					};
 					appendRecovery(ctx, {
@@ -1372,11 +1460,20 @@ export default function mnexisMemoryExtension(pi) {
 	// what the session was doing; storing it means the next session can
 	// recover it from the memory instead of from a context that no longer
 	// exists. Only where the human already allowed writes.
+	//
+	// The summary is an episode of this session, not a project fact, so it is
+	// stored as one. A store that refuses it (over the content cap, a dead
+	// topic key) takes the summary with it either way; what it must never do
+	// is take it silently, so a refusal reaches the entry journal (A5). A
+	// workspace with no binding, or no write permission for it, never asked
+	// the store to take anything: that is the auto-namespace boundary, not a
+	// refusal, and it stays as quiet as it always was.
 	pi.on("session_compact", async (event, ctx) => {
 		const summary = event?.compactionEntry?.summary;
 		if (typeof summary !== "string" || summary.trim() === "") {
 			return;
 		}
+		let namespace = null;
 		try {
 			const workspace = await resolveWorkspace(ctx.cwd);
 			// Only a bound workspace has a namespace that is a permission: a
@@ -1385,22 +1482,46 @@ export default function mnexisMemoryExtension(pi) {
 			if (!workspace.bound || !workspace.namespace) {
 				return;
 			}
+			namespace = workspace.namespace;
 			const allowed = await getWriteNamespaces(ctx.cwd);
-			if (!allowed.includes(workspace.namespace)) {
+			if (!allowed.includes(namespace)) {
 				return;
 			}
 			const id = sessionIdOf(ctx);
-			await client.save(
+			const result = await client.save(
 				{
-					namespace: workspace.namespace,
+					namespace,
 					content:
 						`Session ${id ?? "unknown"} was compacted. What was happening:\n\n${summary}`,
-					tags: ["compaction"],
+					// The type is the engine's to resolve and the caller's to name:
+					// a summary is what happened in this session, so it is an
+					// episode. The tag is the one comma string the engine reads.
+					type: "episode",
+					tags: "compaction",
 				},
 				ctx.cwd,
 			);
-		} catch {
-			// A compaction must not fail because the memory could not take it.
+			if (result.code !== 0) {
+				journalCompactionSkip(ctx, {
+					step: "save",
+					namespace,
+					exit_code: result.code,
+					error: describeFailure({
+						code: result.code,
+						stderr: result.stderr,
+						namespace,
+						command: "save",
+					}),
+				});
+			}
+		} catch (error) {
+			// A compaction must not fail because the memory could not take it,
+			// and it must not vanish quietly either.
+			journalCompactionSkip(ctx, {
+				step: "hook",
+				namespace,
+				error: error instanceof Error ? error.message : String(error),
+			});
 		}
 	});
 
@@ -1466,8 +1587,9 @@ export default function mnexisMemoryExtension(pi) {
 					type: "string",
 					description:
 						"Optional: the kind of thing this fact is, one of `knowledge`, `decision`, " +
-						"`preference`, `procedure`, `project_state`, `episode`, `fact`. Without it " +
-						"the engine decides.",
+						"`preference`, `procedure`, `project_state`, `episode`, `fact`. Omit it and a " +
+						"new record is stored as `fact`, while a re-save keeps the type the record " +
+						"already has.",
 				},
 				idempotency_key: { type: "string", description: "Makes retries safe." },
 			},
@@ -1494,7 +1616,12 @@ export default function mnexisMemoryExtension(pi) {
 			);
 			if (result.code !== 0) {
 				return fail(
-					describeFailure({ code: result.code, stderr: result.stderr, namespace: workspace.namespace }),
+					describeFailure({
+						code: result.code,
+						stderr: result.stderr,
+						namespace: workspace.namespace,
+						command: "save",
+					}),
 					{ namespace: workspace.namespace },
 				);
 			}
@@ -1516,7 +1643,7 @@ export default function mnexisMemoryExtension(pi) {
 					: typeof params.type === "string" && params.type !== ""
 						? params.type
 						: null;
-			const asType = type ? ` as a ${type}` : "";
+			const asType = type ? ` as ${typeArticle(type)} ${type}` : "";
 			const what =
 				typeof revision === "number" && revision > 1
 					? `Updated the memory in namespace '${workspace.namespace}' (revision ${revision}, topic key \`${topicKey}\`)${asType}.`
@@ -2229,7 +2356,12 @@ export default function mnexisMemoryExtension(pi) {
 			);
 			if (result.code !== 0) {
 				return fail(
-					describeFailure({ code: result.code, stderr: result.stderr, namespace: workspace.namespace }),
+					describeFailure({
+						code: result.code,
+						stderr: result.stderr,
+						namespace: workspace.namespace,
+						command: "supersede",
+					}),
 					{ namespace: workspace.namespace },
 				);
 			}
