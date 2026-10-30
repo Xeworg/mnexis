@@ -84,3 +84,18 @@ this project wrote it.
   gate is not fixed after the numbers) and B2/B3 are not reopened unilaterally: the human picks
   between a round 4 with a granularity-agnostic criterion, keeping B2/B3 cancelled, or shipping
   the round-2 text as the stable-label option. Full numbers: `tmp/bench/types-b1-round3-report.md`.
+- **L7** (2026-10-30, the user): *"sigue mal entonces continua buscando fallos pon agentes en
+  paralelo si es necesario / que revisen el codigo"* — three read-only reviewers, one per layer.
+  **Cleared first:** args→store mismatch 0 across three runs; the engine's upsert preserves a
+  type when a re-save omits it. **Found:** the extension reports every upsert as "Saved" (the CLI
+  JSON never emits `revision`, so the "Updated" branch is dead) and never names the landed type;
+  the MCP `memory_update` hardcodes `memory_type: None` without `deny_unknown_fields` (silent
+  no-op — opencode cannot reclassify); the TUI always sends `Some("fact")` (demotes on a
+  topic-key upsert); `search --explain` drops `--type`; `import` writes unvalidated types; the
+  `type_shape` doctor check cannot tell a declared `fact` from a defaulted one. In my own harness:
+  13 defects, of which **three manufactured round 3's gate table** (24 % of saves unmapped by
+  regex-argmax, 41 % discarded by last-wins, overlapping patterns stealing cells) and one printed
+  a hardcoded round-2 verdict over a round-3 gate. **Corrected measurement** (save-level, same
+  transcripts, no model calls): diversity **10/10**, title stability **3/3 at 100 %**, **143
+  landed saves, 0 untyped** (19 refused), median **264 B** — the only gate that genuinely fails is
+  the 256 B bar, by 8 bytes. Full table: `tmp/bench/types-b1-defect-hunt.md`.
