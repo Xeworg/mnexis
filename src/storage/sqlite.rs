@@ -339,6 +339,14 @@ pub const MEMORIES_FTS_COLUMNS: [&str; 4] = ["content", "title", "topic_key", "k
 /// The one definition of `memories_fts`: the table and the five triggers that
 /// keep it in step with `memories`.
 ///
+/// The five triggers partition the work: one writes the row when a record is
+/// created, one when a record **enters** the indexed state, one when it
+/// **leaves** it, one when the indexed text of an already-indexed record
+/// changes, and one when the record is deleted. No two of them answer the
+/// same statement, because FTS5 charges the index per write — an FTS5 row
+/// `UPDATE` is internally a delete plus an insert — and a second answer means
+/// the same text is tokenised twice.
+///
 /// Migration 006, [`rebuild_memories_fts`] and therefore
 /// `retrieval::reindex::reindex_all` and `doctor --repair` all build the index
 /// from this constant, so the migrated index and the rebuilt one cannot drift
@@ -365,10 +373,20 @@ BEGIN
     VALUES (new.id, new.content, new.title, new.topic_key, new.keywords);
 END;
 
+-- The row enters the index on a **transition** into the indexed state and
+-- only then: `old.state IS NOT 'active' OR old.deleted != 0` is exactly the
+-- condition that the row had no index row before the statement. Keeping an
+-- active row active is the content trigger's job below, and every writer
+-- sends `state` in its SET list (`storage::memory_repo`), so without this
+-- guard both triggers answered the same UPDATE and FTS5 tokenised the row
+-- twice: an FTS5 row UPDATE is internally a delete plus an insert, so the
+-- DELETE + INSERT here and the UPDATE there pay for the same text again
+-- (`tests/fts5_search.rs` holds the count at one).
 DROP TRIGGER IF EXISTS memories_after_update_into_active;
 CREATE TRIGGER memories_after_update_into_active
 AFTER UPDATE OF state, deleted ON memories
 WHEN new.state = 'active' AND new.deleted = 0
+ AND (old.state IS NOT 'active' OR old.deleted != 0)
 BEGIN
     DELETE FROM memories_fts WHERE rowid = new.id;
     INSERT INTO memories_fts(rowid, content, title, topic_key, keywords)
