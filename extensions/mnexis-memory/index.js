@@ -398,24 +398,24 @@ export function sessionIdOf(ctx) {
 // `superseded` (S1, S3, S5).
 
 /**
- * The size of every page a save reads to find a twin.
+ * The size of every page the repair reads to find a twin.
  *
  * It is the engine's own cap (`MAX_LIMIT = 100`, `src/cli/commands.rs:24`):
  * asking for more is silently clamped, and a bound nobody can reason about is
  * a bound that hides records. What matters is not the number but what happens
- * when it is reached — a ranked answer shorter than the page is complete, and
- * a full one sends the repair to the whole namespace (`candidatesByValue`),
- * so no twin can hide behind the cap.
+ * when it is reached — the engine answers with the records that carry the
+ * value, and a page shorter than the bound is the end of them.
  */
 export const TWIN_SCAN_LIMIT = 100;
 
 /**
- * How many pages the exhaustive fallback reads before it stops.
+ * How many pages of **matches** the repair reads before it stops.
  *
- * Only reached when the ranked answer is saturated, and only then does the
- * repair walk the namespace instead of asking for it: 20 pages is 2000
- * records, far past any project this engine serves. Past that the repair
- * reports that it could not check rather than reading forever (S4).
+ * The repair no longer walks the namespace: the engine filters by value, so
+ * the pages it reads are the records that carry the value and nothing else.
+ * The bound is on those matches (20 pages is 2000 records that carry the
+ * same number, far past any project this engine serves), and past it the
+ * repair reports that it could not check rather than reading forever (S4).
  */
 export const TWIN_SCAN_MAX_PAGES = 20;
 
@@ -981,67 +981,37 @@ export default function mnexisMemoryExtension(pi) {
 	}
 
 	/**
-	 * One ranked read of the live records that carry a value (S2, B1).
+	 * The records that carry a value, as the engine answers them (S2, B1).
 	 *
-	 * `mnexis search` answers by the token, not by a page of the namespace:
-	 * the FTS index covers the content (`src/retrieval/fts5.rs:83-150`), the
-	 * state filter is `active` and the namespace filter is the save's, and both
-	 * apply BEFORE the limit — so the twin a save created seconds ago is found
-	 * whatever its age, its id or how many records the namespace holds.
+	 * The engine has a filter by value (`mnexis list --value <N>`): it
+	 * answers with the records whose indexed text carries the value, and the
+	 * filter applies BEFORE the limit, so the answer is a page of matches
+	 * and not a short answer. The engine orders a list by id and pages it by
+	 * offset, so consecutive offsets cover every match once: a page shorter
+	 * than the bound is the end, and nothing can sit behind it.
 	 *
-	 * A short answer is a complete one: the LIMIT did not bite, because the
-	 * query matched fewer rows than the page. A full answer may be truncated,
-	 * and `candidatesByValue` says what happens then.
+	 * This is the whole namespace the engine reads no more: the records
+	 * that do not carry the value are never read, so the repair's cost
+	 * follows the matches and not the size of the namespace.
 	 */
-	async function searchCandidates(namespace, value, ctx) {
-		const found = await client.search(
-			{ query: value, namespace, limit: TWIN_SCAN_LIMIT, match: "all" },
-			ctx.cwd,
-		);
-		if (found.code !== 0) {
-			return {
-				error: {
-					step: "search",
-					value,
-					error: describeFailure({ code: found.code, stderr: found.stderr, namespace }),
-				},
-			};
-		}
-		const items = readItems(found.data);
-		return { items, value, saturated: items.length >= TWIN_SCAN_LIMIT };
-	}
-
-	/**
-	 * The whole namespace, page by page (S2, B1: the cap is not a blind spot).
-	 *
-	 * Only reached when the ranked answer is saturated. The engine orders a
-	 * list by id and applies the limit after the filters
-	 * (`src/storage/memory_repo.rs:99-104`), so consecutive offsets cover every
-	 * record once: a page shorter than the bound is the end, and nothing can
-	 * sit behind it.
-	 */
-	async function allRecords(namespace, ctx) {
+	async function listByValue(namespace, value, ctx) {
 		const items = [];
 		for (let page = 0; page < TWIN_SCAN_MAX_PAGES; page += 1) {
-			// `client.list` carries no offset and this change does not touch
-			// lib/cli.js, so the paged read goes through the client's run.
-			const listed = await client.run(
-				[
-					"list",
-					"--namespace",
+			const listed = await client.list(
+				{
 					namespace,
-					"--limit",
-					String(TWIN_SCAN_LIMIT),
-					"--offset",
-					String(page * TWIN_SCAN_LIMIT),
-					"--full",
-				],
-				{ json: true, cwd: ctx.cwd },
+					value,
+					limit: TWIN_SCAN_LIMIT,
+					offset: page * TWIN_SCAN_LIMIT,
+					full: true,
+				},
+				ctx.cwd,
 			);
 			if (listed.code !== 0) {
 				return {
 					error: {
 						step: "list",
+						value,
 						error: describeFailure({ code: listed.code, stderr: listed.stderr, namespace }),
 					},
 				};
@@ -1055,10 +1025,11 @@ export default function mnexisMemoryExtension(pi) {
 		return {
 			error: {
 				step: "list",
+				value,
 				error:
-					"the namespace holds more than " +
-					`${TWIN_SCAN_LIMIT * TWIN_SCAN_MAX_PAGES} records, so the twin scan stopped ` +
-					"before it could prove it had seen them all",
+					"more than " +
+					`${TWIN_SCAN_LIMIT * TWIN_SCAN_MAX_PAGES} records carry the value ${value}, ` +
+					"so the twin scan stopped before it could prove it had seen them all",
 			},
 		};
 	}
@@ -1066,29 +1037,32 @@ export default function mnexisMemoryExtension(pi) {
 	/**
 	 * The records that could be a twin of this save (S2, B1, B2).
 	 *
-	 * The query is the value the twin must carry, never a page of the
-	 * namespace: every record the query answers is a record whose content holds
-	 * a value of this save, and a twin is one of those. One value is enough —
-	 * the twin carries ALL of them — so the first value whose answer is short
-	 * of the page is a complete candidate set. When every value saturates the
-	 * ranked answer, the namespace is walked instead, and then the set is
-	 * complete by construction.
+	 * The engine is asked for the records that carry the value, never for a
+	 * page of the namespace: every record the engine answers is a record
+	 * that carries a value of this save, and a twin is one of those.
+	 *
+	 * The answer is the **intersection** over the values of this save: a
+	 * twin carries ALL of them, so a record that carries only one of them
+	 * is not a twin and is never read whole. The engine's answer is a
+	 * superset of the records whose content carries the value (it reads the
+	 * title and the keywords too), so the intersection can only lose a
+	 * record the twin rule would have rejected anyway.
 	 */
 	async function candidatesByValue(saved, ctx) {
+		let candidates = null;
 		for (const value of numericValues(saved.content)) {
-			const answered = await searchCandidates(saved.namespace, value, ctx);
+			const answered = await listByValue(saved.namespace, value, ctx);
 			if (answered.error) {
 				return answered;
 			}
-			if (!answered.saturated) {
-				return { items: answered.items, source: "search" };
+			if (candidates === null) {
+				candidates = answered.items;
+				continue;
 			}
+			const carried = new Set(answered.items.map((item) => item.uuid));
+			candidates = candidates.filter((item) => carried.has(item.uuid));
 		}
-		const exhaustive = await allRecords(saved.namespace, ctx);
-		if (exhaustive.error) {
-			return exhaustive;
-		}
-		return { items: exhaustive.items, source: "list" };
+		return { items: candidates ?? [], source: "value" };
 	}
 
 	/**
@@ -1650,13 +1624,26 @@ export default function mnexisMemoryExtension(pi) {
 						"`knowledge`, `decision`, `preference`, `procedure`, `project_state`, " +
 						"`episode`, `fact`.",
 				},
+				value: {
+					type: "string",
+					description:
+						"Optional: keep only the memories that carry this value — a run of three or " +
+						"more digits, exactly as written (8081 is a value, 80 is not). The answer is " +
+						"every record that carries it, not a page of the namespace.",
+				},
 			},
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const namespace = readNamespace(params.namespace);
 			const result = await client.list(
-				{ namespace, limit: params.limit, full: params.full, type: params.type },
+				{
+					namespace,
+					limit: params.limit,
+					full: params.full,
+					type: params.type,
+					value: params.value,
+				},
 				ctx.cwd,
 			);
 			if (result.code !== 0) {

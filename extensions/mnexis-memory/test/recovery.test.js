@@ -19,6 +19,11 @@
  *   - `list` orders by id and applies the limit AFTER the filters
  *     (`src/storage/memory_repo.rs:99-104`): OLDEST first, so a page of a
  *     namespace is not "the recent records".
+ *   - `list --value <N>` filters by the value BEFORE the limit, with the
+ *     engine's own rule: a MAXIMAL digit run of the record's indexed text
+ *     (content, title, topic key, keywords) exactly equal to the value
+ *     (`src/domain/value.rs`). A value that is not three or more digits is an
+ *     INVALID_ARGUMENT (exit 2), refused with the engine's own message.
  *   - `history` answers `count: 0` / "no history for <uuid>" when no
  *     `memory_history` row exists, and the engine writes none on save (an
  *     insert) nor on supersede (`src/storage/memory_repo.rs:700-705`). It DOES
@@ -30,7 +35,7 @@
  *     without content, and caps at the engine's `MAX_LIMIT` (100). bm25 is not
  *     modelled: the fake ranks shorter content first, which is the direction
  *     bm25 takes, and then by id. The order only decides what a saturated page
- *     cuts, which is exactly what the saturation test needs.
+ *     cuts.
  */
 
 import { test } from "node:test";
@@ -117,6 +122,19 @@ const stamp = (id) => "2026-10-28T00:00:00Z".replace("00:00", String(10 + (id % 
 function indexedTokens(item) {
 	const text = [item.content, item.title, item.topic_key, ...(item.keywords ?? [])].join(" ");
 	return new Set(text.toLowerCase().split(/[^\\p{L}\\p{N}]+/u).filter(Boolean));
+}
+
+/**
+ * The engine's value filter (src/domain/value.rs): a record carries the
+ * value when one of its MAXIMAL digit runs, in its indexed text, is the
+ * value exactly. A run of one or two digits is not a value, and a longer run
+ * (\`80810\`) is a different one.
+ */
+function carriesValue(item, value) {
+	const text = [item.content, item.title, item.topic_key, ...(item.keywords ?? [])].join(" ");
+	return (String(text).match(/\\d+/g) ?? []).some(
+		(run) => run.length >= 3 && run === value,
+	);
 }
 
 if (args[0] === "project" && args[1] === "list") {
@@ -222,9 +240,6 @@ if (args[0] === "project" && args[1] === "list") {
 		);
 	}
 } else if (args[0] === "search") {
-	if (config.searchFails) {
-		refuse(5, "BUSY", "fts5 unavailable: the index could not be read");
-	}
 	const query = String(args[1] ?? "").toLowerCase();
 	const terms = query.split(/\\s+/).filter(Boolean);
 	const namespace = flag("--namespace");
@@ -272,15 +287,37 @@ if (args[0] === "project" && args[1] === "list") {
 } else if (args[0] === "list") {
 	const namespace = flag("--namespace");
 	const state = flag("--state");
+	const value = flag("--value");
 	const limit = Math.min(Number(flag("--limit") ?? 20), 100);
 	const offset = Number(flag("--offset") ?? 0);
 	const full = args.includes("--full");
+	// An argument the engine cannot read is never an empty answer (S4): it
+	// refuses the value with the message \`src/domain/value.rs\` writes.
+	if (value !== undefined && !/^\\d{3,}$/.test(value.trim())) {
+		refuse(
+			INVALID_ARGUMENT,
+			"INVALID_ARGUMENT",
+			"invalid argument: value: '" +
+				value.trim() +
+				"' is not a value: a value is a run of 3 or more digits, exactly as written " +
+				"(8081 is a value, 80 and 8a81 are not)",
+		);
+	}
+	if (config.listFails) {
+		refuse(1, "INTERNAL", "internal error: the store could not be read");
+	}
 	let items = config.store.filter((item) => item.deleted !== true);
 	if (namespace && !config.leakForeign) {
 		items = items.filter((item) => item.namespace === namespace);
 	}
 	if (state) {
 		items = items.filter((item) => item.state === state);
+	}
+	// The value filter applies BEFORE the limit (S3): the answer is the
+	// records that carry the value, and the offset pages THOSE. \`carriesValue\`
+	// is the engine's rule (\`src/domain/value.rs\`).
+	if (value !== undefined) {
+		items = items.filter((item) => carriesValue(item, value.trim()));
 	}
 	// The engine orders by id and applies the limit AFTER the filters
 	// (src/storage/memory_repo.rs:99-104): OLDEST first, then the offset.
@@ -311,15 +348,7 @@ if (args[0] === "project" && args[1] === "list") {
 	if (!item) {
 		refuse(NOT_FOUND, "NOT_FOUND", "not found: memory:" + args[1]);
 	}
-	const answer = { ...item };
-	// A concurrent writer can win between the read and the write: the race
-	// the supersede-failure test reproduces.
-	if ((config.supersedeRaces ?? []).includes(item.uuid)) {
-		item.state = "superseded";
-		item.revision += 1;
-		persist();
-	}
-	process.stdout.write(JSON.stringify(answer));
+	process.stdout.write(JSON.stringify(item));
 } else if (args[0] === "history") {
 	const rows = config.history.filter((row) => row.memory_uuid === args[1]);
 	// No \`memory_history\` row means no history: the engine answers count 0
@@ -350,6 +379,16 @@ if (args[0] === "project" && args[1] === "list") {
 	}
 	if (!newer) {
 		refuse(NOT_FOUND, "NOT_FOUND", "not found: memory:" + newerUuid);
+	}
+	// A concurrent writer can win between the read the repair made
+	// (\`list --value --full\`) and the write: the race the supersede-failure
+	// test reproduces. Someone else retires the row first, so the engine
+	// refuses the supersede because the record is no longer active.
+	if ((config.supersedeRaces ?? []).includes(olderUuid) && older.state === "active") {
+		older.state = "superseded";
+		older.revision += 1;
+		older.updated_at = stamp(older.id);
+		persist();
 	}
 	if (older.namespace !== newer.namespace) {
 		refuse(
@@ -497,7 +536,7 @@ function scenario(
 		writeNamespaces,
 		leakForeign = false,
 		candidate = null,
-		searchFails = false,
+		listFails = false,
 		supersedeRaces = [],
 	} = {},
 ) {
@@ -518,7 +557,7 @@ function scenario(
 			save: { uuid: "u-new" },
 			leakForeign,
 			candidate,
-			searchFails,
+			listFails,
 			supersedeRaces,
 		}),
 	);
@@ -749,16 +788,39 @@ test("a twin is repaired in a namespace far larger than the scan bound (B1)", as
 	}
 });
 
-test("a twin behind a saturated ranked answer is still found (B1: the cap is not a blind spot)", async (t) => {
-	// 120 short records that all carry the value, with another vocabulary:
-	// they are exactly what fills a ranked page (bm25 favors short documents,
-	// and the fake models that order). The twin is the long record the page
-	// cuts, so an answer trusted at its cap would miss it — the same blind
-	// spot as the oldest-first page, one layer down.
-	const sc = scenario(t, { store: twinStore(fillerTickets(120, "8081")) });
+test("a twin behind a page of matches is still found (B1: the answer is exhaustive)", async (t) => {
+	// 200 records that carry no value, 120 that carry it, and the long twin
+	// AFTER them: the twin is the 121st match, so a repair that trusted one
+	// page of matches (the engine's MAX_LIMIT, 100) would never see it, and a
+	// repair that read the namespace instead of the matches would read 321
+	// records in four pages. The answer to a filter is a set of matches, and
+	// the repair reads it to the end (S6): no ranked page, no walk of the
+	// namespace, no blind spot.
+	const sc = scenario(t, {
+		store: [
+			...fillerNotes(200),
+			...fillerTickets(120, "8081").map((item, index) => ({ ...item, id: index + 202 })),
+			record({
+				id: 322,
+				uuid: "u-old",
+				title: "Puerto de escucha del servicio",
+				content: "El servicio payments-api escucha en el puerto 8081 (4 workers).",
+				keywords: ["puerto", "port"],
+			}),
+		],
+	});
 	const answer = await save(sc, TWIN_SAVE);
 
 	assert.notEqual(answer.result.isError, true, "the save itself succeeded");
+	const twin = answer.store.find((item) => item.uuid === "u-old");
+	const tickets = answer.store.filter((item) => item.uuid.startsWith("u-ticket-"));
+	assert.equal(answer.store.filter((item) => item.uuid.startsWith("u-note-")).length, 200, "200 records carry no value");
+	assert.equal(tickets.length, 120, "120 carry it");
+	assert.equal(
+		tickets.every((item) => item.id < twin.id),
+		true,
+		"the twin is the 121st match: one page of matches cannot reach it",
+	);
 	assert.equal(answer.supersedes.length, 1, "the twin behind the page was retired");
 	// The tickets are a different fact that merely carries the same number;
 	// the fact this save is about ends with one live record.
@@ -770,19 +832,30 @@ test("a twin behind a saturated ranked answer is still found (B1: the cap is not
 		"one live record for the fact",
 	);
 	assert.equal(
-		answer.store.filter((item) => item.uuid.startsWith("u-ticket-")).every((item) => item.state === "active"),
+		tickets.every((item) => item.state === "active"),
 		true,
 		"the records that only share the value are untouched",
 	);
 
-	// The ranked answer was full, so the repair did not trust it: it read the
-	// namespace page by page, offsets and all, until a short page proved it
-	// had seen everything.
-	assert.equal(answer.searches.length, 1, "one ranked query");
-	assert.ok(answer.lists.length >= 2, "the saturated answer sent the repair to the whole namespace");
-	assert.equal(answer.lists[0][answer.lists[0].indexOf("--offset") + 1], "0", "the walk starts at the first record");
-	assert.equal(answer.lists[1][answer.lists[1].indexOf("--offset") + 1], "100", "and steps a whole page");
-	assert.ok(answer.lists.at(-1).includes("--full"), "each page carries the content the rule compares");
+	// The repair asks the engine for the records that carry the value — never
+	// for a ranking — and pages the matches until a short page proves it has
+	// seen them all. 121 matches are two pages, whatever the namespace holds,
+	// and every page asks by value.
+	assert.equal(answer.searches.length, 0, "no ranked query: a ranking is not a set");
+	assert.equal(answer.lists.length, 2, "121 matches are two pages of matches, not four pages of records");
+	assert.deepEqual(
+		answer.lists.map((page) => [page[page.indexOf("--value") + 1], page[page.indexOf("--offset") + 1]]),
+		[
+			["8081", "0"],
+			["8081", "100"],
+		],
+		"both pages ask by the value and step a whole page of matches",
+	);
+	for (const page of answer.lists) {
+		assert.ok(page.includes("--full"), "each page carries the content the rule compares");
+		assert.equal(page[page.indexOf("--namespace") + 1], NAMESPACE, "inside the save's namespace");
+		assert.equal(page[page.indexOf("--limit") + 1], "100", "at the engine's own cap");
+	}
 });
 
 test("the superseded row stays visible to list and show, and history invents nothing (S3, B4)", async (t) => {
@@ -841,7 +914,7 @@ test("fidelity: the fake's history is empty only because the engine writes none 
 });
 
 test("a repair that cannot read the store journals the failure and changes nothing (S4)", async (t) => {
-	const sc = scenario(t, { store: twinStore(), searchFails: true });
+	const sc = scenario(t, { store: twinStore(), listFails: true });
 	const answer = await save(sc, TWIN_SAVE);
 
 	assert.notEqual(answer.result.isError, true, "the save itself is untouched by a failed repair");
@@ -850,12 +923,13 @@ test("a repair that cannot read the store journals the failure and changes nothi
 	const lines = answer.entries.filter((entry) => entry.type === "mnexis-store-recovery");
 	assert.equal(lines.length, 1, "the failure is not silent");
 	assert.equal(lines[0].data.action, "failed", "the line says it failed");
-	assert.equal(lines[0].data.step, "search", "and where");
-	assert.match(lines[0].data.error, /fts5 unavailable/, "with what the engine said");
+	assert.equal(lines[0].data.step, "list", "the step that could not read the store");
+	assert.equal(lines[0].data.value, "8081", "naming the value it asked the engine about");
+	assert.match(lines[0].data.error, /store could not be read/, "with what the engine said");
 	assert.equal(lines[0].data.saved.uuid, "u-new", "and which save it could not check");
-	assert.equal(answer.details.recovery_failed[0].step, "search", "the tool result carries it too");
-	// The ceiling of the check is declared to the model, never hidden behind a
-	// clean-looking save: the caller must be able to see that a second live
+	assert.equal(answer.details.recovery_failed[0].step, "list", "the tool result carries it too");
+	// A repair that could not run is declared to the model, never hidden behind
+	// a clean-looking save: the caller must be able to see that a second live
 	// record may remain and check it.
 	assert.match(
 		answer.text,
@@ -863,7 +937,7 @@ test("a repair that cannot read the store journals the failure and changes nothi
 		"the answer declares the unfinished check to the model",
 	);
 	assert.match(answer.text, /may remain/, "and says what that means for the store");
-	assert.match(answer.text, /fts5 unavailable/, "naming the engine's own reason");
+	assert.match(answer.text, /store could not be read/, "naming the engine's own reason");
 });
 
 test("a supersede the engine refuses is journaled, never reported as done (S4)", async (t) => {
@@ -889,13 +963,25 @@ test("the candidate query asks by the value, bounded to the engine's own cap", a
 	const sc = scenario(t, { store: twinStore() });
 	const answer = await save(sc, TWIN_SAVE);
 
-	assert.equal(answer.searches.length, 1, "the candidate query is one ranked read");
-	const search = answer.searches[0];
-	assert.equal(search[1], "8081", "by the value the twin must carry");
-	assert.equal(search[search.indexOf("--namespace") + 1], NAMESPACE, "inside the save's namespace");
-	assert.equal(search[search.indexOf("--limit") + 1], "100", "at the engine's MAX_LIMIT, not a guess");
-	assert.equal(search[search.indexOf("--match") + 1], "all", "every word of the query counts");
-	assert.equal(answer.lists.length, 0, "a short ranked answer is complete: the namespace is not walked");
+	assert.equal(answer.searches.length, 0, "no ranked read: a ranking is not a set, and it cannot be paged");
+	assert.equal(answer.lists.length, 1, "one page of matches is the whole answer");
+	assert.deepEqual(
+		answer.lists[0],
+		[
+			"list",
+			"--namespace",
+			NAMESPACE,
+			"--limit",
+			"100",
+			"--offset",
+			"0",
+			"--full",
+			"--value",
+			"8081",
+			"--json",
+		],
+		"the question is the value the twin must carry, at the engine's MAX_LIMIT and from the first match",
+	);
 
 	// A save with no value of three digits cannot produce a twin (S2.2), so
 	// the store is not read at all.
@@ -906,7 +992,7 @@ test("the candidate query asks by the value, bounded to the engine's own cap", a
 		keywords: "puerto, port",
 	});
 	assert.equal(withoutValue.searches.length, 0, "no value, no ranked read");
-	assert.equal(withoutValue.lists.length, 0, "and no walk of the namespace");
+	assert.equal(withoutValue.lists.length, 0, "and the store is not read at all");
 	assert.equal(withoutValue.supersedes.length, 0, "and no repair");
 });
 

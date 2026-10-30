@@ -719,11 +719,13 @@ fn relations_of(profile: &mut Profile, memories: &[Memory]) -> Vec<serde_json::V
 
 // --- list ---
 
+#[allow(clippy::too_many_arguments)]
 pub fn list(
     profile: &mut Profile,
     namespace: Option<String>,
     memory_type: Option<String>,
     state: Option<String>,
+    value: Option<String>,
     limit: usize,
     offset: usize,
     full: bool,
@@ -733,6 +735,7 @@ pub fn list(
         namespace,
         state: state.as_deref().map(parse_state).transpose()?,
         memory_types: parse_memory_types(memory_type.as_deref())?,
+        value,
         limit: clamp_limit(limit),
         offset,
     };

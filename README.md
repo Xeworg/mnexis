@@ -210,7 +210,7 @@ update            update a memory (optimistic revision)
 supersede         mark an older memory superseded by a newer one
 search            ranked search (every word of the query counts)
 suggest-topic-key the topic key a title yields, and who holds it
-list              list memories
+list              list memories (--value keeps only the ones that carry a value)
 session           register the session this process runs in
 end               end a session, with an optional summary
 sessions          the sessions this profile can read
@@ -243,6 +243,14 @@ import / export   JSONL round-trip with conflict policies
 context           budgeted memory_context pipeline (PRD §9)
 tui               browse and edit memories in a terminal UI
 ```
+
+`list` also filters by **value**: `mnexis list --value 8081` answers with the
+records whose text carries that value — a run of three or more digits, exactly
+as written, so `8081` matches `the port is 8081` and `v8081` but not `80810`.
+The filter applies **before** the limit, so the answer is every record that
+carries the value and never a short page of the namespace; `--offset` pages the
+matches. A value nobody carries is an empty answer, and an argument that is
+not a value (`80`, `abc`) is an `INVALID_ARGUMENT` that says what a value is.
 
 Exit codes follow the stable error set (`INVALID_ARGUMENT=2`,
 `NOT_FOUND=3`, `FORBIDDEN=4`, `REVISION_CONFLICT|TOPIC_CONFLICT=5`,

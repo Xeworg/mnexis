@@ -81,6 +81,10 @@ impl SqliteMemoryRepository {
     /// [`MemoryRepository::list_recent`]; `deleted` selects which side of the
     /// soft-delete flag the query returns and `newest_first` selects the row
     /// order (`id DESC` instead of `id`).
+    ///
+    /// `value` is the value filter: when it is set, the answer is the
+    /// records that **carry the value**, and the filter applies before the
+    /// limit, so the answer is a page of matches and not a short answer.
     #[allow(clippy::too_many_arguments)]
     fn list_filtered(
         &self,
@@ -91,12 +95,69 @@ impl SqliteMemoryRepository {
         deleted: bool,
         newest_first: bool,
         memory_types: &[String],
+        value: Option<&str>,
     ) -> Result<Vec<Memory>, MnexisError> {
+        match value {
+            None => self.list_page(
+                namespaces,
+                states,
+                limit,
+                offset,
+                deleted,
+                newest_first,
+                memory_types,
+                None,
+            ),
+            Some(value) => self.list_by_value(
+                namespaces,
+                states,
+                limit,
+                offset,
+                deleted,
+                memory_types,
+                value,
+            ),
+        }
+    }
+
+    /// One page of rows, with the filters the SQL can decide.
+    ///
+    /// `like_value` narrows the rows the engine has to read: it is the
+    /// **superset** predicate of the value filter (the text holds the value
+    /// somewhere, not necessarily as a whole run), so it can only remove
+    /// rows that cannot carry the value. The exact rule is decided after
+    /// the row is read.
+    #[allow(clippy::too_many_arguments)]
+    fn list_page(
+        &self,
+        namespaces: &NamespaceScope,
+        states: &[String],
+        limit: usize,
+        offset: usize,
+        deleted: bool,
+        newest_first: bool,
+        memory_types: &[String],
+        like_value: Option<&str>,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        // The superset predicate of the value filter, declared before the
+        // parameters that borrow it (it outlives them).
+        let like_pattern = like_value.map(|value| format!("%{value}%"));
         let Some((filter, mut param_refs)) = filter_sql(namespaces, states, deleted, memory_types)
         else {
             return Ok(Vec::new());
         };
         let mut sql = format!("SELECT {SELECT_COLUMNS}{filter}");
+        if let Some(pattern) = like_pattern.as_ref() {
+            // The value is digits, so it carries no wildcard of its own:
+            // the pattern is a plain substring search over the four
+            // indexed columns.
+            sql.push_str(
+                " AND (content LIKE ? OR title LIKE ? OR topic_key LIKE ? OR keywords LIKE ?)",
+            );
+            for _ in 0..4 {
+                param_refs.push(pattern as &dyn ToSql);
+            }
+        }
         sql.push_str(if newest_first {
             " ORDER BY id DESC LIMIT ? OFFSET ?"
         } else {
@@ -118,6 +179,75 @@ impl SqliteMemoryRepository {
             result.push(row.map_err(sql_to_domain)?);
         }
         Ok(result)
+    }
+
+    /// The records that **carry the value**, paged over the matches.
+    ///
+    /// The value is a run of three or more digits (see
+    /// [`crate::domain::value`]): the SQL narrows the rows with the
+    /// superset predicate and the rule itself is decided here, on the row
+    /// that was read. The limit and the offset count **matches**, not the
+    /// rows the engine scanned: a namespace of five thousand records with
+    /// two that carry the value answers with those two.
+    #[allow(clippy::too_many_arguments)]
+    fn list_by_value(
+        &self,
+        namespaces: &NamespaceScope,
+        states: &[String],
+        limit: usize,
+        offset: usize,
+        deleted: bool,
+        memory_types: &[String],
+        value: &str,
+    ) -> Result<Vec<Memory>, MnexisError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut matched: Vec<Memory> = Vec::new();
+        // The matches the offset skips.
+        let mut skipped = 0usize;
+        // The rows the engine has read so far: the scan's own offset.
+        let mut scanned = 0usize;
+        loop {
+            let rows = self.list_page(
+                namespaces,
+                states,
+                VALUE_SCAN_CHUNK,
+                scanned,
+                deleted,
+                false,
+                memory_types,
+                Some(value),
+            )?;
+            if rows.is_empty() {
+                break;
+            }
+            scanned += rows.len();
+            let read = rows.len();
+            for row in rows {
+                if !crate::domain::value::record_carries_value(
+                    &row.content,
+                    &row.title,
+                    &row.topic_key,
+                    &row.keywords,
+                    value,
+                ) {
+                    continue;
+                }
+                if skipped < offset {
+                    skipped += 1;
+                    continue;
+                }
+                matched.push(row);
+                if matched.len() == limit {
+                    return Ok(matched);
+                }
+            }
+            if read < VALUE_SCAN_CHUNK {
+                break;
+            }
+        }
+        Ok(matched)
     }
 }
 
@@ -202,6 +332,14 @@ fn to_sql_err(e: MnexisError) -> rusqlite::Error {
 const SELECT_COLUMNS: &str = "id, uuid, title, topic_key, namespace, memory_type, state, content, \
                                 revision, deleted, created_at, updated_at, deleted_at, purge_after, \
                                 valid_from, valid_until, actor, channel, assertion_basis, keywords";
+
+/// How many rows the value filter reads at a time.
+///
+/// The filter is exhaustive: it keeps reading until the namespace ends or
+/// the limit is filled with matches. The chunk is an internal detail — the
+/// caller's limit counts matches, never rows — and it only decides how
+/// often the engine goes back to the database.
+const VALUE_SCAN_CHUNK: usize = 256;
 
 impl MemoryRepository for SqliteMemoryRepository {
     fn save(&mut self, mem: &Memory) -> Result<i64, MnexisError> {
@@ -306,7 +444,7 @@ impl MemoryRepository for SqliteMemoryRepository {
             None => NamespaceScope::All,
         };
         let states: Vec<String> = state.map(String::from).into_iter().collect();
-        self.list_filtered(&scope, &states, limit, offset, false, false, &[])
+        self.list_filtered(&scope, &states, limit, offset, false, false, &[], None)
     }
 
     fn list_deleted(
@@ -319,7 +457,7 @@ impl MemoryRepository for SqliteMemoryRepository {
             Some(ns) => NamespaceScope::Only(vec![ns.to_string()]),
             None => NamespaceScope::All,
         };
-        self.list_filtered(&scope, &[], limit, offset, true, false, &[])
+        self.list_filtered(&scope, &[], limit, offset, true, false, &[], None)
     }
 
     fn list_in_typed(
@@ -330,6 +468,7 @@ impl MemoryRepository for SqliteMemoryRepository {
         offset: usize,
         deleted: bool,
         memory_types: &[String],
+        value: Option<&str>,
     ) -> Result<Vec<Memory>, MnexisError> {
         let states: Vec<String> = state.map(String::from).into_iter().collect();
         self.list_filtered(
@@ -340,6 +479,7 @@ impl MemoryRepository for SqliteMemoryRepository {
             deleted,
             false,
             memory_types,
+            value,
         )
     }
 
@@ -348,7 +488,7 @@ impl MemoryRepository for SqliteMemoryRepository {
         namespaces: &NamespaceScope,
         limit: usize,
     ) -> Result<Vec<Memory>, MnexisError> {
-        self.list_filtered(namespaces, &[], limit, 0, false, true, &[])
+        self.list_filtered(namespaces, &[], limit, 0, false, true, &[], None)
     }
 
     fn list_typed_state_recent(
@@ -358,7 +498,16 @@ impl MemoryRepository for SqliteMemoryRepository {
         states: &[String],
         limit: usize,
     ) -> Result<Vec<Memory>, MnexisError> {
-        self.list_filtered(namespaces, states, limit, 0, false, true, memory_types)
+        self.list_filtered(
+            namespaces,
+            states,
+            limit,
+            0,
+            false,
+            true,
+            memory_types,
+            None,
+        )
     }
 
     fn count_in(&self, namespaces: &NamespaceScope) -> Result<i64, MnexisError> {

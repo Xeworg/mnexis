@@ -477,6 +477,26 @@ test("the list tool can ask for a memory type", async () => {
 	);
 });
 
+test("the list tool can ask by value", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const list = tools.get("mnexis_list");
+	assert.ok(list, "mnexis_list is registered");
+	assert.equal(
+		list.parameters.properties.value?.type,
+		"string",
+		"the tool declares the optional value parameter an MCP client needs",
+	);
+
+	const result = await list.execute("t3c", { value: "8081" }, undefined, undefined, context());
+	assert.notEqual(result.isError, true);
+
+	const listCall = calls(log).find((args) => args[0] === "list");
+	assert.ok(listCall, "list was called");
+	assert.deepEqual(listCall, ["list", "--value", "8081", "--json"], "the value reaches the engine as --value");
+});
+
 test("a save targets the workspace namespace", async () => {	const { log } = setup();
 	const { tools, pi } = fakeHost();
 	mnexisMemory(pi);

@@ -493,3 +493,68 @@ async fn harness_shaped_session_covers_every_tool_and_recovery_path() {
         "stderr leaked the uuid: first 200={stderr_preview:?}"
     );
 }
+
+/// The MCP surface carries the value filter too: `memory_list` answers with
+/// the records that carry the value, and refuses an argument that is not
+/// one.
+#[tokio::test]
+async fn memory_list_by_value_answers_only_the_records_that_carry_it() {
+    let dir = tempdir_in("target").expect("tempdir");
+    bootstrap(dir.path());
+
+    let mut h = Harness::spawn(dir.path()).await;
+    h.initialize().await;
+
+    let mut uuids = Vec::new();
+    for content in [
+        "the port is 8081",
+        "the port is 9090",
+        "a fact without a number",
+    ] {
+        let saved = h
+            .call_tool(
+                "memory_save",
+                serde_json::json!({"content": content, "namespace": "default"}),
+            )
+            .await;
+        let parsed: Value = serde_json::from_str(&unwrap_result_text(&saved)).expect("save json");
+        uuids.push(parsed["uuid"].as_str().unwrap().to_string());
+    }
+
+    let listed = h
+        .call_tool(
+            "memory_list",
+            serde_json::json!({"namespace": "default", "value": "8081"}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&unwrap_result_text(&listed)).expect("list json");
+    let items = parsed["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "one record carries the value: {parsed}");
+    assert_eq!(items[0]["uuid"], uuids[0]);
+
+    // A value nobody carries is an empty answer, not an error.
+    let empty = h
+        .call_tool(
+            "memory_list",
+            serde_json::json!({"namespace": "default", "value": "7070"}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&unwrap_result_text(&empty)).expect("list json");
+    assert_eq!(parsed["items"].as_array().expect("items").len(), 0);
+
+    // An argument that is not a value is refused, and the refusal says why.
+    let refused = h
+        .call_tool(
+            "memory_list",
+            serde_json::json!({"namespace": "default", "value": "80"}),
+        )
+        .await;
+    let (code, message) = unwrap_error(&refused);
+    assert_eq!(
+        code, -32050,
+        "an invalid argument is the engine's own error: {refused}"
+    );
+    assert!(message.contains("is not a value"), "{message}");
+
+    h.shutdown().await;
+}

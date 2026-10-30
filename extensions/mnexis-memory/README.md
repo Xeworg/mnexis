@@ -55,10 +55,13 @@ is deleted — the superseded record stays visible in `list`, `show` and
 engine writes no history row on a supersede.
 
 Candidates are found by the value they carry, never by a page of the
-namespace, so a twin cannot hide behind a scan bound; if the ranked answer
-saturates, the repair walks the namespace exhaustively — up to 2 000 records.
-Beyond that ceiling the check does not pretend: the answer the model reads says
-the duplicate check did not finish and that a second live record may remain. A
+namespace: the engine answers `mnexis list --value <N>` with exactly the
+records whose indexed text carries the value, so the repair reads the matches
+and not the namespace, and a twin cannot hide behind a scan bound. The
+engine's filter is exhaustive — it answers every record that carries the
+value, however many records the namespace holds. The repair reads those
+matches in pages of 100; if more than 2 000 records carry the *same* value,
+the check does not pretend it finished and says so, as it always did. A
 repair that fails is journaled through `pi.appendEntry` instead of swallowed.
 The answer the model reads names both records and the shared value, and
 `details.recovery` carries the structured record.

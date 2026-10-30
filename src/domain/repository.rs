@@ -71,15 +71,22 @@ pub trait MemoryRepository {
         offset: usize,
         deleted: bool,
     ) -> Result<Vec<Memory>, MnexisError> {
-        self.list_in_typed(namespaces, state, limit, offset, deleted, &[])
+        self.list_in_typed(namespaces, state, limit, offset, deleted, &[], None)
     }
 
     /// List the memories of a namespace scope, narrowed to the kinds of
-    /// thing the fact is.
+    /// thing the fact is and to the value it carries.
     ///
     /// The kinds are matched exactly and they filter before the limit, so
     /// a filtered answer is not a short one. An empty list filters
     /// nothing.
+    ///
+    /// `value` narrows the answer to the records that **carry the value**:
+    /// a run of three or more digits, exactly as written (see
+    /// [`crate::domain::value`]). It filters before the limit too, and the
+    /// offset pages the matches, not the rows the engine read. `None`
+    /// filters nothing.
+    #[allow(clippy::too_many_arguments)]
     fn list_in_typed(
         &self,
         namespaces: &NamespaceScope,
@@ -88,6 +95,7 @@ pub trait MemoryRepository {
         offset: usize,
         deleted: bool,
         memory_types: &[String],
+        value: Option<&str>,
     ) -> Result<Vec<Memory>, MnexisError>;
 
     /// List the most recent memories, newest first, limited to `limit`

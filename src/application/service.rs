@@ -112,6 +112,10 @@ pub struct ListFilter {
     /// The kinds of thing the fact is the answer is narrowed to. Empty
     /// filters nothing.
     pub memory_types: Vec<String>,
+    /// The value the answer is narrowed to: a run of three or more digits,
+    /// exactly as written. `None` filters nothing. A value that is not one
+    /// is an invalid argument, never an empty answer.
+    pub value: Option<String>,
     pub limit: usize,
     pub offset: usize,
 }
@@ -122,6 +126,7 @@ impl Default for ListFilter {
             namespace: None,
             state: None,
             memory_types: Vec::new(),
+            value: None,
             limit: 100,
             offset: 0,
         }
@@ -335,6 +340,16 @@ impl<R: MemoryRepository> MemoryService<R> {
         for memory_type in &filter.memory_types {
             crate::domain::memory_type::validate_memory_type(memory_type)?;
         }
+        // The value is read here, so every surface that lists answers the
+        // same question the same way: a value is a run of three or more
+        // digits, and an argument that is not one is an invalid argument.
+        let value = filter
+            .value
+            .as_deref()
+            .map(crate::domain::value::parse)
+            .transpose()?
+            .map(|value| value.as_str().to_string());
+        let value = value.as_deref();
         match filter.namespace.as_deref() {
             Some(ns) => {
                 self.scope.authorize_read(ns)?;
@@ -345,6 +360,7 @@ impl<R: MemoryRepository> MemoryService<R> {
                     filter.offset,
                     false,
                     &filter.memory_types,
+                    value,
                 )
             }
             // Without a namespace the read covers every namespace the
@@ -357,6 +373,7 @@ impl<R: MemoryRepository> MemoryService<R> {
                 filter.offset,
                 false,
                 &filter.memory_types,
+                value,
             ),
         }
     }

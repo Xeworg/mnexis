@@ -346,6 +346,7 @@ impl App {
                     memory_types: Vec::new(),
                     namespace: Some(ns),
                     state: None,
+                    value: None,
                     limit: MAX_LIMIT,
                     offset: 0,
                 })

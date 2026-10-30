@@ -160,7 +160,7 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			return run(args, { json: true, cwd });
 		},
 
-		async list({ namespace, limit, full, type }, cwd) {
+		async list({ namespace, limit, full, type, value, offset }, cwd) {
 			const args = ["list"];
 			if (namespace) {
 				args.push("--namespace", namespace);
@@ -168,11 +168,17 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			if (typeof limit === "number") {
 				args.push("--limit", String(limit));
 			}
+			if (typeof offset === "number") {
+				args.push("--offset", String(offset));
+			}
 			if (full === true) {
 				args.push("--full");
 			}
 			if (typeof type === "string" && type !== "") {
 				args.push("--type", type);
+			}
+			if (typeof value === "string" && value !== "") {
+				args.push("--value", value);
 			}
 			return run(args, { json: true, cwd });
 		},

@@ -13,6 +13,7 @@ pub mod repository;
 pub mod scope;
 pub mod session;
 pub mod title;
+pub mod value;
 pub mod workspace;
 
 pub use error::MnexisError;
@@ -26,4 +27,5 @@ pub use repository::MemoryRepository;
 pub use scope::{AccessScope, ExistenceDisclosure, Operation};
 pub use session::{Session, UserPrompt};
 pub use title::{MAX_TITLE_BYTES, key_from_title};
+pub use value::{MIN_VALUE_DIGITS, Value};
 pub use workspace::{canonical_workspace_key, normalize_remote_url};

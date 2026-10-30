@@ -213,6 +213,10 @@ pub enum Command {
         memory_type: Option<String>,
         #[arg(long)]
         state: Option<String>,
+        /// Only the memories that carry this value: a run of three or more
+        /// digits, exactly as written (8081 is a value, 80 is not)
+        #[arg(long, value_name = "VALUE")]
+        value: Option<String>,
         #[arg(long, default_value_t = commands::DEFAULT_LIMIT)]
         limit: usize,
         #[arg(long, default_value_t = 0)]
@@ -704,6 +708,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
             namespace,
             memory_type,
             state,
+            value,
             limit,
             offset,
             full,
@@ -714,6 +719,7 @@ async fn execute(cli: &Cli) -> Result<CommandOutcome, MnexisError> {
                 namespace.clone(),
                 memory_type.clone(),
                 state.clone(),
+                value.clone(),
                 *limit,
                 *offset,
                 *full,
