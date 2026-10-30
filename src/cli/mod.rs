@@ -284,7 +284,7 @@ pub enum Command {
         /// The session it belongs to, when there is one
         #[arg(long, value_name = "ID")]
         session: Option<String>,
-        /// Namespace (default: the profile's default_namespace)
+        /// Namespace (default: this workspace's namespace, then the profile's default)
         #[arg(long)]
         namespace: Option<String>,
     },

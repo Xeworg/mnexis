@@ -152,7 +152,8 @@ pub struct SavePromptArgs {
     /// The session it belongs to, when there is one.
     #[serde(default)]
     pub session_id: Option<String>,
-    /// Namespace (default: the profile's default namespace).
+    /// Namespace (default: the namespace this workspace writes into; the
+    /// profile's default namespace outside one).
     #[serde(default)]
     pub namespace: Option<String>,
 }

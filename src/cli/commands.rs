@@ -873,6 +873,21 @@ pub fn list_sessions(profile: &mut Profile, limit: usize) -> Result<CommandOutco
 }
 
 /// `mnexis prompt "<content>"` — store what the user said.
+///
+/// A prompt belongs to the namespace this workspace's **memories** land in
+/// (memory-types A2), the same resolution A1 gave the session: the row carries
+/// the session id, so it joins the session — and the memories the session
+/// wrote — only when it carries the same namespace. A caller that names a
+/// namespace keeps it; the workspace is a default, never an override, and a
+/// caller that names none takes the workspace's namespace through the same
+/// [`WorkspaceGuard`] `save` uses.
+///
+/// A workspace that names no namespace is not a refusal here, the way it is for
+/// a save (auto-namespace S5). The session of an unbound workspace already
+/// registered in the profile's default namespace, so a prompt that refused to
+/// follow it would vanish from the timeline it belongs to — and the capture is
+/// the extension's, not the model's, so a refusal would be a message nobody
+/// stored. The scope still refuses a namespace this profile may not write.
 pub fn save_prompt(
     profile: &mut Profile,
     content: String,
@@ -880,6 +895,10 @@ pub fn save_prompt(
     namespace: Option<String>,
 ) -> Result<CommandOutcome, MnexisError> {
     let now = crate::cli::profile::now_rfc3339();
+    let namespace = match namespace {
+        Some(namespace) => Some(namespace),
+        None => WorkspaceGuard::resolve(profile)?.namespace,
+    };
     let prompt = profile.service_mut().save_prompt(
         &content,
         session.as_deref(),

@@ -2530,6 +2530,104 @@ async fn memory_session_start_lands_in_the_workspace_namespace()
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// memory_save_prompt: the prompt lands in the workspace's namespace
+// (memory-types A2)
+// ---------------------------------------------------------------------------
+
+/// A prompt with no namespace lands where this workspace's memories land, and
+/// one the caller names keeps it: the same rule A1 gave the session, on the
+/// surface a host without the capture hook uses.
+#[tokio::test]
+async fn memory_save_prompt_lands_in_the_workspace_namespace()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+    // The default is deliberately NOT the workspace's: a prompt that ignores
+    // the workspace lands in `default`, and the answer would show it.
+    std::fs::write(
+        data_dir.join("mnexis.toml"),
+        "default_namespace = \"default\"\nread_namespaces = [\"default\", \"equipo\", \"otro\"]\nwrite_namespaces = [\"default\", \"equipo\", \"otro\"]\nallow_read_all = false\nallow_global = false\nexistence_disclosure = \"not_found\"\nallowed_operations = [\"all\"]\n",
+    )?;
+    let workspace = bind_workspace(data_dir, "equipo")?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir")
+                .arg(data_dir)
+                .arg("mcp")
+                .arg("serve")
+                .current_dir(workspace.path());
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // The schema is a claim about behaviour, and the old one — "the profile's
+    // default namespace" — is how the gap survived unread.
+    let tools = client.list_all_tools().await?;
+    let schema = tools
+        .iter()
+        .find(|tool| tool.name == "memory_save_prompt")
+        .unwrap_or_else(|| panic!("memory_save_prompt is listed"))
+        .input_schema
+        .clone();
+    let namespace_doc = schema
+        .get("properties")
+        .and_then(|properties| properties.get("namespace"))
+        .and_then(|prop| prop.get("description"))
+        .and_then(|doc| doc.as_str())
+        .unwrap_or_else(|| panic!("the schema must describe namespace: {schema:?}"))
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        namespace_doc.contains("the namespace this workspace writes into"),
+        "the arg doc must say which namespace a prompt lands in: {namespace_doc:?}"
+    );
+
+    let stored = call_tool_text(
+        &client,
+        "memory_save_prompt",
+        serde_json::json!({ "content": "el puerto es 8081", "session_id": "01JX" }),
+    )
+    .await?;
+    let stored: serde_json::Value = serde_json::from_str(&stored)?;
+    assert_eq!(
+        stored["namespace"], "equipo",
+        "a prompt must land in the namespace this workspace's memories land in: {stored}"
+    );
+    assert_eq!(stored["session_id"], "01JX", "{stored}");
+    assert_eq!(stored["content"], "el puerto es 8081", "{stored}");
+
+    // The workspace's prompts are what a search from the workspace finds.
+    let found = call_tool_text(
+        &client,
+        "memory_search_prompts",
+        serde_json::json!({ "query": "puerto", "namespace": "equipo" }),
+    )
+    .await?;
+    let found: serde_json::Value = serde_json::from_str(&found)?;
+    assert_eq!(found["count"], 1, "{found}");
+    assert_eq!(found["items"][0]["content"], "el puerto es 8081", "{found}");
+
+    // A caller that names a namespace keeps it.
+    let explicit = call_tool_text(
+        &client,
+        "memory_save_prompt",
+        serde_json::json!({ "content": "una nota para el otro", "namespace": "otro" }),
+    )
+    .await?;
+    let explicit: serde_json::Value = serde_json::from_str(&explicit)?;
+    assert_eq!(
+        explicit["namespace"], "otro",
+        "the workspace is a default, never an override: {explicit}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn memory_recall_is_priced_preview_by_default_full_on_request()
 -> Result<(), Box<dyn std::error::Error>> {

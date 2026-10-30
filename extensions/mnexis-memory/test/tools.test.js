@@ -110,6 +110,11 @@ if (args[0] === "project" && args[1] === "list") {
 	process.stdout.write(JSON.stringify(payload));
 } else if (args[0] === "suggest-topic-key") {
 	process.stdout.write(JSON.stringify({ title: args[2], topic_key: "puerto-del-servicio", recorded_by: null }));
+} else if (args[0] === "prompt" && process.env.MNEXIS_FAKE_PROMPT_FAIL) {
+	// The engine's refusal, as the capture sees it: the message is over the
+	// content cap and nothing is written.
+	process.stderr.write(process.env.MNEXIS_FAKE_PROMPT_FAIL);
+	process.exit(2);
 } else if (args[0] === "session" || args[0] === "end" || args[0] === "prompt") {
 	process.stdout.write(JSON.stringify({ id: args[3] || "s1", session_id: args[3] || "s1" }));
 } else if (args[0] === "recall") {
@@ -291,16 +296,27 @@ function setup() {
 	return { dir, log };
 }
 
-/** A host that only records the registered tools. */
+/** A host that records the tools and the event handlers it was given. */
 function fakeHost() {
 	const tools = new Map();
+	const handlers = new Map();
+	const entries = [];
 	return {
 		tools,
+		handlers,
+		entries,
 		pi: {
 			registerTool(tool) {
 				tools.set(tool.name, tool);
 			},
-			on() {},
+			on(event, handler) {
+				const list = handlers.get(event) ?? [];
+				list.push(handler);
+				handlers.set(event, list);
+			},
+			appendEntry(customType, data) {
+				entries.push({ customType, data });
+			},
 		},
 	};
 }
@@ -321,6 +337,23 @@ function context() {
 		mode: "print",
 		ui: { confirm: async () => false },
 	};
+}
+
+/** The context pi hands to a hook, with the session the host is running. */
+function sessionContext(sessionId) {
+	return {
+		...context(),
+		sessionManager: { getSessionId: () => sessionId },
+	};
+}
+
+/** Fire one event through the handlers the extension registered for it. */
+async function emit(handlers, event, payload, ctx) {
+	const results = [];
+	for (const handler of handlers.get(event) ?? []) {
+		results.push(await handler({ type: event, ...payload }, ctx));
+	}
+	return results;
 }
 
 /** An interactive pi session, with a UI that records what it was asked. */
@@ -894,6 +927,168 @@ test("the prompt tools reach the engine", async () => {
 	const searchCall = calls(log).find((args) => args[0] === "prompts");
 	assert.ok(searchCall, "the prompts were searched");
 	assert.ok(searchCall.includes("--search"), "it is a search");
+});
+
+// --- the capture: the human's message, without the model (memory-types A2) ---
+//
+// `user_prompts` had the table, the session link, the FTS index and the
+// search, and no writer that did not need the model. The writer is the host's
+// `input` hook: it sees the text the person typed, before pi expands a skill
+// or a prompt template, and it stores it through the same `mnexis prompt` the
+// CLI exposes. The model is never asked, and `mnexis_save_prompt` is never
+// called by the capture.
+
+/** The ten deterministic messages of the capture's fixture. */
+const CAPTURE_FIXTURE = [
+	"el puerto del servicio es 8081 y escucha en cuatro workers",
+	"y el deploy por defecto va a staging-eu",
+	"la ruta del binario es /usr/local/bin/mnexis",
+	'cuidado con "las comillas" y con la barra invertida \\ dentro',
+	"primera línea\nsegunda línea\tcon tabulador",
+	"el nombre del proyecto es «mnexis» — sin acentos rotos",
+	"日本語のメッセージもそのまま保存される",
+	"un mensaje con emoji 🎯 y con dos espacios  dentro",
+	"retorno de carro\r\ny salto de línea",
+	"la decisión: no usamos postgres para staging-eu",
+];
+
+test("every user message is captured verbatim with the session id", async () => {
+	const { log } = setup();
+	const { tools, handlers, pi } = fakeHost();
+	mnexisMemory(pi);
+	assert.ok(handlers.get("input"), "the capture rides the hook that sees the message");
+
+	// The model reaches `mnexis_save_prompt` only if it calls the tool; the
+	// capture must not count as one of those calls.
+	const save = tools.get("mnexis_save_prompt");
+	let toolCalls = 0;
+	const execute = save.execute;
+	save.execute = (...args) => {
+		toolCalls += 1;
+		return execute(...args);
+	};
+
+	for (const said of CAPTURE_FIXTURE) {
+		const results = await emit(
+			handlers,
+			"input",
+			{ text: said, source: "interactive" },
+			sessionContext("01JX"),
+		);
+		assert.deepEqual(results, [undefined], "the hook leaves the message untouched");
+	}
+
+	const stored = calls(log).filter((args) => args[0] === "prompt");
+	assert.equal(
+		stored.length,
+		CAPTURE_FIXTURE.length,
+		`one row per message: ${JSON.stringify(stored)}`,
+	);
+	for (const [index, said] of CAPTURE_FIXTURE.entries()) {
+		assert.deepEqual(
+			stored[index],
+			["prompt", said, "--session", "01JX", "--json"],
+			`the message reaches the engine byte for byte: ${JSON.stringify(stored[index])}`,
+		);
+	}
+	assert.equal(toolCalls, 0, "the capture is not the model calling mnexis_save_prompt");
+});
+
+test("one message is captured once, by the hook that sees it", async () => {
+	// A run emits `input` first and `before_agent_start` after: a capture hung
+	// on both would store every message twice.
+	const { log } = setup();
+	const { handlers, pi } = fakeHost();
+	mnexisMemory(pi);
+	const said = "el puerto del servicio es 8081";
+	const ctx = sessionContext("01JX");
+	await emit(handlers, "input", { text: said, source: "interactive" }, ctx);
+	await emit(
+		handlers,
+		"before_agent_start",
+		{ messageType: "user", prompt: said, systemPrompt: "", systemPromptOptions: {} },
+		ctx,
+	);
+	const stored = calls(log).filter((args) => args[0] === "prompt");
+	assert.deepEqual(stored, [["prompt", said, "--session", "01JX", "--json"]]);
+});
+
+test("a message the store refuses never stops the turn, and the journal says why", async () => {
+	const { log } = setup();
+	const { handlers, entries, pi } = fakeHost();
+	process.env.MNEXIS_FAKE_PROMPT_FAIL =
+		'{"error":{"code":"INVALID_ARGUMENT","message":"content: exceeds max bytes: 20000 > 16384"}}';
+	try {
+		mnexisMemory(pi);
+		const said = "x".repeat(20_000);
+		const ctx = sessionContext("01JX");
+		const results = await emit(handlers, "input", { text: said, source: "interactive" }, ctx);
+		assert.deepEqual(
+			results,
+			[undefined],
+			"a capture that cannot be written does not transform or handle the message",
+		);
+		assert.equal(calls(log).filter((args) => args[0] === "prompt").length, 1, "it was attempted");
+		assert.equal(entries.length, 1, JSON.stringify(entries));
+		assert.equal(entries[0].customType, "mnexis-prompt-capture");
+		assert.equal(entries[0].data.kind, "prompt-capture");
+		assert.equal(entries[0].data.action, "skipped");
+		assert.equal(entries[0].data.exit_code, 2);
+		assert.equal(entries[0].data.bytes, 20_000);
+		assert.equal(entries[0].data.session, "01JX");
+		assert.equal(
+			JSON.stringify(entries[0]).includes("xxxx"),
+			false,
+			"the refused text is never journaled",
+		);
+	} finally {
+		delete process.env.MNEXIS_FAKE_PROMPT_FAIL;
+	}
+});
+
+test("a message with no session id is still captured", async () => {
+	// A prompt can be captured before its session is registered, and the
+	// store's session link is optional: losing the human's words because the
+	// host named no session would be the worse answer.
+	const { log } = setup();
+	const { handlers, pi } = fakeHost();
+	mnexisMemory(pi);
+	await emit(handlers, "input", { text: "el puerto es 8081", source: "interactive" }, context());
+	assert.deepEqual(
+		calls(log).filter((args) => args[0] === "prompt"),
+		[["prompt", "el puerto es 8081", "--json"]],
+	);
+});
+
+test("a message another extension sent is not the human's", async () => {
+	// `input` also fires for a message another extension sends through
+	// `pi.sendUserMessage()`. The store keeps what the person said, so the
+	// host's own distinction decides: only an interactive or RPC message is
+	// captured.
+	const { log } = setup();
+	const { handlers, pi } = fakeHost();
+	mnexisMemory(pi);
+	await emit(
+		handlers,
+		"input",
+		{ text: "otra extensión dijo esto", source: "extension" },
+		sessionContext("01JX"),
+	);
+	assert.deepEqual(calls(log).filter((args) => args[0] === "prompt"), []);
+});
+
+test("the other tools never write a prompt on their own", async () => {
+	// The capture is one write path and it lives in the hook: a save, a search,
+	// a list, a recall or the door must leave the prompt table alone.
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const ctx = context();
+	await tools.get("mnexis_search").execute("c1", { query: "puerto" }, undefined, undefined, ctx);
+	await tools.get("mnexis_list").execute("c2", {}, undefined, undefined, ctx);
+	await tools.get("mnexis_context").execute("c3", { task: "donde quedamos" }, undefined, undefined, ctx);
+	await tools.get("mnexis_recall").execute("c4", { previous: true }, undefined, undefined, ctx);
+	assert.deepEqual(calls(log).filter((args) => args[0] === "prompt"), []);
 });
 
 test("the recall reaches the engine in one call", async () => {

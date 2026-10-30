@@ -12,3 +12,8 @@ in one line>"` before you read or change code, `mnexis_save` with a **title**
 that says what the fact IS (the same title updates that record instead of
 adding a twin), `mnexis_supersede` to replace an older fact with a newer one.
 `mnexis <command> --help` has every flag.
+
+What the user says is already stored, verbatim, by the extension as it
+arrives — do not copy the conversation into `mnexis_save_prompt`. When you
+need the request behind the work, `mnexis_search_prompts "<their words>"` and
+`mnexis_recall` read it back.

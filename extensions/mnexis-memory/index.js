@@ -981,6 +981,31 @@ export default function mnexisMemoryExtension(pi) {
 	}
 
 	/**
+	 * Journal a captured message the store refused.
+	 *
+	 * The store never truncates what a person said: a message over the content
+	 * cap is refused whole. A refusal that only lived in a swallowed exit code
+	 * would be invisible, so its size and its code reach the host's entry
+	 * journal — and the text never does.
+	 */
+	function journalPromptSkip(ctx, data) {
+		if (typeof pi.appendEntry !== "function") {
+			return;
+		}
+		try {
+			pi.appendEntry("mnexis-prompt-capture", {
+				ts: new Date().toISOString(),
+				kind: "prompt-capture",
+				action: "skipped",
+				session: sessionIdOf(ctx),
+				...data,
+			});
+		} catch {
+			// The journal is a report, never a precondition.
+		}
+	}
+
+	/**
 	 * The records that carry a value, as the engine answers them (S2, B1).
 	 *
 	 * The engine has a filter by value (`mnexis list --value <N>`): it
@@ -1293,6 +1318,50 @@ export default function mnexisMemoryExtension(pi) {
 			await client.sessionEnd({ sessionId: id }, ctx.cwd);
 		} catch {
 			// Same as above: the end of a session is not worth an error.
+		}
+	});
+
+	// The human's message, captured where it is said.
+	//
+	// `user_prompts` is the store's emptiest promise: the table, the session
+	// link, the full-text index and the search all exist, and until now the
+	// only writer was a tool the model had to be asked to call. The model is
+	// not part of a fact this store exists to keep, so the capture is the
+	// host's: the `input` hook sees the text the person typed, before pi
+	// expands a skill or a prompt template, and the CLI stores it byte for
+	// byte in the namespace this workspace's memories land in — the same
+	// resolution the session takes — so the row joins the session it was said
+	// in and the memories it produced.
+	//
+	// A capture that cannot be written never stops the turn: the message is
+	// the human's, and a store that refuses it (a message over the content cap
+	// is refused, never truncated) must not swallow the message silently
+	// either — the size and the exit code go to the entry journal, the text
+	// never does.
+	pi.on("input", async (event, ctx) => {
+		const text = typeof event?.text === "string" ? event.text : "";
+		// A message another extension sent is not something the human said.
+		if (text === "" || event?.source === "extension") {
+			return;
+		}
+		let result;
+		try {
+			result = await client.savePrompt(
+				{ content: text, sessionId: sessionIdOf(ctx) },
+				ctx.cwd,
+			);
+		} catch (error) {
+			journalPromptSkip(ctx, {
+				bytes: Buffer.byteLength(text, "utf8"),
+				error: error instanceof Error ? error.message : String(error),
+			});
+			return;
+		}
+		if (result.code !== 0) {
+			journalPromptSkip(ctx, {
+				bytes: Buffer.byteLength(text, "utf8"),
+				exit_code: result.code,
+			});
 		}
 	});
 
@@ -1805,11 +1874,12 @@ export default function mnexisMemoryExtension(pi) {
 	registerMemoryTool(pi, {
 		name: "mnexis_save_prompt",
 		label: "Save what the user said",
-		promptSnippet: "Store what the user said, so it survives the session.",
+		promptSnippet: "Store a message from outside this session, so it survives.",
 		description:
-			"Store what the user said, verbatim. Use it when the user states a constraint, a " +
-			"preference or a goal that has to survive the session: the conversation is not in the " +
-			"repository, and this is where it goes.",
+			"Store a message verbatim, for the one case the automatic capture does not cover: " +
+			"something the user pasted from another conversation, or a statement that must be found " +
+			"again by its exact words. Every message of this session is already stored when it " +
+			"arrives, by the extension and not by you, so do not copy the conversation here.",
 		parameters: {
 			type: "object",
 			properties: {

@@ -25,6 +25,8 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 | `mnexis_show` | Read one memory by UUID. |
 | `mnexis_history` | Every revision of one memory, and why each happened. |
 | `mnexis_recall` | What a session was, in one answer: the session, its prompts, and the memories of its window (previews by default, `full` for the records). |
+| `mnexis_save_prompt` | Store a message from outside this session verbatim. The session's own messages are already stored by the capture below, so the model does not copy the conversation here. |
+| `mnexis_search_prompts` | Find what the user said before, across sessions, by its words. |
 | `mnexis_supersede` | Replace an outdated memory with a newer one, keeping history. |
 
 Every tool is declared to the model in every session: availability does not
@@ -176,6 +178,32 @@ and the memories it covers cannot disagree about which project they are —
 and `mnexis_recall` with `previous` finds that session with its window
 holding what was saved during it. Outside any known workspace the session
 keeps landing in the profile's default namespace.
+
+## What the user said is captured without the model
+
+The store has kept prompts since the `user_prompts` table existed: the
+session link, the namespace, the full-text index and the search were all
+there, and nothing wrote to them — the only writer was a tool the model had
+to be asked to call, which is exactly what must not depend on a model.
+
+So the capture lives in the host, not in the model: the extension's `input`
+hook fires for every message a person types, before pi expands a skill or a
+prompt template, and stores the text **byte for byte** through `mnexis
+prompt`, with the id of the session it was said in. The CLI resolves the
+namespace exactly as it does for the session and the memories, so the row
+lands in the workspace's namespace; a message another extension sent is not
+the human's and is not captured.
+
+```sh
+mnexis recall --session <id>          # the session, its prompts in order, its window
+mnexis prompts --search "puerto 8081" # the words again, across sessions
+```
+
+The capture costs one CLI call per message and never stops the turn: a
+message the store refuses (over the 16 384-byte content cap it is refused
+whole, never truncated) is journaled through `pi.appendEntry` with its size
+and its exit code — never with its text — so a message that did not reach
+the store is visible instead of silent.
 
 ## How the namespace is resolved
 

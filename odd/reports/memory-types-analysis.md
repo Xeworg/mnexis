@@ -150,9 +150,16 @@ choose from — and the block already drops 3 of 28 silently.
 triggers (`sqlite.rs:210-238`); the engine has `save_prompt`/`search_prompts` (CLI, MCP and
 a pi tool); the recall carries the prompts **whole** (`session_recall.rs:44,52-72`,
 `RECALL_LIMIT=100`). And yet `mnexis_search_prompts` answers **"No prompts stored yet."**:
-the extension has no user-message hook (only `session_start`, `session_shutdown`,
-`session_compact`, `tool_call`), and the shipped skill never mentions the word "prompt", so
-the model is never told the tool exists.
+the extension registers no hook that sees the user's message (only `session_start`,
+`session_shutdown`, `session_compact`, `tool_call`), and the shipped skill never mentions
+the word "prompt", so the model is never told the tool exists.
+
+> **Correction (2026-10-30, after A2).** The line above is true of the extension's
+> *registrations*, not of pi's API: pi **does** expose an `input` hook — "Fired when user
+> input is received, before agent processing", emitted *before* skill/template expansion
+> (`dist/core/extensions/types.d.ts:909-919`, `dist/core/agent-session.js:1622`). It is the
+> only hook that carries the human's text before the expansion. The missing piece was the
+> **registration**, not the capability.
 
 The human's premise about recency is **false in this engine**: the search is bm25 only
 (`fts5.rs:170`), the door's order is bm25 ASC with the tie-break **`created_at` ASC — the

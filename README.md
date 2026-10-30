@@ -76,7 +76,7 @@ mnexis search "wrap mode borde"                            # ranked search
 mnexis status                                             # namespace, allowlists, recent
 ```
 
-The skill is deliberately small — 1 103 bytes. What the agent needs to know
+The skill is deliberately small — 1 360 bytes. What the agent needs to know
 lives in the tool descriptions it already reads: a long body was measured and
 read in 1 of 60 sessions, changing nothing, while the extension repairs on
 its own the duplicate a second save would create.
@@ -108,6 +108,15 @@ from a bound workspace it lands there — so `mnexis recall --previous` answers
 that session, with its window holding the memories saved during it, and
 `mnexis context` carries the same session in its state block — while outside
 any known workspace it keeps landing in the profile's default namespace.
+
+What the user said belongs there too. A prompt is stored in the same
+namespace, with the id of the session it was said in, so `mnexis recall
+--session <id>` reads the session as a timeline and `mnexis prompts --search`
+finds the words again — and the pi extension writes it **without the model**:
+its `input` hook sees every message the person types, before any skill or
+prompt template expands it, and stores it verbatim. A message over the content
+cap (16 384 bytes) is refused whole, never truncated and never silently
+shortened.
 
 A search query is plain language: every word counts, a hyphen is part of a
 word, and `--match all` narrows it to the memories that hold every word.

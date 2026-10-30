@@ -3843,6 +3843,259 @@ fn a_session_that_names_a_namespace_keeps_it() {
     );
 }
 
+// --- the prompt lands where the session and the memories land (memory-types A2) ---
+//
+// `user_prompts` had the session link, the namespace, the FTS index and the
+// triggers, and no writer that did not need the model. The writer is the pi
+// extension's `input` hook (extensions/mnexis-memory/index.js), and it sends
+// exactly what a person types — so the CLI rule it leans on is the one these
+// tests pin: a prompt with no `--namespace` lands in the namespace this
+// workspace's **memories** land in, the same resolution A1 gave the session,
+// and a caller that names a namespace keeps it. The capture itself is
+// measured by the extension's corpus; these tests are its floor.
+
+/// The ten deterministic messages of the capture's fixture: the shapes a real
+/// message takes — a line break, a quote, a backslash, a tab, a carriage
+/// return, accents, a non-Latin script, an emoji — plus the words C3 searches
+/// for. Nothing here is normalized on the way in: the store keeps the bytes.
+const CAPTURE_FIXTURE: [&str; 10] = [
+    "el puerto del servicio es 8081 y escucha en cuatro workers",
+    "y el deploy por defecto va a staging-eu",
+    "la ruta del binario es /usr/local/bin/mnexis",
+    "cuidado con \"las comillas\" y con la barra invertida \\ dentro",
+    "primera línea\nsegunda línea\tcon tabulador",
+    "el nombre del proyecto es «mnexis» — sin acentos rotos",
+    "日本語のメッセージもそのまま保存される",
+    "un mensaje con emoji 🎯 y con dos espacios  dentro",
+    "retorno de carro\r\ny salto de línea",
+    "la decisión: no usamos postgres para staging-eu",
+];
+
+#[test]
+fn ten_prompts_from_a_bound_workspace_are_stored_verbatim_with_the_session_id() {
+    // C1: N=10 → exactly ten rows, byte-identical, each with the workspace's
+    // namespace and the session's id, in insertion order.
+    let p = two_project_profile();
+    let ws = Workspace::bound(&p, BOUND_NAMESPACE);
+    p.run_in_dir(ws.path(), &["session", "--id", "S1"])
+        .unwrap_status("session in a bound workspace");
+
+    for said in CAPTURE_FIXTURE {
+        // The argv the extension's `input` hook sends on every user message:
+        // the text, the session, the workspace as the working directory, and
+        // no namespace — the workspace decides, exactly as it does for a save.
+        let out = p.run_in_dir(ws.path(), &["prompt", said, "--session", "S1"]);
+        let json = stdout_json(&out.unwrap_status("prompt in a bound workspace"));
+        assert_eq!(
+            json["namespace"], BOUND_NAMESPACE,
+            "a prompt lands where this workspace's memories land: {json}"
+        );
+        assert_eq!(json["session_id"], "S1", "{json}");
+        assert_eq!(
+            json["content"], said,
+            "the prompt is stored byte for byte: {json}"
+        );
+    }
+
+    // Exactly ten rows: not one per read, not one per namespace.
+    let stats = stdout_json(&p.run_in_dir(ws.path(), &["stats"]).unwrap_status("stats"));
+    assert_eq!(stats["totals"]["prompts"], 10, "{stats}");
+
+    // C3: the recall carries them in the order they were said, byte-identical.
+    let recall = stdout_json(
+        &p.run_in_dir(ws.path(), &["recall", "--session", "S1"])
+            .unwrap_status("recall --session"),
+    );
+    let carried = recall["prompts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("prompts array: {recall}"));
+    let said: Vec<&str> = carried
+        .iter()
+        .map(|prompt| prompt["content"].as_str().expect("prompt content"))
+        .collect();
+    assert_eq!(said, CAPTURE_FIXTURE.to_vec(), "{recall}");
+    for prompt in carried {
+        assert_eq!(prompt["namespace"], BOUND_NAMESPACE, "{recall}");
+        assert_eq!(prompt["session_id"], "S1", "{recall}");
+    }
+
+    // C3: the search finds them, and only the ones that carry the words.
+    let found = stdout_json(
+        &p.run_in_dir(
+            ws.path(),
+            &[
+                "prompts",
+                "--search",
+                "staging-eu",
+                "--namespace",
+                BOUND_NAMESPACE,
+            ],
+        )
+        .unwrap_status("prompts --search"),
+    );
+    assert_eq!(found["count"], 2, "{found}");
+    for prompt in found["items"].as_array().expect("items") {
+        assert!(
+            prompt["content"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("staging-eu"),
+            "a hit carries the words it was found by: {found}"
+        );
+    }
+}
+
+#[test]
+fn a_prompt_that_names_a_namespace_keeps_it() {
+    // The workspace resolution is a default, never an override.
+    let p = Profile::new().with_config(&Profile::namespaces(&[
+        "default",
+        BOUND_NAMESPACE,
+        OTHER_NAMESPACE,
+    ]));
+    let ws = Workspace::bound(&p, BOUND_NAMESPACE);
+    let out = p
+        .run_in_dir(
+            ws.path(),
+            &[
+                "prompt",
+                "una nota para el otro proyecto",
+                "--namespace",
+                OTHER_NAMESPACE,
+            ],
+        )
+        .unwrap_status("prompt with an explicit namespace");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["namespace"], OTHER_NAMESPACE,
+        "a caller that names a namespace keeps it: {json}"
+    );
+}
+
+#[test]
+fn the_prompt_help_says_which_namespace_the_command_takes() {
+    // The help is a claim about behaviour, and the old one — "the profile's
+    // default_namespace" — is how the defect survived unread.
+    let p = Profile::new();
+    let help = p.run_text(&["prompt", "--help"]);
+    assert!(
+        help.status.success(),
+        "{}: {}",
+        help.status,
+        String::from_utf8_lossy(&help.stderr)
+    );
+    let text = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        text.contains("this workspace's namespace"),
+        "the help must say which namespace the prompt takes: {text}"
+    );
+    assert!(
+        !text.contains("Namespace (default: the profile's default_namespace)"),
+        "the help must not claim the profile's default namespace: {text}"
+    );
+}
+
+#[test]
+fn a_prompt_outside_any_workspace_still_lands_in_the_profile_default_namespace() {
+    // No workspace, no binding, no marker: the allowlist decides, exactly as it
+    // did before the workspace existed. A capture must not start refusing
+    // messages in a directory that is not a project.
+    let p = Profile::new();
+    let out = p
+        .run_silent(&["prompt", "el puerto es 8081"])
+        .unwrap_status("prompt outside any workspace");
+    let json = stdout_json(&out);
+    assert_eq!(json["namespace"], "default", "{json}");
+}
+
+#[test]
+fn a_prompt_in_an_unbound_workspace_falls_back_to_the_profile_default_namespace() {
+    // A repository no binding names: a save without `--namespace` is refused
+    // (auto-namespace S5) and a memory does not land there. A prompt follows
+    // the session instead (memory-types A1): the session already registered in
+    // the profile's default namespace, so the prompt that names it joins it
+    // there instead of vanishing from the timeline of a workspace that could
+    // not write a memory in the first place.
+    let p = Profile::new();
+    let ws = Workspace::bare();
+    let out = p
+        .run_in_dir(
+            ws.path(),
+            &["prompt", "el puerto es 8081", "--session", "S1"],
+        )
+        .unwrap_status("prompt in an unbound workspace");
+    let json = stdout_json(&out);
+    assert_eq!(json["namespace"], "default", "{json}");
+}
+
+#[test]
+fn a_prompt_over_the_content_cap_is_refused_and_nothing_is_written() {
+    // C4: a message over 16 384 bytes is refused, not truncated. The cap is the
+    // engine's, and the extension never writes a shortened copy of what a
+    // person said: a prompt the store cannot keep whole is a prompt the store
+    // does not keep, and the refusal is the evidence.
+    let p = two_project_profile();
+    let ws = Workspace::bound(&p, BOUND_NAMESPACE);
+    p.run_in_dir(ws.path(), &["session", "--id", "S1"])
+        .unwrap_status("session in a bound workspace");
+
+    let too_long = "x".repeat(16_385);
+    let out = p.run_in_dir(ws.path(), &["prompt", &too_long, "--session", "S1"]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a message over the cap is INVALID_ARGUMENT (exit 2): {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("INVALID_ARGUMENT"),
+        "the refusal names the stable code: {stderr}"
+    );
+
+    // Nothing is written, and the session's timeline stays empty.
+    let stats = stdout_json(&p.run_in_dir(ws.path(), &["stats"]).unwrap_status("stats"));
+    assert_eq!(stats["totals"]["prompts"], 0, "{stats}");
+    let recall = stdout_json(
+        &p.run_in_dir(ws.path(), &["recall", "--session", "S1"])
+            .unwrap_status("recall --session"),
+    );
+    assert_eq!(
+        recall["prompts"].as_array().map(Vec::len),
+        Some(0),
+        "{recall}"
+    );
+}
+
+#[test]
+fn without_the_capture_nothing_writes_a_prompt() {
+    // C2, engine side: the prompt table has one writer that does not need a
+    // model, and it is the extension's `input` hook. Every other surface — the
+    // session, the save, the search, the door, the recall — leaves the row
+    // count exactly where it was.
+    let p = two_project_profile();
+    let ws = Workspace::bound(&p, BOUND_NAMESPACE);
+    p.run_in_dir(ws.path(), &["session", "--id", "S1"])
+        .unwrap_status("session");
+    for args in [
+        vec!["save", "el puerto del servicio es 8081"],
+        vec!["search", "puerto"],
+        vec!["list"],
+        vec!["context", "donde quedamos"],
+        vec!["status"],
+        vec!["recall", "--session", "S1"],
+        vec!["end", "--id", "S1", "--summary", "el puerto del servicio"],
+    ] {
+        p.run_in_dir(ws.path(), &args)
+            .unwrap_status("a surface without a capture");
+    }
+    let stats = stdout_json(&p.run_in_dir(ws.path(), &["stats"]).unwrap_status("stats"));
+    assert_eq!(
+        stats["totals"]["prompts"], 0,
+        "no surface writes a prompt on its own: {stats}"
+    );
+}
+
 // --- identity visibility (identity-visibility S1) ---
 //
 // The title is the identity of a fact. Every read surface carries it, so a

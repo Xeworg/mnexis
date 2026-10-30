@@ -355,16 +355,26 @@ impl McpServer {
     }
 
     /// Store what the user said.
+    ///
+    /// A prompt obeys the same namespace rule as a memory write on this
+    /// surface: a caller that names a namespace keeps it, and a caller that
+    /// names none takes the namespace the workspace this server runs in writes
+    /// into — the same one [`McpServer::authorize_write`] enforces, so a prompt
+    /// joins the session it was said in and the memories it produced
+    /// (memory-types A2, the rule A1 gave `memory_session_start`). Outside any
+    /// known workspace the service's default namespace decides, as it always
+    /// did.
     fn do_save_prompt(&self, args: SavePromptArgs) -> Result<String, McpError> {
         let mut svc = self
             .service
             .lock()
             .map_err(|e| MnexisError::busy(format!("service lock poisoned: {e}")))?;
         let now = crate::cli::profile::now_rfc3339();
+        let namespace = args.namespace.or_else(|| self.workspace_namespace.clone());
         let prompt = svc.save_prompt(
             &args.content,
             args.session_id.as_deref(),
-            args.namespace.as_deref(),
+            namespace.as_deref(),
             &now,
         )?;
         Ok(serde_json::to_string_pretty(&prompt).unwrap_or_default())
