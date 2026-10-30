@@ -495,6 +495,58 @@ fn a_search_can_be_narrowed_to_the_kinds_of_thing_the_fact_is() {
     );
 }
 
+/// `--explain` is the same search with more detail, so it is narrowed by
+/// the same `--type`. It used to report hits of every kind while the same
+/// query without `--explain` filtered correctly: two answers to the same
+/// question (audit round 2, G3).
+#[test]
+fn an_explained_search_is_narrowed_to_the_kinds_of_thing_the_fact_is() {
+    let p = Profile::new();
+    for kind in [
+        "knowledge",
+        "decision",
+        "preference",
+        "procedure",
+        "project_state",
+        "episode",
+        "fact",
+    ] {
+        save(
+            &p,
+            &format!("el puerto del servicio es 8081 ({kind})"),
+            &["--type", kind],
+        );
+    }
+
+    // The plain search keeps one row: the explanation has to keep it too.
+    let plain = p
+        .run_silent(&["search", "--type", "decision", "puerto"])
+        .unwrap_status("search --type");
+    let plain_json = stdout_json(&plain);
+    assert_eq!(
+        plain_json["count"], 1,
+        "the plain search keeps one row: {plain_json}"
+    );
+
+    let explained = p
+        .run_silent(&["search", "--explain", "--type", "decision", "puerto"])
+        .unwrap_status("search --explain --type");
+    let json = stdout_json(&explained);
+    assert_eq!(
+        json["count"], 1,
+        "the explanation must keep the row the plain search kept: {json}"
+    );
+    let items = json["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "{json}");
+    assert_eq!(items[0]["memory_type"], "decision", "{json}");
+    assert!(
+        items[0]["matched_terms"]
+            .as_array()
+            .is_some_and(|terms| !terms.is_empty()),
+        "the row is still explained: {json}"
+    );
+}
+
 #[test]
 fn a_list_can_be_narrowed_to_the_kinds_of_thing_the_fact_is() {
     let p = Profile::new();
@@ -2795,6 +2847,203 @@ fn purge_dry_run_reports_eligible_count() {
     );
 }
 
+// --- one save is one write (engine-tx A2) ---
+//
+// The create path of `save` used to be four autocommits — the record, its
+// tags, its idempotency row and the read-back — so a failure after the first
+// left a record the caller was told had not been written, and the caller's
+// retry with the same idempotency key met a record that already existed
+// instead of a store that had never heard of the request. The boundary now
+// drawn is the unit the caller asked for: one save is one write or no write.
+//
+// The failure below is real and needs no failpoint: the tag write runs between
+// the record INSERT and the idempotency INSERT, and a repeated tag breaks
+// `UNIQUE (memory_uuid, tag)` there. What these tests pin is the boundary, not
+// the tag rule.
+
+#[test]
+fn a_failed_create_leaves_no_record_and_the_retry_is_the_first_write() {
+    let p = namespaced_profile(&["ns-a"]);
+    let failed = p.run_silent(&[
+        "save",
+        "--namespace",
+        "ns-a",
+        "--topic-key",
+        "tx.retry",
+        "--idempotency-key",
+        "retry-1",
+        "--tags",
+        "dup,dup",
+        "el valor",
+    ]);
+    assert!(
+        !failed.status.success(),
+        "the tag write fails inside the create path: {:?}",
+        String::from_utf8_lossy(&failed.stderr)
+    );
+    assert_eq!(
+        count_in(&p, "ns-a"),
+        0,
+        "a create that failed left no record behind"
+    );
+
+    // The retry with the same key is a first write, not an update of a
+    // half-written record: the record is created at revision 1.
+    let retried = p
+        .run_silent(&[
+            "save",
+            "--namespace",
+            "ns-a",
+            "--topic-key",
+            "tx.retry",
+            "--idempotency-key",
+            "retry-1",
+            "el valor",
+        ])
+        .unwrap_status("retry after the failed create");
+    let retried = stdout_json(&retried);
+    assert_eq!(
+        retried["revision"], 1,
+        "the retry wrote the record for the first time: {retried}"
+    );
+    let uuid = retried["uuid"].as_str().expect("uuid").to_string();
+
+    // And the key now answers for that record: a repeat of the same request
+    // is a replay, not another write.
+    let replayed = p
+        .run_silent(&[
+            "save",
+            "--namespace",
+            "ns-a",
+            "--topic-key",
+            "tx.retry",
+            "--idempotency-key",
+            "retry-1",
+            "el valor",
+        ])
+        .unwrap_status("replay of the same request");
+    let replayed = stdout_json(&replayed);
+    assert_eq!(
+        replayed["uuid"],
+        uuid.as_str(),
+        "the same record: {replayed}"
+    );
+    assert_eq!(
+        replayed["revision"], 1,
+        "a replay writes nothing: {replayed}"
+    );
+    assert_eq!(count_in(&p, "ns-a"), 1);
+}
+
+#[test]
+fn a_retry_of_a_save_that_created_a_record_replays_instead_of_writing_again() {
+    let p = namespaced_profile(&["ns-a"]);
+    let args = [
+        "save",
+        "--namespace",
+        "ns-a",
+        "--idempotency-key",
+        "same-key",
+        "el valor",
+    ];
+    let first = stdout_json(&p.run_silent(&args).unwrap_status("first save"));
+    let retry = stdout_json(&p.run_silent(&args).unwrap_status("retry"));
+    assert_eq!(retry["uuid"], first["uuid"], "the retry replays: {retry}");
+    assert_eq!(retry["revision"], 1, "the retry writes nothing: {retry}");
+    assert_eq!(count_in(&p, "ns-a"), 1);
+
+    // A different request under a key that is already spent is a conflict,
+    // not a replay: the key belongs to the request that used it.
+    let other = p.run_silent(&[
+        "save",
+        "--namespace",
+        "ns-a",
+        "--idempotency-key",
+        "same-key",
+        "otro valor",
+    ]);
+    assert_eq!(
+        other.status.code(),
+        Some(5),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&other.stderr)
+    );
+}
+
+#[test]
+fn a_retry_of_a_save_that_updated_a_record_replays_instead_of_writing_again() {
+    let p = namespaced_profile(&["ns-a"]);
+    let uuid = save(
+        &p,
+        "el valor original",
+        &["--namespace", "ns-a", "--topic-key", "tx.value"],
+    );
+    // The same fact again: the key is held, so this save updates the record
+    // the namespace already has.
+    let args = [
+        "save",
+        "--namespace",
+        "ns-a",
+        "--topic-key",
+        "tx.value",
+        "--idempotency-key",
+        "upd-1",
+        "el valor nuevo",
+    ];
+    let updated = stdout_json(&p.run_silent(&args).unwrap_status("re-save"));
+    assert_eq!(
+        updated["uuid"],
+        uuid.as_str(),
+        "the update lands on the fact's record: {updated}"
+    );
+    assert_eq!(
+        updated["revision"], 2,
+        "the re-save wrote a revision: {updated}"
+    );
+
+    let retried = stdout_json(&p.run_silent(&args).unwrap_status("retry of the re-save"));
+    assert_eq!(
+        retried["revision"], 2,
+        "the retry replays the record the first attempt wrote: {retried}"
+    );
+    assert_eq!(count_in(&p, "ns-a"), 1);
+}
+
+#[test]
+fn an_update_with_a_repeated_tag_still_rolls_back() {
+    let p = namespaced_profile(&["ns-a"]);
+    let uuid = save(&p, "el valor original", &["--namespace", "ns-a"]);
+    let before = stdout_json(&p.run_silent(&["show", &uuid]).unwrap_status("show"));
+    let revision = before["revision"].as_i64().expect("revision");
+
+    let failed = p.run_silent(&[
+        "update",
+        &uuid,
+        "--content",
+        "el valor nuevo",
+        "--tags",
+        "dup,dup",
+        "--expected-revision",
+        &revision.to_string(),
+        "--reason",
+        "the tag write fails inside the update",
+    ]);
+    assert!(
+        !failed.status.success(),
+        "the tag write fails inside the update transaction: {:?}",
+        String::from_utf8_lossy(&failed.stderr)
+    );
+    let after = stdout_json(&p.run_silent(&["show", &uuid]).unwrap_status("show"));
+    assert_eq!(
+        after["content"], "el valor original",
+        "the update rolled back with the tags: {after}"
+    );
+    assert_eq!(
+        after["revision"], revision,
+        "no revision was written: {after}"
+    );
+}
+
 // --- export / import (T22, PRD §13, e2-core §5/§7) ---
 
 /// Helper: write text to a path and return the path.
@@ -3213,6 +3462,236 @@ fn import_refuses_a_record_whose_type_is_outside_the_closed_set() {
         String::from_utf8_lossy(&dry.stderr).to_string(),
         stderr,
         "a dry run classifies identically to a real run"
+    );
+}
+
+// --- an import is one unit (engine-tx A3) ---
+//
+// The importer used to commit record by record: a refusal on record 40 left
+// the first 39 in the store with no rollback and no summary, so the operator
+// was told the file had failed while half of it was live. Every candidate is
+// now authorized and classified before the first write, and the write itself
+// is a single transaction.
+
+/// One importable record, in a namespace the caller chooses.
+fn import_line_in(namespace: &str, uuid: &str, memory_type: &str, content: &str) -> String {
+    let mut record: serde_json::Value =
+        serde_json::from_str(&import_line(uuid, memory_type, content)).expect("a record is JSON");
+    record["namespace"] = serde_json::json!(namespace);
+    record.to_string()
+}
+
+/// One importable record holding a topic key, so a file can clash with
+/// itself.
+fn import_line_with_topic(uuid: &str, topic_key: &str, content: &str) -> String {
+    let mut record: serde_json::Value =
+        serde_json::from_str(&import_line(uuid, "fact", content)).expect("a record is JSON");
+    record["topic_key"] = serde_json::json!(topic_key);
+    record.to_string()
+}
+
+#[test]
+fn an_import_refused_at_the_third_record_writes_nothing() {
+    let p = namespaced_profile(&["ns-a"]);
+    // The first two records are perfectly importable; the third names a
+    // namespace this profile cannot write.
+    let body = format!(
+        "{}\n{}\n{}\n",
+        import_line("00000000-0000-4000-8000-000000000001", "fact", "primera"),
+        import_line("00000000-0000-4000-8000-000000000002", "fact", "segunda"),
+        import_line_in(
+            "ns-b",
+            "00000000-0000-4000-8000-000000000003",
+            "fact",
+            "tercera",
+        ),
+    );
+    let path = write_tmp("third-record.jsonl", &body);
+
+    let out = p.run_silent(&["import", "--input", path.to_str().expect("utf8")]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "the unauthorised namespace is refused: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("ns-b"),
+        "the refusal names the namespace it refused: {stderr}"
+    );
+    assert_eq!(
+        count_in(&p, "ns-a"),
+        0,
+        "the refused file wrote nothing — not even the records it accepted"
+    );
+    let listed = stdout_json(&p.run_silent(&["list"]).unwrap_status("list"));
+    assert_eq!(listed["count"], 0, "nothing landed anywhere: {listed}");
+}
+
+#[test]
+fn an_import_with_a_topic_key_clash_inside_the_file_writes_nothing() {
+    let p = namespaced_profile(&["ns-a"]);
+    // Two records of the same file claiming one conceptual key: the design
+    // forbids rewriting a key, so the run is a topic-key conflict.
+    let body = format!(
+        "{}\n{}\n",
+        import_line_with_topic(
+            "00000000-0000-4000-8000-000000000011",
+            "tx.shared",
+            "primera"
+        ),
+        import_line_with_topic(
+            "00000000-0000-4000-8000-000000000012",
+            "tx.shared",
+            "segunda"
+        ),
+    );
+    let path = write_tmp("topic-clash.jsonl", &body);
+
+    let out = p.run_silent(&["import", "--input", path.to_str().expect("utf8")]);
+    assert_eq!(
+        out.status.code(),
+        Some(5),
+        "a key clash inside the file is a TOPIC_CONFLICT: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        count_in(&p, "ns-a"),
+        0,
+        "the record that preceded the clash was not written"
+    );
+}
+
+/// The engine writes `%Y-%m-%dT%H:%M:%SZ` and its reads compare those strings
+/// lexicographically (`recall`'s window, the door's tiebreak). An offset or a
+/// fractional second is a valid RFC3339 timestamp that sorts in the wrong
+/// place forever, so the import refuses it — naming the shape — instead of
+/// rewriting a value the operator can see.
+#[test]
+fn an_import_refuses_a_timestamp_that_is_not_the_canonical_shape() {
+    let p = namespaced_profile(&["ns-a"]);
+    let bad_uuid = "00000000-0000-4000-8000-000000000022";
+    for (label, created_at) in [
+        ("fractional", "2026-01-01T00:00:00.123Z"),
+        ("offset", "2026-01-01T00:00:00+02:00"),
+    ] {
+        let mut record: serde_json::Value =
+            serde_json::from_str(&import_line(bad_uuid, "fact", "una fecha que ordena mal"))
+                .expect("a record is JSON");
+        record["created_at"] = serde_json::json!(created_at);
+        let body = format!(
+            "{}\n{}\n",
+            import_line(
+                "00000000-0000-4000-8000-000000000021",
+                "fact",
+                "un registro canonico",
+            ),
+            record,
+        );
+        let path = write_tmp(&format!("bad-time-{label}.jsonl"), &body);
+
+        let out = p.run_silent(&["import", "--input", path.to_str().expect("utf8")]);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: a timestamp the engine cannot compare is INVALID_ARGUMENT: {:?}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("INVALID_ARGUMENT"), "{label}: {stderr}");
+        assert!(
+            stderr.contains(&format!("import line 2 (uuid {bad_uuid})")),
+            "{label}: the error names the offending record: {stderr}"
+        );
+        assert!(
+            stderr.contains("created_at"),
+            "{label}: the error names the field: {stderr}"
+        );
+        assert!(
+            stderr.contains("YYYY-MM-DDTHH:MM:SSZ"),
+            "{label}: the error names the shape it expected: {stderr}"
+        );
+        assert_eq!(
+            count_in(&p, "ns-a"),
+            0,
+            "{label}: nothing was written before the refusal"
+        );
+    }
+}
+
+#[test]
+fn the_canonical_timestamp_survives_an_import_byte_for_byte() {
+    let a = namespaced_profile(&["ns-a"]);
+    let uuid = save(&a, "el puerto es 8081", &["--namespace", "ns-a"]);
+    let stored = stdout_json(&a.run_silent(&["show", &uuid]).unwrap_status("show"));
+    let created_at = stored["created_at"]
+        .as_str()
+        .expect("the record carries its creation time")
+        .to_string();
+    assert_eq!(
+        created_at.len(),
+        20,
+        "the canonical shape is fixed width: {created_at}"
+    );
+    assert!(
+        created_at.ends_with('Z'),
+        "the canonical shape is UTC: {created_at}"
+    );
+
+    let export_path = write_tmp("canonical.jsonl", "");
+    a.run_silent(&["export", "--output", export_path.to_str().expect("utf8")])
+        .unwrap_status("export");
+    let body = std::fs::read_to_string(&export_path).expect("read export");
+    let line: serde_json::Value =
+        serde_json::from_str(body.lines().next().expect("one exported line")).expect("line JSON");
+    assert_eq!(
+        line["created_at"],
+        created_at.as_str(),
+        "the export carries the engine's own shape"
+    );
+
+    let b = namespaced_profile(&["ns-a"]);
+    b.run_silent(&["import", "--input", export_path.to_str().expect("utf8")])
+        .unwrap_status("import");
+    let imported = stdout_json(&b.run_silent(&["show", &uuid]).unwrap_status("show"));
+    assert_eq!(
+        imported["created_at"],
+        created_at.as_str(),
+        "the timestamp is the same bytes after the round trip"
+    );
+}
+
+#[test]
+fn the_title_survives_an_export_import_round_trip() {
+    let a = namespaced_profile(&["ns-a"]);
+    // A titled fact: the title is the label a human reads, and it is what the
+    // topic key derives from, so an export that drops it loses the fact's
+    // name (PRD §331: a round trip keeps the metadata).
+    let uuid = save(
+        &a,
+        "el puerto del servicio es 8081",
+        &["--namespace", "ns-a", "--title", "puerto del servicio"],
+    );
+
+    let export_path = write_tmp("titled.jsonl", "");
+    a.run_silent(&["export", "--output", export_path.to_str().expect("utf8")])
+        .unwrap_status("export");
+    let body = std::fs::read_to_string(&export_path).expect("read export");
+    let line: serde_json::Value =
+        serde_json::from_str(body.lines().next().expect("one exported line")).expect("line JSON");
+    assert_eq!(
+        line["title"], "puerto del servicio",
+        "the wire format carries the title: {line}"
+    );
+
+    let b = namespaced_profile(&["ns-a"]);
+    b.run_silent(&["import", "--input", export_path.to_str().expect("utf8")])
+        .unwrap_status("import");
+    let imported = stdout_json(&b.run_silent(&["show", &uuid]).unwrap_status("show"));
+    assert_eq!(
+        imported["title"], "puerto del servicio",
+        "the title rides the round trip: {imported}"
     );
 }
 

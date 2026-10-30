@@ -220,7 +220,7 @@ fn migration_006_indexes_the_title_and_the_topic_key() {
 
     assert_eq!(
         schema_version(&conn),
-        8,
+        9,
         "the ledger must reach the end of the migrations"
     );
 
@@ -273,7 +273,7 @@ fn migration_006_rebuilds_an_index_built_without_the_title() {
 
     run_migrations(&conn).expect("the migration must heal the index");
 
-    assert_eq!(schema_version(&conn), 8);
+    assert_eq!(schema_version(&conn), 9);
     assert_eq!(
         indexed(&conn, "puerto"),
         2,
@@ -307,7 +307,7 @@ fn migration_006_is_idempotent_and_probes_before_it_applies() {
     conn.execute("DELETE FROM schema_migrations WHERE version >= 6", [])
         .unwrap();
     run_migrations(&conn).expect("the re-run must not fail on the index it already built");
-    assert_eq!(schema_version(&conn), 8);
+    assert_eq!(schema_version(&conn), 9);
     assert_eq!(
         indexed(&conn, "puerto"),
         1,
@@ -316,7 +316,7 @@ fn migration_006_is_idempotent_and_probes_before_it_applies() {
 
     // And a plain second run is still safe.
     run_migrations(&conn).expect("a second run must be a no-op");
-    assert_eq!(schema_version(&conn), 8);
+    assert_eq!(schema_version(&conn), 9);
     assert_eq!(indexed(&conn, "puerto"), 1);
 }
 
@@ -591,6 +591,108 @@ fn wal_off_is_degraded_but_still_exit_1() {
         failure_exit_code(&report),
         Some((1, "INFRASTRUCTURE_ERROR")),
         "a degraded store is still an infrastructure failure (S4)"
+    );
+}
+
+// ── the FTS invariant reads its counts or fails (A6) ───────────────────────
+
+#[test]
+fn the_fts_invariant_fails_when_it_cannot_read_the_counts() {
+    // Two unreadable counts are not an agreement. A store whose `memories`
+    // and `memories_fts` cannot be read is the store the doctor exists for,
+    // and a check that substitutes a sentinel for a failed read compares
+    // two sentinels and passes — the one answer a doctor must never give
+    // about a store it could not read. Dropping both tables is the only
+    // deterministic way a test can make both reads fail: either one alone
+    // still leaves the other readable.
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_invariant_unreadable.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_titled(
+        &conn,
+        "uuid-ilegible",
+        "título ilegible",
+        "",
+        "contenido ilegible",
+    );
+    conn.execute("DROP TABLE memories_fts", []).unwrap();
+    conn.execute("DROP TABLE memories", []).unwrap();
+
+    let report = run_checks(&conn);
+    let invariant = check(&report, "fts_invariant");
+    assert!(
+        !invariant.ok,
+        "a check whose counts were unreadable has not passed: {invariant:?}"
+    );
+    assert_eq!(
+        invariant.reason_code,
+        Some(mnexis_core::diagnostics::doctor::ReasonCode::FtsUnreadable),
+        "the code says the counts were unreadable, not that the index is in sync: {invariant:?}"
+    );
+    assert!(
+        invariant.evidence.contains("could not be read"),
+        "the evidence says the counts could not be read: {}",
+        invariant.evidence
+    );
+    assert!(
+        !invariant.evidence.contains("(-1)"),
+        "no sentinel stands in for a failed read: {}",
+        invariant.evidence
+    );
+    assert_eq!(
+        failure_exit_code(&report),
+        Some((6, "INDEX_UNAVAILABLE")),
+        "an unreadable index is still INDEX_UNAVAILABLE"
+    );
+}
+
+#[test]
+fn the_fts_invariant_still_sees_a_synced_store_and_a_real_mismatch() {
+    // The two behaviours the sentinel must not change: a store whose index
+    // carries every live record passes with both counts, and an index that
+    // really disagrees fails as out of sync.
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_invariant_sync.db");
+    let conn = open_sqlite(&path).unwrap();
+    insert_titled(
+        &conn,
+        "uuid-sincronizado",
+        "título sincronizado",
+        "",
+        "contenido sincronizado",
+    );
+
+    let synced = run_checks(&conn);
+    let invariant = check(&synced, "fts_invariant");
+    assert!(invariant.ok, "a synced store passes: {invariant:?}");
+    assert_eq!(
+        invariant.evidence, "canonical active+non-deleted (1) == FTS5 rows (1)",
+        "the pass evidence still carries the two counts it read"
+    );
+
+    conn.execute("DELETE FROM memories_fts", []).unwrap();
+    let broken = run_checks(&conn);
+    let invariant = check(&broken, "fts_invariant");
+    assert!(
+        !invariant.ok,
+        "an index that lost its rows disagrees with the record: {invariant:?}"
+    );
+    assert_eq!(
+        invariant.reason_code,
+        Some(mnexis_core::diagnostics::doctor::ReasonCode::FtsOutOfSync),
+        "a readable mismatch is out of sync, not unreadable: {invariant:?}"
+    );
+    assert!(
+        invariant
+            .evidence
+            .contains("canonical active+non-deleted (1) != FTS5 rows (0)"),
+        "the evidence reports both counts it read: {}",
+        invariant.evidence
+    );
+    assert_eq!(
+        failure_exit_code(&broken),
+        Some((6, "INDEX_UNAVAILABLE")),
+        "an out-of-sync index is INDEX_UNAVAILABLE"
     );
 }
 
@@ -1030,7 +1132,7 @@ fn migration_007_rebuilds_an_index_built_without_the_words() {
 
     run_migrations(&conn).expect("the migration must heal the index");
 
-    assert_eq!(schema_version(&conn), 8);
+    assert_eq!(schema_version(&conn), 9);
     assert_eq!(
         indexed(&conn, "puerto"),
         1,
@@ -1052,7 +1154,7 @@ fn migration_007_is_idempotent_and_probes_before_it_applies() {
     conn.execute("DELETE FROM schema_migrations WHERE version = 7", [])
         .unwrap();
     run_migrations(&conn).expect("the re-run must not fail on the index it already built");
-    assert_eq!(schema_version(&conn), 8);
+    assert_eq!(schema_version(&conn), 9);
     assert_eq!(
         indexed(&conn, "puerto"),
         1,
@@ -1061,7 +1163,7 @@ fn migration_007_is_idempotent_and_probes_before_it_applies() {
 
     // And a plain second run is still safe.
     run_migrations(&conn).expect("a second run must be a no-op");
-    assert_eq!(schema_version(&conn), 8);
+    assert_eq!(schema_version(&conn), 9);
     assert_eq!(indexed(&conn, "puerto"), 1);
 }
 
@@ -1240,6 +1342,112 @@ fn the_type_shape_names_every_unclassified_record_with_its_size() {
     assert!(
         shape.safe_next_step.is_some(),
         "the check says what an operator can do about it: {shape:?}"
+    );
+}
+
+#[test]
+fn the_type_shape_counts_the_aggregate_the_store_reports() {
+    // The counts and the byte share come from one aggregate over the live
+    // rows. This store is the mixed one the other type tests use, plus the
+    // two rows an aggregate can silently get wrong: a soft-deleted `fact`
+    // (in neither the numerator nor the denominator) and a live record with
+    // no content at all (in the denominator, 0 bytes).
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_type_shape_aggregate.db");
+    let conn = unclassified_store(&path);
+    insert_untyped(&conn, "uuid-fact-vacio", "hecho vacío", "");
+    insert_untyped(&conn, "uuid-fact-borrado", "hecho borrado", "0123456789");
+    conn.execute(
+        "UPDATE memories SET deleted = 1 WHERE uuid = 'uuid-fact-borrado'",
+        [],
+    )
+    .unwrap();
+
+    let report = run_checks(&conn);
+    let shape = check(&report, "type_shape");
+    let evidence = &shape.evidence;
+
+    // 4 live records — 3 `fact` (11 + 10 + 0 bytes) and 1 declared — over
+    // 42 + 0 content bytes, 21 of them unselectable: the soft-deleted
+    // record's 10 bytes are in neither side of the share.
+    assert!(
+        evidence.contains("3 of 4 live records"),
+        "the soft-deleted record is not counted among the live ones: {evidence}"
+    );
+    assert!(
+        evidence.contains("21 of 42 content bytes") && evidence.contains("50%"),
+        "the share counts the live content only: {evidence}"
+    );
+    assert!(
+        evidence.contains("uuid-fact-vacio") && evidence.contains("0 B"),
+        "a live record with no content is still named with its 0 bytes: {evidence}"
+    );
+    assert!(
+        !evidence.contains("uuid-fact-borrado"),
+        "a soft-deleted record is not in the worklist: {evidence}"
+    );
+    assert!(
+        !evidence.contains("more)"),
+        "a bucket under the cap carries no truncation marker: {evidence}"
+    );
+}
+
+#[test]
+fn the_type_shape_names_five_records_and_counts_the_rest() {
+    // The `fact` bucket is where every write that declares nothing lands, so
+    // a bucket larger than five rows is the normal store, not an edge case.
+    // The evidence names a bounded worklist and counts the rest, exactly as
+    // the sibling `title_shape` does.
+    let directory = tempfile::tempdir_in("target").unwrap();
+    let path = directory.path().join("doctor_type_shape_bounded.db");
+    let conn = open_sqlite(&path).unwrap();
+    for index in 0..20 {
+        insert_untyped(
+            &conn,
+            &format!("uuid-fact-{index:02}"),
+            &format!("hecho número {index:02}"),
+            "port = 8081",
+        );
+    }
+
+    let report = run_checks(&conn);
+    let shape = check(&report, "type_shape");
+    let evidence = &shape.evidence;
+
+    assert!(
+        evidence.contains("20 of 20 live records"),
+        "the count is the whole bucket, never the sample: {evidence}"
+    );
+    let named = (0..20)
+        .filter(|index| evidence.contains(&format!("uuid-fact-{index:02}")))
+        .count();
+    assert_eq!(named, 5, "the worklist is capped at five rows: {evidence}");
+    assert!(
+        evidence.contains("(+15 more)"),
+        "the rows past the cap are counted, not listed: {evidence}"
+    );
+    assert!(
+        !evidence.contains("uuid-fact-05"),
+        "the sixth record is past the cap: {evidence}"
+    );
+
+    // The cap is the point: the report is one JSON field per failing check,
+    // and an evidence string that grows with the store is what A7 measured.
+    let json = serde_json::to_string(shape).expect("the check serialises");
+    assert!(
+        json.len() < 1024,
+        "the report stays small with a 20-row bucket: {} bytes",
+        json.len()
+    );
+    assert_eq!(
+        shape.severity,
+        mnexis_core::diagnostics::doctor::Severity::Warn,
+        "a bounded worklist is still a warning: {shape:?}"
+    );
+    assert_eq!(
+        failure_exit_code(&report),
+        None,
+        "and the run still exits 0"
     );
 }
 

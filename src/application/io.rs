@@ -13,6 +13,20 @@
 //! must be one of the seven known types: the file is refused, by line and
 //! uuid, before a single row is written (see [`parse_jsonl`]).
 //!
+//! Every timestamp the import writes (`created_at`, `updated_at`, and the
+//! optional `deleted_at`, `purge_after`, `valid_from`, `valid_until`) must be
+//! the one fixed-width UTC shape the engine writes,
+//! `YYYY-MM-DDTHH:MM:SSZ`: the reads compare those values as strings, so an
+//! offset or a fractional second would sort in the wrong place forever. Such a
+//! record is refused by line and uuid, never silently rewritten.
+//!
+//! The record carries the memory's `title` (`#[serde(default)]`, so files
+//! written before the field existed still parse): the title is part of the
+//! fact — it is the label a human reads, and the topic key derives from it —
+//! so an export that dropped it would lose it on the round trip (PRD §331).
+//! The record's keywords are not carried yet: a save normalizes and bounds
+//! them, and the importer has no equivalent rule.
+//!
 //! ## Conflict resolution
 //!
 //! For each record, in order:
@@ -109,6 +123,10 @@ pub enum ImportDecision {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportRecord {
     pub uuid: String,
+    /// The short, stable label of the fact. Defaulted so a file written
+    /// before the field existed still parses as a record with no title.
+    #[serde(default)]
+    pub title: String,
     pub topic_key: String,
     pub namespace: String,
     pub memory_type: String,
@@ -136,6 +154,7 @@ impl From<&Memory> for ImportRecord {
     fn from(m: &Memory) -> Self {
         Self {
             uuid: m.uuid.clone(),
+            title: m.title.clone(),
             topic_key: m.topic_key.clone(),
             namespace: m.namespace.clone(),
             memory_type: m.memory_type.clone(),
@@ -161,7 +180,7 @@ impl From<ImportRecord> for Memory {
         Memory {
             id: None,
             uuid: r.uuid,
-            title: String::new(),
+            title: r.title,
             keywords: Vec::new(),
             topic_key: r.topic_key,
             namespace: r.namespace,
@@ -187,6 +206,7 @@ impl From<ImportRecord> for Memory {
 /// "identical payload, no-op" imports without re-running the full upsert.
 pub fn records_canonical_match(a: &Memory, b: &ImportRecord) -> bool {
     a.uuid == b.uuid
+        && a.title == b.title
         && a.topic_key == b.topic_key
         && a.namespace == b.namespace
         && a.memory_type == b.memory_type
@@ -271,9 +291,102 @@ pub fn parse_jsonl(
                 other => other,
             });
         }
+        // The timestamps the engine writes are one fixed-width UTC shape, and
+        // its reads compare them as strings. A value the engine did not write
+        // would sort in the wrong place forever, so the file is refused by
+        // line and uuid — never silently rewritten.
+        for (field, value) in [
+            ("created_at", Some(record.created_at.as_str())),
+            ("updated_at", Some(record.updated_at.as_str())),
+            ("deleted_at", record.deleted_at.as_deref()),
+            ("purge_after", record.purge_after.as_deref()),
+            ("valid_from", record.valid_from.as_deref()),
+            ("valid_until", record.valid_until.as_deref()),
+        ] {
+            if let Some(value) = value {
+                validate_canonical_timestamp(field, value, idx + 1, &record.uuid)?;
+            }
+        }
         out.push(record);
     }
     Ok(out)
+}
+
+/// The one timestamp shape the engine writes, and the one its reads compare.
+///
+/// `memories_in_window` (recall) and the door's tiebreak compare these values
+/// as strings — SQLite stores them as TEXT and nothing here parses them — so
+/// the ordering matches the clock only while every value is the same
+/// fixed-width UTC shape. `2026-01-01T00:00:00.123Z` and
+/// `2026-01-01T00:00:00+02:00` are valid RFC3339 timestamps that sort in the
+/// wrong place forever, so an import refuses them instead of rewriting a value
+/// the operator can see.
+pub const CANONICAL_TIMESTAMP_SHAPE: &str = "YYYY-MM-DDTHH:MM:SSZ";
+
+/// Whether `value` is exactly `YYYY-MM-DDTHH:MM:SSZ` with a plausible calendar
+/// and clock part. `2026-13-45T99:99:99Z` is already impossible to have been
+/// written by the engine, and accepting it would let a bad record in through
+/// the one check that exists to keep the string comparison honest.
+fn is_canonical_timestamp(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != CANONICAL_TIMESTAMP_SHAPE.len() {
+        return false;
+    }
+    if bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+        || bytes[19] != b'Z'
+    {
+        return false;
+    }
+    let digits = |range: std::ops::Range<usize>| -> Option<u32> {
+        let slice = value.get(range)?;
+        if slice.bytes().all(|b| b.is_ascii_digit()) {
+            slice.parse().ok()
+        } else {
+            None
+        }
+    };
+    matches!(
+        (
+            digits(0..4),
+            digits(5..7),
+            digits(8..10),
+            digits(11..13),
+            digits(14..16),
+            digits(17..19),
+        ),
+        (Some(_), Some(month), Some(day), Some(hour), Some(minute), Some(second))
+            if (1..=12).contains(&month)
+                && (1..=31).contains(&day)
+                && hour < 24
+                && minute < 60
+                && second < 60
+    )
+}
+
+/// Refuse one timestamp that is not the shape the engine writes, naming the
+/// field, the line, the record and the expected shape.
+fn validate_canonical_timestamp(
+    field: &str,
+    value: &str,
+    line: usize,
+    uuid: &str,
+) -> Result<(), MnexisError> {
+    if is_canonical_timestamp(value) {
+        return Ok(());
+    }
+    Err(MnexisError::invalid_argument(
+        field,
+        format!(
+            "import line {line} (uuid {uuid}): `{value}` is not the canonical UTC \
+             timestamp shape {CANONICAL_TIMESTAMP_SHAPE} the engine writes and its reads \
+             compare; an offset or a fractional second sorts in the wrong place, so the \
+             value is refused instead of rewritten"
+        ),
+    ))
 }
 
 /// Classify one candidate against the local state. The local state is
@@ -290,18 +403,27 @@ pub struct LocalIndex {
 
 impl LocalIndex {
     pub fn from_memories(memories: Vec<Memory>) -> Self {
-        let mut by_uuid = BTreeMap::new();
-        let mut topic_keys = BTreeMap::new();
+        let mut index = Self::default();
         for m in memories {
-            if !m.topic_key.is_empty() {
-                topic_keys.insert((m.namespace.clone(), m.topic_key.clone()), m.uuid.clone());
-            }
-            by_uuid.insert(m.uuid.clone(), m);
+            index.insert(&m);
         }
-        Self {
-            by_uuid,
-            topic_keys,
+        index
+    }
+
+    /// Fold a record into the index.
+    ///
+    /// The index is built from the store and then grows with the records the
+    /// run accepts, so the next candidate of the same file is judged against
+    /// the store the run is building and not only against the store it started
+    /// from: two records claiming one topic key, or one uuid, become conflicts
+    /// the policy can answer instead of storage constraint errors nobody
+    /// planned for.
+    pub fn insert(&mut self, m: &Memory) {
+        if !m.topic_key.is_empty() {
+            self.topic_keys
+                .insert((m.namespace.clone(), m.topic_key.clone()), m.uuid.clone());
         }
+        self.by_uuid.insert(m.uuid.clone(), m.clone());
     }
 }
 
@@ -391,6 +513,7 @@ mod tests {
     fn record(uuid: &str, ns: &str, topic: &str, content: &str) -> ImportRecord {
         ImportRecord {
             uuid: uuid.into(),
+            title: String::new(),
             topic_key: topic.into(),
             namespace: ns.into(),
             memory_type: "fact".into(),
@@ -574,5 +697,55 @@ mod tests {
         let records = parse_jsonl(body.as_bytes(), 16_384).expect("a valid record parses");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].memory_type, "decision");
+    }
+
+    #[test]
+    fn parse_jsonl_refuses_a_timestamp_that_is_not_the_canonical_shape() {
+        // The reads compare these values as strings, so a valid RFC3339 value
+        // the engine never writes sorts in the wrong place forever. The field
+        // is named, and so is the shape that was expected.
+        for (field, value) in [
+            ("created_at", "2026-01-01T00:00:00.123Z"),
+            ("updated_at", "2026-01-01T00:00:00+02:00"),
+            ("valid_from", "2026-01-01"),
+        ] {
+            let mut fixture =
+                serde_json::to_value(record("u-time", "ns", "", "a")).expect("record JSON");
+            fixture[field] = serde_json::json!(value);
+            let body = format!("{fixture}\n");
+            let error = parse_jsonl(body.as_bytes(), 16_384)
+                .expect_err("a timestamp the engine cannot compare is refused");
+            assert!(
+                matches!(&error, MnexisError::InvalidArgument { field: refusal, .. } if refusal == field),
+                "{field}: the refusal is about the field that carried the value: {error}"
+            );
+            let message = error.to_string();
+            assert!(
+                message.contains("import line 1 (uuid u-time)"),
+                "{field}: the error names the line and the record: {message}"
+            );
+            assert!(
+                message.contains(CANONICAL_TIMESTAMP_SHAPE),
+                "{field}: the error names the shape it expected: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_canonical_timestamp_is_kept_as_it_arrived() {
+        // The shape the engine writes round-trips byte for byte: nothing here
+        // normalizes or reformats a value.
+        assert!(is_canonical_timestamp("2026-01-01T00:00:00Z"));
+        assert!(
+            !is_canonical_timestamp("2026-13-01T00:00:00Z"),
+            "a month no calendar has is not a timestamp the engine wrote"
+        );
+        assert!(!is_canonical_timestamp("2026-01-01T24:00:00Z"));
+        let body = format!(
+            "{}\n",
+            serde_json::to_string(&record("u-time", "ns", "", "a")).expect("record JSON")
+        );
+        let records = parse_jsonl(body.as_bytes(), 16_384).expect("a canonical record parses");
+        assert_eq!(records[0].created_at, "2026-01-01T00:00:00Z");
     }
 }
