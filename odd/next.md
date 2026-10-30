@@ -1325,7 +1325,12 @@ with the shipped binary, **no model, no migration, no bench**:
   content byte-identical, `history <old>` ≥ 1 row, `show <new>` byte-identical, the store
   grows ≤ old content + 150 B, **the door's answer byte-identical**, and `purge` succeeds.
 - **A4 — a warn-level doctor check `type_shape`**, because the doctor is the only surface
-  that can answer "how much of the store is unclassified?".
+  that can answer "how much of the store is unclassified?". *Refined by the B1 round-3
+  defect hunt: it now reports the default label and the rows whose type is outside the
+  seven valid values separately, says out loud that the store cannot tell a declared
+  `fact` from a defaulted one, names the junk rows with their stored value and folds their
+  bytes into the share, and carries the additive `TYPES_UNKNOWN` code for them
+  (`fix-import-doctor`, `ad31566`).*
 
 **B1 — measured (2026-10-30), and it FAILS.** The arm: the merged binary with ONE
 intervention — the `mnexis_save` `type` parameter description taught with the engine's
