@@ -1213,6 +1213,10 @@ superseded, kept for the record.
    steering run narrowed what that re-measurement can change: the lever it
    tested was negative, so what is left is the door's **weight** against the
    fixed prefix, which is where the same run said the cost lever lives.
+   **Delivered by item 22**: the bench environment ran (the image
+   `bench-mem:merged`, the merged tree's own release build), and the door
+   does not move — three of the four points hold outright and the fourth
+   misses a 40 000-token bar by 1.2 %, inside the arm's own spread.
 
 ### 21. The value filter — the engine answers "which records carry this value?"
 
@@ -1280,3 +1284,83 @@ decides exactly in Rust.
 **The debt that remains** is the door's re-measurement against the released
 binary, which needs the bench environment (docker image plus the model
 provider).
+
+### 22. The door, re-measured against the merged binary — it does not move
+
+The last debt of the board (item 21's second half) is closed. The door was
+priced, measured, lost and reverted (items 15 and 16), and the revert was
+measured once — **against PR #96's branch tree**. Since then `main` moved
+(the store recovery in the extension, the lean skill, the door in the MCP
+surface, the state block, the value filter), so the number the board carried
+was a number measured against a tree that no longer exists.
+
+**The criterion, written before the batch** (`tmp/bench/door-merged-measurement.md`):
+the arm `merged` — the merged tree (`main` = `e5f429c`, PR #105, plus the
+`0.6.0-dev` bump), built as a release binary and shipped in the image
+`bench-mem:merged` (FROM `bench-mem:now`, with exactly one file replaced — the
+engine) — the same container family, the same fixture, the same prompts, the
+same model, the same protocol, **N = 10**; the scorer unchanged
+(`score-priced.py`, `score-reread.py`; only a batch pattern was added, as the
+`priced` and `whole` arms did).
+
+**The steering phase (the prize) — the three arms side by side:**
+
+| | fat (`shape-b`) | whole (the branch tree) | **merged (`main`)** |
+| --- | --- | --- | --- |
+| median tokens | 37 290 | 38 902 | **40 495** |
+| min–max | 28 022 – 55 062 | 30 346 – 46 872 | **21 169 – 56 763** |
+| the spread | 27 040 | 16 526 | **35 594** |
+| median calls | 4.5 | 4.5 | **5.0** |
+| `mnexis_show` fan-out | 2/10 runs | 1/10 runs | **0/10 runs** |
+| the door called | 10/10 | 10/10 | **10/10** |
+| ≥2 state facts stated | 10/10 | 10/10 | **10/10** |
+| invented values | 0 | 0 | **0** |
+| re-read rate | 47.2 % | 48.5 % | **44.7 %** |
+| median redundant bytes | 6 418 | 7 530 | **5 275** |
+| **the fixed prefix** (tok/call) | 5 135 | 5 269 | **5 341** |
+
+**The trigger phase (the tax):** median tokens 44 361 / 55 607 / **46 101**;
+the trap kept 10/10 in every arm; the write phase 20/20 with 8 records.
+
+**The criterion, applied.**
+
+- **P1 — the cost comes back: does not hold, and the miss is inside the
+  noise.** The bar is a median of ≤ 40 000 tokens; the merged arm measures
+  **40 495** — over by **495 tokens (1.2 %)**. Its own runs span 21 169 →
+  56 763 (a spread of **35 594**, the widest of the three arms), and the
+  paired view against the `whole` arm is **4 of 10 runs cheaper, 6 of 10
+  dearer**, median delta **+3 885**, individual deltas from −22 319 to
+  +18 930. A 1.2 % difference is a fortieth of the spread, and the paired
+  view does not agree on a sign.
+- **P2 — the fan-out does not come back: holds, and better than the
+  reference.** **0 of 10** runs (the whole arm 1/10, the fat arm 2/10, the
+  priced arm that made the mechanism famous 7/10).
+- **P3 — the door still answers: holds.** 10/10 with the facts stated
+  (median 3 of 3), 0 invented values, the trap kept 10/10, the door called
+  10/10, no run without an answer.
+- **P4 — the delivery is honest: holds.** 20 measured phases, 0 without an
+  answer, 0 quarantined, none dropped.
+- **P5 — the weight against the fixed prefix (a reading).** The prefix moved
+  from 5 269 to **5 341** tok/call (+1.4 %; +4.0 % against the fat arm): the
+  merged tree's own surface is heavier than the branch tree's, and that is
+  paid by every call whatever the door answers. The **answer** did not get
+  heavier: the trigger phase is *cheaper* on the merged arm in 6 of 10 runs
+  (median delta −7 603) and its median is back at the fat arm's level — the
+  branch arm's 55 607 (max 95 474) was the outlier.
+
+**The verdict: the door does not move on the merged binary.** Three of the
+four points hold outright and the fourth misses the bar by 1.2 %, inside the
+noise the criterion itself warns about ("a rate near 45 % with n = 10 carries
+roughly ±15 points at one sigma"). The board's debt is closed.
+
+**What it does not settle, and what it hands to the next experiment.** The
+pruning lever — the door carrying the facts when the task is about the facts
+and less when it is not — is a **different experiment** (it needs a product
+change). What this run gives it is the base to beat: on the merged binary
+the door's answer costs **40 495** tokens in the steering phase (median,
+N = 10, one model, spread 35 594) and its **fixed prefix is 5 341 tok/call**,
+paid whatever the answer says.
+
+**Evidence:** `tmp/bench/door-merged-report.md`, the transcripts
+(`tmp/bench/out/s<i>-merged-{trigger,steering}.jsonl` with the per-run store
+and workspace snapshots), the criterion, and the image `bench-mem:merged`.
