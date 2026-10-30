@@ -754,6 +754,11 @@ impl<R: MemoryRepository> MemoryService<R> {
     /// is the storage layer's job — kept per-row here because the service
     /// already enforces atomicity at the request level).
     ///
+    /// Parsing validates each record's `memory_type` against the closed set
+    /// (see `io::parse_jsonl`), so a file that names a type no `--type`
+    /// filter could select is refused as a whole, by line and uuid, before
+    /// any row is written — a dry run and a real run classify identically.
+    ///
     /// Returns the structured outcomes: counts plus the remapped uuids
     /// (so the caller can log/display them).
     pub fn import(
