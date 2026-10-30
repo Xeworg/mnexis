@@ -62,3 +62,39 @@ test("describeFailure keeps the tail of stderr for diagnosis", () => {
 	const message = describeFailure({ code: 1, stderr: "line1\nline2\nline3" });
 	assert.match(message, /line3/);
 });
+
+// A12: exit 5 is `REVISION_CONFLICT` or `TOPIC_CONFLICT`
+// (`src/cli/output.rs:78`), and which of the two a caller can meet follows
+// from what it sends. The hint used to say "retry with the current revision"
+// for every command, including the ones that carry no revision at all.
+test("the exit-5 hint is the truth of the command that failed", () => {
+	// A save sends no revision: its conflict is an idempotency key reused for
+	// a different payload, or the topic key claimed at the same moment. The
+	// hint must not send the model looking for a revision to retry with.
+	const saved = describeFailure({ code: 5, stderr: "", command: "save" });
+	assert.doesNotMatch(
+		saved,
+		/retry with the current revision/i,
+		`a save has no revision to retry with: ${saved}`,
+	);
+	assert.match(saved, /idempotency_key/, `the hint names what a save can meet: ${saved}`);
+
+	// A supersede resolves both revisions itself, so its retry is the same
+	// supersede, never a revision flag the tool does not take.
+	const superseded = describeFailure({ code: 5, stderr: "", command: "supersede" });
+	assert.doesNotMatch(
+		superseded,
+		/retry with the current revision/i,
+		`mnexis_supersede takes no revision: ${superseded}`,
+	);
+	assert.match(superseded, /repeat the same supersede/, `the hint names the retry: ${superseded}`);
+
+	// The command that does take one still says so.
+	const updated = describeFailure({ code: 5, stderr: "", command: "update" });
+	assert.match(updated, /current revision/i, `an update can name the revision: ${updated}`);
+
+	// And a caller that names no command is told the conflict, not a retry it
+	// cannot perform.
+	const unknown = describeFailure({ code: 5, stderr: "" });
+	assert.match(unknown, /conflict/i, `the default hint names the conflict: ${unknown}`);
+});

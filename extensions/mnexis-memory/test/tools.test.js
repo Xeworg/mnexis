@@ -15,7 +15,7 @@ import mnexisMemory from "../index.js";
 
 /** A fake `mnexis` that records its arguments and answers envelopes. */
 const FAKE_BINARY = `#!/usr/bin/env node
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 // The canonical key of a workspace, the way the engine computes it: the
@@ -60,9 +60,25 @@ if (args[0] === "project" && args[1] === "list") {
 	const bindings = process.env.MNEXIS_FAKE_NO_BINDING ? [] : [{ key, namespace: workspace }];
 	process.stdout.write(JSON.stringify({ bindings, current_key: key }));
 } else if (args[0] === "config" && args[1] === "show") {
+	// MNEXIS_FAKE_ALLOW_FILE stands for the profile a human edits with
+	// \`mnexis config allow-namespace\`: the allowlist it holds is the one the
+	// next read answers, so a grant made between two calls is visible exactly
+	// the way it is in a real profile.
+	const state = process.env.MNEXIS_FAKE_ALLOW_FILE
+		? JSON.parse(readFileSync(process.env.MNEXIS_FAKE_ALLOW_FILE, "utf8"))
+		: null;
+	const write = state ? (state.write_namespaces ?? []) : [workspace];
 	process.stdout.write(
-		JSON.stringify({ scope: { read_namespaces: [workspace], write_namespaces: [workspace] } }),
+		JSON.stringify({ scope: { read_namespaces: [workspace], write_namespaces: write } }),
 	);
+} else if (args[0] === "config" && args[1] === "allow-namespace") {
+	const file = process.env.MNEXIS_FAKE_ALLOW_FILE;
+	const state = file ? JSON.parse(readFileSync(file, "utf8")) : { write_namespaces: [] };
+	state.write_namespaces = [...new Set([...(state.write_namespaces ?? []), args[2]])];
+	if (file) {
+		writeFileSync(file, JSON.stringify(state));
+	}
+	process.stdout.write(JSON.stringify({ namespace: args[2], write_namespaces: state.write_namespaces }));
 } else if (args[0] === "show") {
 	process.stdout.write(
 		JSON.stringify({
@@ -81,6 +97,13 @@ if (args[0] === "project" && args[1] === "list") {
 	}
 	process.stdout.write(JSON.stringify(listPayload));
 } else if (args[0] === "save") {
+	// The engine can refuse a save (a full store, a content over the cap):
+	// the refusal is an exit code and a message on stderr, never an empty
+	// answer. MNEXIS_FAKE_SAVE_FAIL stands for it.
+	if (process.env.MNEXIS_FAKE_SAVE_FAIL) {
+		process.stderr.write(process.env.MNEXIS_FAKE_SAVE_FAIL);
+		process.exit(2);
+	}
 	// The words the engine answers with: the ones this save asked for, plus
 	// the ones the record already carried. MNEXIS_FAKE_KEYWORDS stands for a
 	// record a previous session wrote.
@@ -1367,8 +1390,9 @@ test("the save carries the type of the fact the agent stores", async () => {
 		`and it is the type the agent gave: ${JSON.stringify(typed)}`,
 	);
 
-	// The type is the agent's to name, never the extension's: a save
-	// without one sends no flag, and the engine decides.
+	// The type is the agent's to name, never the extension's: a save without
+	// one sends no flag, and the engine stores `fact` on a new record and keeps
+	// the type an existing record already has.
 	await save.execute("ty2", { content: "sin tipo" }, undefined, undefined, context());
 	const untyped = calls(log).filter((args) => args[0] === "save").pop();
 	assert.equal(
@@ -1506,9 +1530,9 @@ test("a save with no words says nothing about them", async () => {
 
 // A save can land on a record that already existed: the engine bumps its
 // revision instead of adding a second one. The answer must say which of the
-// two happened, and the type is the one the record ended up with — the
-// engine decides it when the caller names none, so the answer is the only
-// place the model can read it.
+// two happened, and the type is the one the record ended up with — a new
+// record gets `fact` when the caller names none and a re-save keeps the type it
+// has, so the answer is the only place the model can read it.
 
 test("an update says the record was updated, and names the revision and the type", async () => {
 	const { log } = setup();
@@ -2171,5 +2195,194 @@ test("an empty session state draws no block", async () => {
 		);
 	} finally {
 		delete process.env.MNEXIS_FAKE_EMPTY_STATE;
+	}
+});
+
+// A1: the refusal promises that the command a human runs makes the retry
+// work. The session kept the empty allowlist it read BEFORE the grant, so the
+// retry answered from that cache for the rest of the session and the promise
+// could never come true. The grant is what a retry has to find.
+test("a retry after the human grants the namespace writes, as the refusal promised", async () => {
+	const { log, dir } = setup();
+	const allowFile = join(dir, "profile.json");
+	writeFileSync(allowFile, JSON.stringify({ write_namespaces: [] }));
+	process.env.MNEXIS_FAKE_ALLOW_FILE = allowFile;
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+
+		const refused = await save.execute(
+			"g1",
+			{ content: "el puerto es 8081" },
+			undefined,
+			undefined,
+			context(),
+		);
+		assert.equal(refused.isError, true, "an ungranted namespace refuses the write");
+		const refusal = refused.content.map((block) => block.text).join(" ");
+		assert.match(
+			refusal,
+			/mnexis config allow-namespace mnexis/,
+			`the refusal names the command that grants the namespace: ${refusal}`,
+		);
+		assert.match(refusal, /then retry/i, `and it promises that a retry works: ${refusal}`);
+		assert.equal(
+			calls(log).find((args) => args[0] === "save"),
+			undefined,
+			"nothing is written while the namespace is ungranted",
+		);
+
+		// The human runs the command in another terminal: the profile holds
+		// the namespace now, and nothing tells this session about it.
+		writeFileSync(allowFile, JSON.stringify({ write_namespaces: ["mnexis"] }));
+
+		const retried = await save.execute(
+			"g2",
+			{ content: "el puerto es 8081" },
+			undefined,
+			undefined,
+			context(),
+		);
+		const answer = retried.content.map((block) => block.text).join(" ");
+		assert.notEqual(
+			retried.isError,
+			true,
+			`the retry the refusal promised must go through: ${answer}`,
+		);
+		assert.ok(
+			calls(log).find((args) => args[0] === "save"),
+			"the retry reaches the engine",
+		);
+	} finally {
+		delete process.env.MNEXIS_FAKE_ALLOW_FILE;
+	}
+});
+
+// A5: the compaction summary is an episode of the session, not a generic
+// fact, and a store that refuses it must not take the summary down with it in
+// silence.
+test("a compaction summary is an episode, and a refusal leaves a trace the journal records", async () => {
+	const { log } = setup();
+	const { handlers, entries, pi } = fakeHost();
+	mnexisMemory(pi);
+
+	// Control: the store takes the summary. It is typed as the episode it is,
+	// the tag is the one comma string the CLI reads, and nothing is journaled.
+	await emit(
+		handlers,
+		"session_compact",
+		{ compactionEntry: { summary: "el puerto del servicio es 8081" } },
+		sessionContext("s-compact"),
+	);
+	const saved = calls(log).find((args) => args[0] === "save");
+	assert.ok(saved, "the summary reaches the engine");
+	assert.equal(
+		saved[saved.indexOf("--type") + 1],
+		"episode",
+		`the summary is stored as the episode it is: ${JSON.stringify(saved)}`,
+	);
+	assert.equal(
+		saved[saved.indexOf("--tags") + 1],
+		"compaction",
+		`the tag is one comma string, not an array Node stringifies: ${JSON.stringify(saved)}`,
+	);
+	assert.equal(entries.length, 0, "a save the store took leaves no trace");
+
+	// Boundary: the store refuses the summary (it is over the content cap).
+	// The summary is lost either way, but never silently.
+	process.env.MNEXIS_FAKE_SAVE_FAIL = "invalid argument: content: over the cap";
+	try {
+		await emit(
+			handlers,
+			"session_compact",
+			{ compactionEntry: { summary: "el puerto del servicio cambió a 8082" } },
+			sessionContext("s-compact"),
+		);
+	} finally {
+		delete process.env.MNEXIS_FAKE_SAVE_FAIL;
+	}
+	assert.equal(
+		entries.length,
+		1,
+		`a refused compaction save is journaled: ${JSON.stringify(entries)}`,
+	);
+	const trace = entries[0];
+	assert.equal(
+		trace.data.exit_code,
+		2,
+		`the trace carries the exit code: ${JSON.stringify(trace)}`,
+	);
+	assert.match(
+		JSON.stringify(trace.data),
+		/over the cap/,
+		`the trace keeps the engine's own message: ${JSON.stringify(trace)}`,
+	);
+});
+
+// A10: the engine never infers a type. `resolve_memory_type`
+// (`src/domain/memory_type.rs:63`) answers the requested type, else the type
+// the record already has, else `fact`.
+test("the shipped type text says what an omitted type becomes", async () => {
+	setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+	assert.ok(save, "mnexis_save is registered");
+	const described = save.parameters.properties.type.description;
+	assert.doesNotMatch(
+		described,
+		/engine decides/i,
+		`the engine never decides a type: ${described}`,
+	);
+	assert.match(described, /stored as `fact`/, `an omitted type becomes fact: ${described}`);
+	assert.match(described, /keeps the type/i, `a re-save keeps what the record has: ${described}`);
+
+	const readme = readFileSync(join(import.meta.dirname, "..", "README.md"), "utf8");
+	assert.doesNotMatch(
+		readme,
+		/engine decides/i,
+		"the README says what the engine does, not that it decides",
+	);
+	assert.ok(readme.includes("stored as `fact`"), "the README names the default type");
+	assert.match(readme, /keeps the type/i, "and says a re-save keeps the one the record has");
+});
+
+// A12: "as a episode" is not English. The article follows the sound of the
+// type, and the answer is the only place the model reads it.
+test("the save answer names the type with the article it reads with", async () => {
+	setup();
+	process.env.MNEXIS_FAKE_SAVE_JSON = JSON.stringify({ revision: 1, memory_type: "episode" });
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+
+		const episode = await save.execute(
+			"a1",
+			{ content: "el puerto es 8081" },
+			undefined,
+			undefined,
+			context(),
+		);
+		const episodeText = episode.content.map((block) => block.text).join(" ");
+		assert.match(episodeText, /as an episode\./, `an episode reads with 'an': ${episodeText}`);
+		assert.doesNotMatch(episodeText, /as a episode/, `never 'as a episode': ${episodeText}`);
+
+		// Control: a consonant keeps the article it always had.
+		process.env.MNEXIS_FAKE_SAVE_JSON = JSON.stringify({ revision: 1, memory_type: "fact" });
+		const fact = await save.execute(
+			"a2",
+			{ content: "el puerto es 8082" },
+			undefined,
+			undefined,
+			context(),
+		);
+		const factText = fact.content.map((block) => block.text).join(" ");
+		assert.match(factText, /as a fact\./, `a fact reads with 'a': ${factText}`);
+	} finally {
+		delete process.env.MNEXIS_FAKE_SAVE_JSON;
 	}
 });

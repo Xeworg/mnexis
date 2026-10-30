@@ -168,6 +168,9 @@ if (args[0] === "project" && args[1] === "list") {
 	const content = args[end - 1];
 	const title = flag("--title") ?? "";
 	const keywords = normalizeKeywords((flag("--keywords") ?? "").split(","));
+	// The type follows \`resolve_memory_type\` (src/domain/memory_type.rs:63):
+	// what the save asked for, else what the record already has, else \`fact\`.
+	const requestedType = flag("--type");
 	const topicKey = (flag("--topic-key") ?? "") || (title.trim() === "" ? "" : keyFromTitle(title));
 	const occupier =
 		topicKey === ""
@@ -200,6 +203,8 @@ if (args[0] === "project" && args[1] === "list") {
 		occupier.content = content;
 		occupier.title = title;
 		occupier.keywords = keywords;
+		// A re-save that names no type keeps the one the record has.
+		occupier.memory_type = requestedType ?? occupier.memory_type;
 		occupier.updated_at = stamp(occupier.id);
 		persist();
 		process.stdout.write(
@@ -209,6 +214,9 @@ if (args[0] === "project" && args[1] === "list") {
 				title: occupier.title,
 				keywords: occupier.keywords,
 				topic_key: occupier.topic_key,
+				// The type travels in the answer only when the save named one:
+				// the older shape this fake also models answers without it.
+				...(requestedType ? { memory_type: occupier.memory_type } : {}),
 			}),
 		);
 	} else {
@@ -220,7 +228,7 @@ if (args[0] === "project" && args[1] === "list") {
 			keywords,
 			topic_key: topicKey,
 			namespace,
-			memory_type: "fact",
+			memory_type: requestedType ?? "fact",
 			content,
 			state: "active",
 			revision: 1,
@@ -237,6 +245,9 @@ if (args[0] === "project" && args[1] === "list") {
 				title: item.title,
 				keywords: item.keywords,
 				topic_key: item.topic_key,
+				// Only a save that named a type is answered with it; a save that
+				// named none is answered in the shape an engine before #107 uses.
+				...(requestedType ? { memory_type: item.memory_type } : {}),
 			}),
 		);
 	}
@@ -473,7 +484,16 @@ function topicKeyOf(title) {
 }
 
 /** One record of the fake store, shaped the way `list --full` answers. */
-function record({ id, uuid, title, content, keywords = [], state = "active", namespace = NAMESPACE }) {
+function record({
+	id,
+	uuid,
+	title,
+	content,
+	keywords = [],
+	state = "active",
+	namespace = NAMESPACE,
+	type = "fact",
+}) {
 	return {
 		id,
 		uuid,
@@ -481,7 +501,7 @@ function record({ id, uuid, title, content, keywords = [], state = "active", nam
 		keywords,
 		topic_key: topicKeyOf(title),
 		namespace,
-		memory_type: "fact",
+		memory_type: type,
 		content,
 		state,
 		revision: 1,
@@ -1315,4 +1335,50 @@ test("a save that introduces a different number is not a repair: the value did n
 	assert.equal(answer.entries.length, 0, "and nothing is reported as an intervention");
 	const live = answer.store.filter((item) => item.state === "active");
 	assert.equal(live.length, 2, "the live records are exactly what the engine left");
+});
+
+// A4: the twin repair ignored `memory_type`. Two live records that
+// deliberately differ in type and share a value of three or more digits and
+// one word are two facts, and the repair used to supersede one onto the other.
+test("a record of another type is never superseded by a save", async (t) => {
+	const knowledge = () =>
+		record({
+			id: 1,
+			uuid: "u-knowledge",
+			title: "Puerto de escucha del servicio",
+			content: "El servicio payments-api escucha en el puerto 8081 (4 workers).",
+			keywords: ["puerto", "port"],
+			type: "knowledge",
+		});
+
+	// Control: the same value, the same word, the same type — one fact with
+	// two records, and the older one is retired onto the newer one.
+	const control = await save(scenario(t, { store: [knowledge()] }), {
+		...TWIN_SAVE,
+		type: "knowledge",
+	});
+	assert.equal(control.supersedes.length, 1, "the same type is the same fact");
+
+	// Boundary: the save writes the decision the team took about that port.
+	// Nothing here is one fact twice, and the type is what says so.
+	const sc = scenario(t, { store: [knowledge()] });
+	const answer = await save(sc, { ...TWIN_SAVE, type: "decision" });
+	assert.notEqual(answer.result.isError, true, "the save itself is untouched");
+	assert.equal(answer.supersedes.length, 0, "a record of another type is not a twin");
+	assert.equal(answer.entries.length, 0, "and nothing is reported as an intervention");
+	assert.equal(
+		answer.store.find((item) => item.uuid === "u-knowledge").state,
+		"active",
+		"the knowledge record is left live, never superseded",
+	);
+	assert.equal(
+		answer.store.find((item) => item.uuid === "u-new").memory_type,
+		"decision",
+		"the save landed as the decision it is",
+	);
+	assert.deepEqual(
+		liveUuids(answer.store),
+		["u-knowledge", "u-new"],
+		"both facts stay live in the store",
+	);
 });

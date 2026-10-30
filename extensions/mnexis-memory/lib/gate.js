@@ -21,8 +21,43 @@ export const EXIT_CODES = {
 	10: "busy",
 };
 
+/**
+ * The exit-5 truth for the command that failed.
+ *
+ * Code 5 is `REVISION_CONFLICT` or `TOPIC_CONFLICT` (`src/cli/output.rs`), and
+ * which of the two a caller can meet follows from what the caller sends: a
+ * save carries no revision at all, a supersede resolves both of its revisions
+ * itself, and `update` is the one command that takes the revision a retry must
+ * name. A hint that promises a retry the caller cannot perform is worse than
+ * none.
+ */
+function conflictHint(command) {
+	const name = typeof command === "string" ? command : "";
+	if (name === "save") {
+		return (
+			"the idempotency key was already used for a different payload, or another " +
+			"writer claimed the topic key at the same moment: retry with the same payload " +
+			"and the same `idempotency_key`, or with a new `idempotency_key`"
+		);
+	}
+	if (name === "supersede") {
+		return (
+			"the older or the newer record changed while the supersede ran: read both " +
+			"with the current `mnexis_show` answer and repeat the same supersede, which " +
+			"resolves both revisions itself"
+		);
+	}
+	if (name === "update") {
+		return "re-read the record with mnexis_show and retry with the current revision";
+	}
+	return (
+		"the record changed under the write (`REVISION_CONFLICT` or `TOPIC_CONFLICT`) " +
+		"and nothing was written"
+	);
+}
+
 /** Human-readable, actionable message for a failed CLI call. */
-export function describeFailure({ code, stderr, namespace }) {
+export function describeFailure({ code, stderr, namespace, command }) {
 	const label = EXIT_CODES[code] ?? "unknown error";
 	const tail = String(stderr ?? "")
 		.trim()
@@ -38,7 +73,7 @@ export function describeFailure({ code, stderr, namespace }) {
 			? `the namespace '${namespace}' is not authorized for writes`
 			: "the operation is not permitted";
 	} else if (code === 5) {
-		hint = "re-read the record with mnexis_show and retry with the current revision";
+		hint = conflictHint(command);
 	}
 	const parts = [`mnexis exited with code ${code} (${label})`];
 	if (hint) {
