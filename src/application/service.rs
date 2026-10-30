@@ -236,7 +236,7 @@ impl<R: MemoryRepository> MemoryService<R> {
             if occupier.state != MemoryState::Active || occupier.deleted {
                 return self.refuse_dead_occupier(&occupier, &req);
             }
-            let updated = self.update_occupied(&occupier, &req, &requested_keywords)?;
+            let updated = self.update_occupied(&occupier, &req, &requested_keywords, idem_hash)?;
             return Ok(updated);
         }
 
@@ -266,34 +266,18 @@ impl<R: MemoryRepository> MemoryService<R> {
             assertion_basis: req.assertion_basis.clone(),
         };
 
-        let row_id = self.repo.save(&mem)?;
+        // The idempotency row is the one the request owes its caller: it
+        // names the record this save writes, so a retry with the same key
+        // finds it and replays it.
+        let idempotency = save_idempotency_record(&req, idem_hash, req.uuid.clone());
 
-        if !req.tags.is_empty() {
-            self.repo.set_tags(&req.uuid, &req.tags)?;
-        }
-
-        // Move idempotency_key only after all borrows of req are done.
-        if let Some(idem_key) = req.idempotency_key {
-            let record = IdempotencyRecord {
-                key: idem_key,
-                namespace: req.namespace.clone(),
-                request_hash: idem_hash.unwrap(), // safe: idempotency_key was Some
-                result_uuid: req.uuid.clone(),
-                created_at: req.now,
-            };
-            self.repo.save_idempotency(&record)?;
-        }
-
-        // Re-read so the caller sees the canonical assigned rowid and
-        // the persisted timestamps (the timestamps defaulted to
-        // `req.now` in the in-memory `mem`; the DB may have applied
-        // its own defaults via the schema's `DEFAULT (strftime(...))`).
-        let stored = self
-            .repo
-            .get_by_uuid(&req.uuid)?
-            .ok_or_else(|| MnexisError::not_found(format!("memory:{}", req.uuid)))?;
-        let _ = row_id; // already reflected in `stored.id`
-        Ok(stored)
+        // One save, one write: the record, its tags, its idempotency row and
+        // the row the caller reads back commit together or not at all. A
+        // failure anywhere leaves nothing behind, so the retry of a save that
+        // failed is a first attempt — not a collision with a record the caller
+        // was told had not been written.
+        self.repo
+            .save_with_tags_and_idempotency(&mem, &req.tags, idempotency.as_ref())
     }
 
     // --- get ---
@@ -501,8 +485,14 @@ impl<R: MemoryRepository> MemoryService<R> {
             .as_ref()
             .filter(|t| !t.is_empty())
             .map(Vec::as_slice);
-        self.repo
-            .update_with_history_and_tags(&updated, req.expected_revision, &history, tags)
+        // An update is not a save: no idempotency key rides it.
+        self.repo.update_with_history_and_tags(
+            &updated,
+            req.expected_revision,
+            &history,
+            tags,
+            None,
+        )
     }
 
     // --- history ---
@@ -749,15 +739,25 @@ impl<R: MemoryRepository> MemoryService<R> {
     // --- import ---
     /// Parse the JSONL `body` and apply it under the given conflict policy.
     /// When `dry_run` is true, validate and classify every record without
-    /// writing; otherwise, persist the resolved set inside a single
-    /// service call (the repo's `save` is per-row; a wrapping transaction
-    /// is the storage layer's job — kept per-row here because the service
-    /// already enforces atomicity at the request level).
+    /// writing.
+    ///
+    /// ## One import is one unit
+    ///
+    /// The whole file is judged **before the first write**: every candidate's
+    /// namespace is authorized, every record is classified against an index
+    /// that folds in the records the run has already accepted (so a topic key
+    /// or uuid claimed twice *inside* the file is a conflict, not a storage
+    /// constraint error), and the records to write are collected. Only then
+    /// does the write happen, as one transaction through
+    /// [`MemoryRepository::save_batch`]. A file refused at record 40 therefore
+    /// leaves nothing behind, and a failure inside the batch rolls the batch
+    /// back.
     ///
     /// Parsing validates each record's `memory_type` against the closed set
-    /// (see `io::parse_jsonl`), so a file that names a type no `--type`
-    /// filter could select is refused as a whole, by line and uuid, before
-    /// any row is written — a dry run and a real run classify identically.
+    /// and each timestamp against the one shape the engine writes (see
+    /// `io::parse_jsonl`), so a file the engine could store but never read
+    /// correctly is refused as a whole, by line and uuid, before any row is
+    /// written — a dry run and a real run classify identically.
     ///
     /// Returns the structured outcomes: counts plus the remapped uuids
     /// (so the caller can log/display them).
@@ -770,11 +770,21 @@ impl<R: MemoryRepository> MemoryService<R> {
         self.scope.authorize_operation(Operation::Import)?;
         let records = crate::application::io::parse_jsonl(body, self.config.max_content_bytes)?;
 
+        // Pass 1: authorize every candidate's namespace as a write. The scope
+        // cannot widen during an import, and a file that names a namespace
+        // this process cannot write is refused before anything is written —
+        // not after the records that preceded it landed.
+        for candidate in &records {
+            self.scope.authorize_write(&candidate.namespace)?;
+        }
+
         // Build the local index over every memory the caller can read. This
-        // is the source of truth for conflict decisions.
+        // is the source of truth for conflict decisions; the run folds the
+        // records it accepts into it as it goes, so the file cannot clash with
+        // itself unnoticed.
         let namespaces = self.scope.read_namespaces.clone();
         let local_memories = self.repo.list_for_export(&namespaces, true)?;
-        let local_index = LocalIndex::from_memories(local_memories);
+        let mut local_index = LocalIndex::from_memories(local_memories);
 
         let mut summary = ImportSummary {
             dry_run,
@@ -787,13 +797,11 @@ impl<R: MemoryRepository> MemoryService<R> {
             conflicts: Vec::new(),
             remapped_uuids: Vec::new(),
         };
+        // Pass 2: classify the whole file and collect the writes. Nothing is
+        // written while a refusal is still possible.
+        let mut pending: Vec<Memory> = Vec::new();
 
         for candidate in records {
-            // Authorize the candidate's namespace as a write. The scope
-            // cannot widen during an import; this is the protection the
-            // design asks for.
-            self.scope.authorize_write(&candidate.namespace)?;
-
             let decision =
                 crate::application::io::classify(candidate.clone(), &local_index, policy, || {
                     crate::cli::profile::uuid_v4().unwrap_or_else(|_| {
@@ -808,10 +816,9 @@ impl<R: MemoryRepository> MemoryService<R> {
             match decision {
                 ImportDecision::Identical => summary.identical += 1,
                 ImportDecision::Fresh => {
-                    if !dry_run {
-                        let mem: Memory = candidate.into();
-                        self.repo.save(&mem)?;
-                    }
+                    let mem: Memory = candidate.into();
+                    local_index.insert(&mem);
+                    pending.push(mem);
                     summary.fresh += 1;
                 }
                 ImportDecision::Skipped(conflict) => {
@@ -844,15 +851,22 @@ impl<R: MemoryRepository> MemoryService<R> {
                     });
                 }
                 ImportDecision::Remapped(_, new_uuid) => {
-                    if !dry_run {
-                        let mut mem: Memory = candidate.into();
-                        mem.uuid = new_uuid.clone();
-                        self.repo.save(&mem)?;
-                    }
+                    let mut mem: Memory = candidate.into();
+                    mem.uuid = new_uuid.clone();
+                    local_index.insert(&mem);
+                    pending.push(mem);
                     summary.remapped += 1;
                     summary.remapped_uuids.push(new_uuid);
                 }
             }
+        }
+
+        // Pass 3: one transaction for the whole run. The pre-pass already
+        // refused everything a file can be refused for, so a failure here is
+        // the store's (a constraint, a full disk) — and it leaves no partial
+        // import behind either.
+        if !dry_run && !pending.is_empty() {
+            self.repo.save_batch(&pending)?;
         }
 
         Ok(summary)
@@ -1094,6 +1108,7 @@ impl<R: MemoryRepository> MemoryService<R> {
         current: &Memory,
         req: &SaveRequest,
         requested_keywords: &[String],
+        idem_hash: Option<String>,
     ) -> Result<Memory, MnexisError> {
         let next_revision = current.revision + 1;
         let keywords = if req.replace_keywords {
@@ -1162,8 +1177,17 @@ impl<R: MemoryRepository> MemoryService<R> {
         } else {
             Some(&req.tags)
         };
-        self.repo
-            .update_with_history_and_tags(&updated, current.revision, &history, tags)
+        // The save owes its caller the same idempotency row whether it created
+        // the record or updated it: written inside the update transaction, a
+        // same-key retry replays this revision instead of writing the next one.
+        let idempotency = save_idempotency_record(req, idem_hash, current.uuid.clone());
+        self.repo.update_with_history_and_tags(
+            &updated,
+            current.revision,
+            &history,
+            tags,
+            idempotency.as_ref(),
+        )
     }
 
     // --- the topic a title yields ---
@@ -1254,6 +1278,33 @@ impl<R: MemoryRepository> MemoryService<R> {
                 memory_types,
             ),
         }
+    }
+}
+
+// --- the idempotency row a save owes ---
+
+/// The idempotency row a save owes its caller, when the request carried a key.
+///
+/// `result_uuid` is the record the save actually wrote: the freshly minted
+/// uuid when the save creates the record, the occupier's uuid when it updates
+/// the record that already holds the topic key. Either way, a retry with the
+/// same key replays *that* record instead of writing another revision.
+fn save_idempotency_record(
+    req: &SaveRequest,
+    hash: Option<String>,
+    result_uuid: String,
+) -> Option<IdempotencyRecord> {
+    match (req.idempotency_key.as_ref(), hash) {
+        (Some(key), Some(request_hash)) => Some(IdempotencyRecord {
+            key: key.clone(),
+            namespace: req.namespace.clone(),
+            request_hash,
+            result_uuid,
+            created_at: req.now.clone(),
+        }),
+        // The key and its hash come from the same option, so one is never
+        // present without the other; write no row rather than invent a hash.
+        _ => None,
     }
 }
 

@@ -19,6 +19,30 @@ pub trait MemoryRepository {
     /// already exists.
     fn save(&mut self, mem: &Memory) -> Result<i64, MnexisError>;
 
+    /// Create one record together with everything that belongs to it — its
+    /// tags, its idempotency row, and the row the caller reads back — in one
+    /// transaction. Returns the stored record.
+    ///
+    /// A create is one write or no write. A failure anywhere inside (the
+    /// INSERT, a tag, the idempotency row) leaves the store exactly as it
+    /// was, so a caller whose retry carries the same idempotency key is
+    /// making a first attempt — not meeting a record it was told had not been
+    /// written.
+    fn save_with_tags_and_idempotency(
+        &mut self,
+        mem: &Memory,
+        tags: &[String],
+        idempotency: Option<&IdempotencyRecord>,
+    ) -> Result<Memory, MnexisError>;
+
+    /// Insert a whole batch in one transaction: every record lands or none
+    /// does.
+    ///
+    /// The unit is the operation the caller asked for, not the row: an import
+    /// that is refused on its fortieth record must not leave the first
+    /// thirty-nine behind.
+    fn save_batch(&mut self, memories: &[Memory]) -> Result<(), MnexisError>;
+
     /// Get a memory by its UUID. Returns `Ok(None)` if not found.
     fn get_by_uuid(&self, uuid: &str) -> Result<Option<Memory>, MnexisError>;
 
@@ -229,16 +253,21 @@ pub trait MemoryRepository {
         include_deleted: bool,
     ) -> Result<Vec<Memory>, MnexisError>;
 
-    /// Apply an update + history + tag rewrite as a single transaction
-    /// (T23 close test `partial_failure_no_partial_writes`). Returns the
-    /// updated `Memory`. A failure inside the transaction rolls back all
-    /// three writes.
+    /// Apply an update + history + tag rewrite + idempotency row as a single
+    /// transaction (T23 close test `partial_failure_no_partial_writes`).
+    /// Returns the updated `Memory`. A failure inside the transaction rolls
+    /// back every write.
+    ///
+    /// `idempotency` is the row a `save` that landed on an existing record
+    /// owes its caller: written inside the same transaction, a retry of that
+    /// save replays the record instead of writing another revision.
     fn update_with_history_and_tags(
         &mut self,
         updated: &Memory,
         expected_revision: i32,
         history: &MemoryHistory,
         tags: Option<&[String]>,
+        idempotency: Option<&IdempotencyRecord>,
     ) -> Result<Memory, MnexisError>;
 
     /// Full-text search over active, non-deleted memories. Delegates to

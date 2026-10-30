@@ -30,6 +30,123 @@ impl SqliteMemoryRepository {
         &self.conn
     }
 
+    /// The one INSERT that creates a record.
+    ///
+    /// The single `save` and the batch import share it, so the column list,
+    /// the keyword encoding and the refusal a duplicate topic key earns are
+    /// decided once: an import writes a record exactly as a save does.
+    fn insert_memory(conn: &Connection, mem: &Memory) -> Result<i64, MnexisError> {
+        let state_str = mem.state.as_str();
+        let keywords = Memory::keywords_column(&mem.keywords);
+        let result = conn.execute(
+            "INSERT INTO memories (
+                uuid, title, topic_key, revision, namespace, memory_type, state, content,
+                actor, channel, assertion_basis,
+                valid_from, valid_until, deleted, deleted_at, purge_after,
+                created_at, updated_at, keywords
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                ?9, ?10, ?11,
+                ?12, ?13, ?14, ?15, ?16,
+                ?17, ?18, ?19
+            )",
+            params![
+                mem.uuid,
+                mem.title,
+                mem.topic_key,
+                mem.revision,
+                mem.namespace,
+                mem.memory_type,
+                state_str,
+                mem.content,
+                mem.actor,
+                mem.channel,
+                mem.assertion_basis,
+                mem.valid_from,
+                mem.valid_until,
+                mem.deleted as i32,
+                mem.deleted_at,
+                mem.purge_after,
+                mem.created_at,
+                mem.updated_at,
+                keywords,
+            ],
+        );
+        match result {
+            Ok(_) => {
+                let row_id: i64 = conn
+                    .query_row("SELECT last_insert_rowid()", [], |r| r.get(0))
+                    .map_err(sql_to_domain)?;
+                Ok(row_id)
+            }
+            Err(rusqlite::Error::SqliteFailure(ref code, _))
+                if code.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                Err(MnexisError::topic_conflict(
+                    mem.topic_key.clone(),
+                    mem.namespace.clone(),
+                ))
+            }
+            Err(e) => Err(sql_to_domain(e)),
+        }
+    }
+
+    /// The one tag rewrite: replace the record's tags with `tags`.
+    ///
+    /// The create path, the update transaction and the standalone `set_tags`
+    /// share it, so the delete-then-insert and the created-at default are the
+    /// same write everywhere.
+    fn write_tags(conn: &Connection, uuid: &str, tags: &[String]) -> Result<(), MnexisError> {
+        conn.execute("DELETE FROM memory_tags WHERE memory_uuid = ?1", [uuid])
+            .map_err(sql_to_domain)?;
+        for tag in tags {
+            conn.execute(
+                "INSERT INTO memory_tags (memory_uuid, tag, created_at) \
+                 VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+                params![uuid, tag],
+            )
+            .map_err(sql_to_domain)?;
+        }
+        Ok(())
+    }
+
+    /// The one idempotency INSERT.
+    fn write_idempotency(conn: &Connection, record: &IdempotencyRecord) -> Result<(), MnexisError> {
+        conn.execute(
+            "INSERT INTO idempotency_records (id_key, namespace, request_hash, result_uuid, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                record.key.as_str(),
+                record.namespace,
+                record.request_hash,
+                record.result_uuid,
+                record.created_at,
+            ],
+        )
+        .map_err(sql_to_domain)?;
+        Ok(())
+    }
+
+    /// Read one record back by uuid, live or including the soft-deleted ones.
+    fn select_memory(
+        conn: &Connection,
+        uuid: &str,
+        include_deleted: bool,
+    ) -> Result<Option<Memory>, MnexisError> {
+        let live_only = if include_deleted {
+            ""
+        } else {
+            " AND deleted = 0"
+        };
+        conn.query_row(
+            &format!("SELECT {SELECT_COLUMNS} FROM memories WHERE uuid = ?1{live_only}"),
+            [uuid],
+            |row| Self::row_to_memory(row).map_err(to_sql_err),
+        )
+        .optional()
+        .map_err(sql_to_domain)
+    }
+
     fn row_to_memory(row: &Row) -> Result<Memory, MnexisError> {
         let id: Option<i64> = row.get(0).map_err(sql_to_domain)?;
         let uuid: String = row.get(1).map_err(sql_to_domain)?;
@@ -343,82 +460,59 @@ const VALUE_SCAN_CHUNK: usize = 256;
 
 impl MemoryRepository for SqliteMemoryRepository {
     fn save(&mut self, mem: &Memory) -> Result<i64, MnexisError> {
-        let state_str = mem.state.as_str();
-        let keywords = Memory::keywords_column(&mem.keywords);
-        let result = self.conn.execute(
-            "INSERT INTO memories (
-                uuid, title, topic_key, revision, namespace, memory_type, state, content,
-                actor, channel, assertion_basis,
-                valid_from, valid_until, deleted, deleted_at, purge_after,
-                created_at, updated_at, keywords
-            ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-                ?9, ?10, ?11,
-                ?12, ?13, ?14, ?15, ?16,
-                ?17, ?18, ?19
-            )",
-            params![
-                mem.uuid,
-                mem.title,
-                mem.topic_key,
-                mem.revision,
-                mem.namespace,
-                mem.memory_type,
-                state_str,
-                mem.content,
-                mem.actor,
-                mem.channel,
-                mem.assertion_basis,
-                mem.valid_from,
-                mem.valid_until,
-                mem.deleted as i32,
-                mem.deleted_at,
-                mem.purge_after,
-                mem.created_at,
-                mem.updated_at,
-                keywords,
-            ],
-        );
+        Self::insert_memory(&self.conn, mem)
+    }
+
+    /// Create one record with everything that belongs to it — tags, the
+    /// idempotency row, and the row the caller reads back — as one write.
+    ///
+    /// The read-back is inside the transaction on purpose: the caller gets the
+    /// canonical row (assigned rowid, persisted timestamps) only when the row
+    /// and its companions committed.
+    fn save_with_tags_and_idempotency(
+        &mut self,
+        mem: &Memory,
+        tags: &[String],
+        idempotency: Option<&IdempotencyRecord>,
+    ) -> Result<Memory, MnexisError> {
+        let tx = self.conn.unchecked_transaction().map_err(sql_to_domain)?;
+        let result: Result<Memory, MnexisError> = (|| {
+            Self::insert_memory(&tx, mem)?;
+            if !tags.is_empty() {
+                Self::write_tags(&tx, mem.uuid.as_str(), tags)?;
+            }
+            if let Some(record) = idempotency {
+                Self::write_idempotency(&tx, record)?;
+            }
+            Self::select_memory(&tx, mem.uuid.as_str(), false)?
+                .ok_or_else(|| MnexisError::not_found(format!("memory:{}", mem.uuid)))
+        })();
         match result {
-            Ok(_) => {
-                let row_id: i64 = self
-                    .conn
-                    .query_row("SELECT last_insert_rowid()", [], |r| r.get(0))
-                    .map_err(sql_to_domain)?;
-                Ok(row_id)
+            Ok(stored) => {
+                tx.commit().map_err(sql_to_domain)?;
+                Ok(stored)
             }
-            Err(rusqlite::Error::SqliteFailure(ref code, _))
-                if code.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                Err(MnexisError::topic_conflict(
-                    mem.topic_key.clone(),
-                    mem.namespace.clone(),
-                ))
-            }
-            Err(e) => Err(sql_to_domain(e)),
+            // Dropping the transaction rolls every write of this save back.
+            Err(e) => Err(e),
         }
     }
 
+    /// Insert a whole batch in one transaction: every record lands or none
+    /// does. A duplicate topic key or uuid anywhere aborts the whole batch.
+    fn save_batch(&mut self, memories: &[Memory]) -> Result<(), MnexisError> {
+        let tx = self.conn.unchecked_transaction().map_err(sql_to_domain)?;
+        for mem in memories {
+            Self::insert_memory(&tx, mem)?;
+        }
+        tx.commit().map_err(sql_to_domain)
+    }
+
     fn get_by_uuid(&self, uuid: &str) -> Result<Option<Memory>, MnexisError> {
-        self.conn
-            .query_row(
-                &format!("SELECT {SELECT_COLUMNS} FROM memories WHERE uuid = ?1 AND deleted = 0"),
-                [uuid],
-                |row| Self::row_to_memory(row).map_err(to_sql_err),
-            )
-            .optional()
-            .map_err(sql_to_domain)
+        Self::select_memory(&self.conn, uuid, false)
     }
 
     fn get_by_uuid_including_deleted(&self, uuid: &str) -> Result<Option<Memory>, MnexisError> {
-        self.conn
-            .query_row(
-                &format!("SELECT {SELECT_COLUMNS} FROM memories WHERE uuid = ?1"),
-                [uuid],
-                |row| Self::row_to_memory(row).map_err(to_sql_err),
-            )
-            .optional()
-            .map_err(sql_to_domain)
+        Self::select_memory(&self.conn, uuid, true)
     }
 
     fn get_by_rowid(&self, id: i64) -> Result<Option<Memory>, MnexisError> {
@@ -987,23 +1081,13 @@ impl MemoryRepository for SqliteMemoryRepository {
     }
 
     fn set_tags(&mut self, uuid: &str, tags: &[String]) -> Result<(), MnexisError> {
-        self.conn
-            .execute("DELETE FROM memory_tags WHERE memory_uuid = ?1", [uuid])
-            .map_err(sql_to_domain)?;
-        for tag in tags {
-            self.conn
-                .execute(
-                    "INSERT INTO memory_tags (memory_uuid, tag, created_at) \
-                     VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
-                    params![uuid, tag],
-                )
-                .map_err(sql_to_domain)?;
-        }
-        Ok(())
+        Self::write_tags(&self.conn, uuid, tags)
     }
 
-    /// Atomic update + history + tag rewrite. Used by `MemoryService::update`
-    /// so that a failure at any step rolls back the entire change
+    /// Apply an update + history + tag rewrite + idempotency row as a single
+    /// transaction. Used by `MemoryService::update` and by the re-save that
+    /// lands on an existing record (`MemoryService::update_occupied`), so that
+    /// a failure at any step rolls back the entire change
     /// (T23 `partial_failure_no_partial_writes`).
     fn update_with_history_and_tags(
         &mut self,
@@ -1011,6 +1095,7 @@ impl MemoryRepository for SqliteMemoryRepository {
         expected_revision: i32,
         history: &MemoryHistory,
         tags: Option<&[String]>,
+        idempotency: Option<&IdempotencyRecord>,
     ) -> Result<Memory, MnexisError> {
         let tx = self.conn.unchecked_transaction().map_err(sql_to_domain)?;
         let keywords = Memory::keywords_column(&updated.keywords);
@@ -1077,19 +1162,10 @@ impl MemoryRepository for SqliteMemoryRepository {
             if let Some(tags) = tags
                 && !tags.is_empty()
             {
-                tx.execute(
-                    "DELETE FROM memory_tags WHERE memory_uuid = ?1",
-                    [history.memory_uuid.as_str()],
-                )
-                .map_err(sql_to_domain)?;
-                for tag in tags {
-                    tx.execute(
-                        "INSERT INTO memory_tags (memory_uuid, tag, created_at) \
-                             VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
-                        params![history.memory_uuid, tag],
-                    )
-                    .map_err(sql_to_domain)?;
-                }
+                Self::write_tags(&tx, history.memory_uuid.as_str(), tags)?;
+            }
+            if let Some(record) = idempotency {
+                Self::write_idempotency(&tx, record)?;
             }
             let mut stmt = tx
                 .prepare(&format!(
@@ -1138,20 +1214,7 @@ impl MemoryRepository for SqliteMemoryRepository {
     }
 
     fn save_idempotency(&mut self, r: &IdempotencyRecord) -> Result<(), MnexisError> {
-        self.conn
-            .execute(
-                "INSERT INTO idempotency_records (id_key, namespace, request_hash, result_uuid, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    r.key.as_str(),
-                    r.namespace,
-                    r.request_hash,
-                    r.result_uuid,
-                    r.created_at,
-                ],
-            )
-            .map_err(sql_to_domain)?;
-        Ok(())
+        Self::write_idempotency(&self.conn, r)
     }
 
     fn search(
@@ -1712,7 +1775,7 @@ mod tests {
             changed_at: "2026-01-03T00:00:00Z".to_string(),
         };
         let err = repo
-            .update_with_history_and_tags(&stale, 1, &history, None)
+            .update_with_history_and_tags(&stale, 1, &history, None, None)
             .unwrap_err();
         assert_eq!(
             err,
