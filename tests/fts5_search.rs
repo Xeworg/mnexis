@@ -415,7 +415,7 @@ fn an_update_with_history_reindexes_the_row() {
         change_reason: "re-saved".to_string(),
         changed_at: "2026-01-02T00:00:00Z".to_string(),
     };
-    repo.update_with_history_and_tags(&updated, saved.revision, &history, None)
+    repo.update_with_history_and_tags(&updated, saved.revision, &history, None, None)
         .unwrap();
 
     let (content, _, _, keywords) = must_be_indexed(repo.connection(), "fact-1");
@@ -451,7 +451,7 @@ fn an_update_with_history_carries_the_title() {
         changed_at: "2026-01-02T00:00:00Z".to_string(),
     };
     let written = repo
-        .update_with_history_and_tags(&renamed, saved.revision, &history, None)
+        .update_with_history_and_tags(&renamed, saved.revision, &history, None, None)
         .expect("the write must run");
 
     assert_eq!(
