@@ -98,8 +98,15 @@ if (args[0] === "project" && args[1] === "list") {
 	const accumulated = process.env.MNEXIS_FAKE_KEYWORDS
 		? JSON.parse(process.env.MNEXIS_FAKE_KEYWORDS)
 		: requested;
+	// What the engine reports about the record it landed on: its revision,
+	// the type it ended up with and its topic key. MNEXIS_FAKE_SAVE_JSON
+	// stands for an answer that carries them; without it the answer is the
+	// older shape, which names none of the three.
+	const reported = process.env.MNEXIS_FAKE_SAVE_JSON
+		? JSON.parse(process.env.MNEXIS_FAKE_SAVE_JSON)
+		: {};
 	process.stdout.write(
-		JSON.stringify({ uuid: "u-1", row_id: 1, keywords: accumulated }),
+		JSON.stringify({ uuid: "u-1", row_id: 1, keywords: accumulated, ...reported }),
 	);
 } else if (args[0] === "search" || args[0] === "prompts") {
 	const scope = process.env.MNEXIS_FAKE_READ_SCOPE;
@@ -1495,6 +1502,131 @@ test("a save with no words says nothing about them", async () => {
 		false,
 		`no words means no flag: ${JSON.stringify(call)}`,
 	);
+});
+
+// A save can land on a record that already existed: the engine bumps its
+// revision instead of adding a second one. The answer must say which of the
+// two happened, and the type is the one the record ended up with — the
+// engine decides it when the caller names none, so the answer is the only
+// place the model can read it.
+
+test("an update says the record was updated, and names the revision and the type", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_SAVE_JSON = JSON.stringify({
+		revision: 2,
+		memory_type: "decision",
+		topic_key: "puerto-del-servicio",
+	});
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+
+		const result = await save.execute(
+			"rv1",
+			{ content: "el puerto es 8081", title: "puerto del servicio" },
+			undefined,
+			undefined,
+			context(),
+		);
+		assert.notEqual(result.isError, true);
+		const text = result.content.map((block) => block.text).join(" ");
+		assert.match(
+			text,
+			/^Updated the memory in namespace '[^']+' \(revision 2, topic key `puerto-del-servicio`\) as a decision\.$/,
+			`an upsert reads as an update, named with the type it landed as: ${text}`,
+		);
+		assert.equal(result.details.revision, 2, `the details carry the revision: ${text}`);
+		assert.equal(
+			result.details.memory_type,
+			"decision",
+			`and the type the record ended up with: ${text}`,
+		);
+		assert.ok(
+			calls(log).find((args) => args[0] === "save"),
+			"the engine was asked",
+		);
+	} finally {
+		delete process.env.MNEXIS_FAKE_SAVE_JSON;
+	}
+});
+
+test("a first save says the memory was saved, and names the type", async () => {
+	setup();
+	process.env.MNEXIS_FAKE_SAVE_JSON = JSON.stringify({ revision: 1, memory_type: "fact" });
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+
+		const result = await save.execute(
+			"rv2",
+			{ content: "el puerto es 8081" },
+			undefined,
+			undefined,
+			context(),
+		);
+		assert.notEqual(result.isError, true);
+		const text = result.content.map((block) => block.text).join(" ");
+		assert.match(
+			text,
+			/^Saved a memory in namespace '[^']+' as a fact\.$/,
+			`a create reads as a save, named with the type it landed as: ${text}`,
+		);
+		assert.equal(result.details.memory_type, "fact", `the details carry the type: ${text}`);
+	} finally {
+		delete process.env.MNEXIS_FAKE_SAVE_JSON;
+	}
+});
+
+test("the type the engine stored wins over the one the call asked for", async () => {
+	setup();
+	// The engine resolves the type it stores; the name the model passed is a
+	// request, not the outcome.
+	process.env.MNEXIS_FAKE_SAVE_JSON = JSON.stringify({ revision: 1, memory_type: "decision" });
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+
+		const result = await save.execute(
+			"rv3",
+			{ content: "el puerto es 8081", type: "preference" },
+			undefined,
+			undefined,
+			context(),
+		);
+		assert.notEqual(result.isError, true);
+		const text = result.content.map((block) => block.text).join(" ");
+		assert.match(text, /as a decision\.$/, `the stored type is the one reported: ${text}`);
+		assert.doesNotMatch(text, /preference/, `not the one the call asked for: ${text}`);
+	} finally {
+		delete process.env.MNEXIS_FAKE_SAVE_JSON;
+	}
+});
+
+test("a save whose answer names no type falls back to the type the call asked for", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+
+	const result = await save.execute(
+		"rv4",
+		{ content: "el puerto es 8081", type: "preference" },
+		undefined,
+		undefined,
+		context(),
+	);
+	assert.notEqual(result.isError, true);
+	const text = result.content.map((block) => block.text).join(" ");
+	assert.match(
+		text,
+		/^Saved a memory in namespace '[^']+' as a preference\.$/,
+		`the type the call asked for is the best the answer has: ${text}`,
+	);
+	assert.ok(calls(log).find((args) => args[0] === "save"), "the engine was asked");
 });
 
 test("a bounded read tells the agent the scope it was bounded by", async () => {

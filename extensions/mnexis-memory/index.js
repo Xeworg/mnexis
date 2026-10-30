@@ -1503,10 +1503,24 @@ export default function mnexisMemoryExtension(pi) {
 			// that it happened.
 			const revision = result.data && result.data.revision;
 			const topicKey = result.data && result.data.topic_key;
+			// The type the record ended up with: the engine resolves it when
+			// the caller names none, so the answer is the only place the model
+			// can read what landed. When the answer does not name it, the type
+			// this call asked for is the closest the extension can be to
+			// honest; with neither, the answer says nothing about the type
+			// rather than inventing one.
+			const storedType = result.data && result.data.memory_type;
+			const type =
+				typeof storedType === "string" && storedType !== ""
+					? storedType
+					: typeof params.type === "string" && params.type !== ""
+						? params.type
+						: null;
+			const asType = type ? ` as a ${type}` : "";
 			const what =
 				typeof revision === "number" && revision > 1
-					? `Updated the memory in namespace '${workspace.namespace}' (revision ${revision}, topic key \`${topicKey}\`).`
-					: `Saved a memory in namespace '${workspace.namespace}'.`;
+					? `Updated the memory in namespace '${workspace.namespace}' (revision ${revision}, topic key \`${topicKey}\`)${asType}.`
+					: `Saved a memory in namespace '${workspace.namespace}'${asType}.`;
 			// The words the record keeps after the save, not the ones this call
 			// named: the vocabulary accumulates, so the answer is the only place
 			// that knows what the memory carries now.
@@ -1537,6 +1551,7 @@ export default function mnexisMemoryExtension(pi) {
 					keywords: words,
 					topic_key: topicKey || null,
 					revision: revision || null,
+					memory_type: type,
 					output: result.stdout.trim(),
 					data: result.data,
 					...(repair && repair.detail ? { recovery: repair.detail } : {}),

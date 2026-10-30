@@ -291,6 +291,12 @@ pub fn save(
             "title": mem.title,
             "keywords": mem.keywords,
             "topic_key": mem.topic_key,
+            // What the record ended up as: the revision tells a create from an
+            // upsert, and the type is the one the engine resolved, which the
+            // caller may not have named. Both are read from the saved record,
+            // never from the request.
+            "revision": mem.revision,
+            "memory_type": mem.memory_type,
         }),
         text,
     ))
