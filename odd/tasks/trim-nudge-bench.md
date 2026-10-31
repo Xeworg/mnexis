@@ -57,3 +57,14 @@ installed extension file, exactly as the types4 arm did.
   ceiling: if B saves in ≥ 8/10 runs, H2 is unmeasured by criterion. Full record in
   `tmp/bench/trim-nudge-measurement.md` item 6; gates untouched. The measured batch (N=10 × 3)
   started after this entry.
+- **L4 (2026-11-01, measured)** — 30/30 runs, 0 NO ANSWER. **H1 FAILS on G3**: behavior parity is
+  perfect (10/10/10 end states both arms), the trim reproduces exactly (9 014 → 5 490 B) and bills
+  −11.5 % tokens/call, −15.8 % cost/run — but the human read finds a fact A records in 5/10 runs
+  ("how to run / what `make check` validates") that B records in 1/10: the smaller prompt costs the
+  marginal knowledge save. The primary decision survives everywhere (A 10/10, B 9/10). **H2:
+  UNMEASURED — the declared ceiling**: B saved in 9/10 ≥ 8/10; the nudge fired 0/10 (the model
+  attempted ≥ 1 save on its own in every C run, so the precondition never held). S2 close record
+  works 10/10 in print mode. Product findings: 8 save attempts lost to `busy: sql: database is
+  locked` (no retry in the extension — candidate issue, interacts with `fix/trust-batch`); the fat
+  block invited 24 save attempts vs B's 11 (and A cost 15.8 % more per run). Full report:
+  `tmp/bench/trim-nudge-report.md`.
