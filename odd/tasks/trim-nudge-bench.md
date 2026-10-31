@@ -48,3 +48,12 @@ installed extension file, exactly as the types4 arm did.
   mechanical answer, and it is a hypothesis until the bench says otherwise.
 - **L2 (cost note)** — the bench spends model sessions (N runs × 3 arms). The human's standing
   order covers running it; the criterion must exist before the first run.
+- **L3 (2026-11-01, pre-flight pf3)** — the live key arrived (refreshed in `secrets.env`, sha256[:12]
+  `10561a7af0d0`) and the pre-flight passed, one run per arm: model answered in all three, end state
+  reached (timeout 1500, ADR, `make check` exit 0), census and C1 match the manifest (9 014 / 5 490 /
+  5 490 B), C's close record in the store. Declared before the measured batch: in every pf3 run the
+  model saved on its own, so the settle nudge never fired (precondition false — specified behavior,
+  not a defect; the firing path is covered by the `ext/pi-capture` unit tests). Foreshadows the H2
+  ceiling: if B saves in ≥ 8/10 runs, H2 is unmeasured by criterion. Full record in
+  `tmp/bench/trim-nudge-measurement.md` item 6; gates untouched. The measured batch (N=10 × 3)
+  started after this entry.
