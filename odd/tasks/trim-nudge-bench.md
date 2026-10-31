@@ -48,3 +48,24 @@ installed extension file, exactly as the types4 arm did.
   mechanical answer, and it is a hypothesis until the bench says otherwise.
 - **L2 (cost note)** — the bench spends model sessions (N runs × 3 arms). The human's standing
   order covers running it; the criterion must exist before the first run.
+- **L3 (2026-10-31, STOPPED by the human; state preserved)** — The criterion WAS written before
+  any number (`tmp/bench/trim-nudge-measurement.md`, 14.8 KB: H1/H2 gates, N=10 per arm, the
+  saturation ceiling "if B already saves in ≥ 8/10 the fixture is saturated and H2 is
+  unmeasurable", the cost measurement, the honest limits). The harness is built: one image
+  (`bench-mem:trimnudge`), the runner `tmp/bench/run/trim-bench.sh`, the scorer
+  `tmp/bench/run/score-trim.py`, and the three arm files under `tmp/bench/arms/` with their
+  MANIFEST (pretrim 6508e05 85 911 B; trim main 82 022 B; trimnudge ext/pi-capture 90 188 B).
+  **No measurement exists yet: every pre-flight session died with `401` from provider
+  `opencode-go` in ~1.1 s (zero model turns).** Root cause (measured, no secret in the repo):
+  the harness passes `-e OPENCODE_API_KEY` into the container (`tmp/bench/run/run-all.sh:110`)
+  and the key in the ENVIRONMENT is stale — there are two `oc_sk_…` keys and the environment
+  holds the rejected one (sha256[:12] 0594eb858387) while the LIVE one lives in opencode's own
+  credential store: sqlite table `credential` in `~/.local/share/opencode/opencode.db`, row
+  `integration_id='opencode-go'` → `{"type":"key","key":"oc_sk_…"}` (sha256[:12] 7946d6f2eee3).
+  The host answers "OK" with the DB one. **FIX for the next session:** export the live key
+  (read it from that DB) into the runner's environment before the batch — never hardcode it,
+  never write it into the repo — and verify ONE session with usage tokens > 0 and no 401 before
+  starting the 30. **This same stale key is what blocks the B2 doctrine batch** (board memory
+  "the OpenCode key expired"): one rotation fixes both. The human stopped the batch for the
+  session ("debo detenerme ya"); the arms, criterion, runner and scorer are preserved in
+  `tmp/bench/` for the next session, and the invalid 401 pre-flights are NOT measurements.
