@@ -69,3 +69,23 @@ installed extension file, exactly as the types4 arm did.
   "the OpenCode key expired"): one rotation fixes both. The human stopped the batch for the
   session ("debo detenerme ya"); the arms, criterion, runner and scorer are preserved in
   `tmp/bench/` for the next session, and the invalid 401 pre-flights are NOT measurements.
+- **L3 (2026-11-01, pre-flight pf3)** — the live key arrived (refreshed in `secrets.env`, sha256[:12]
+  `10561a7af0d0`) and the pre-flight passed, one run per arm: model answered in all three, end state
+  reached (timeout 1500, ADR, `make check` exit 0), census and C1 match the manifest (9 014 / 5 490 /
+  5 490 B), C's close record in the store. Declared before the measured batch: in every pf3 run the
+  model saved on its own, so the settle nudge never fired (precondition false — specified behavior,
+  not a defect; the firing path is covered by the `ext/pi-capture` unit tests). Foreshadows the H2
+  ceiling: if B saves in ≥ 8/10 runs, H2 is unmeasured by criterion. Full record in
+  `tmp/bench/trim-nudge-measurement.md` item 6; gates untouched. The measured batch (N=10 × 3)
+  started after this entry.
+- **L4 (2026-11-01, measured)** — 30/30 runs, 0 NO ANSWER. **H1 FAILS on G3**: behavior parity is
+  perfect (10/10/10 end states both arms), the trim reproduces exactly (9 014 → 5 490 B) and bills
+  −11.5 % tokens/call, −15.8 % cost/run — but the human read finds a fact A records in 5/10 runs
+  ("how to run / what `make check` validates") that B records in 1/10: the smaller prompt costs the
+  marginal knowledge save. The primary decision survives everywhere (A 10/10, B 9/10). **H2:
+  UNMEASURED — the declared ceiling**: B saved in 9/10 ≥ 8/10; the nudge fired 0/10 (the model
+  attempted ≥ 1 save on its own in every C run, so the precondition never held). S2 close record
+  works 10/10 in print mode. Product findings: 8 save attempts lost to `busy: sql: database is
+  locked` (no retry in the extension — candidate issue, interacts with `fix/trust-batch`); the fat
+  block invited 24 save attempts vs B's 11 (and A cost 15.8 % more per run). Full report:
+  `tmp/bench/trim-nudge-report.md`.
