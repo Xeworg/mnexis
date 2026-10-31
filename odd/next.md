@@ -1389,3 +1389,18 @@ is `created_at` ASC — the oldest first.
 
 **Evidence:** `odd/reports/memory-types-analysis.md` (the ten analyses, condensed, with
 the file:line and the measured numbers behind every claim).
+
+**Hook-driven capture — the discipline the dogfood proved missing (2026-10-31).** The session that
+shipped post-audit-debts measured the memory engines on itself: for the whole working session
+**neither engine gave the agent one useful read** — the context window was the memory; every
+decision came from conversation, repo files and artifacts. The engines differed only in write
+discipline: Engram's injected protocol compelled ~8 boundary saves; mnexis' advisory skill got 1.
+The value concentrated at the resume door (`mnexis_context` reconstructed the whole plan in one
+call) and in **deferred reads** — the writes are insurance for the next session, not fuel for this
+one. Consequence for the extension: make capture **mechanical, not asked for** — (1) the prompt
+store already exists and nothing writes to it: a before-turn/input hook captures user prompts for
+free; (2) a session-close hook keeps exactly one live "estado al cierre" `project_state` per
+workspace, revisioned through the same-title rule (optionally nudging the model to author the
+narrative, with code writing the mechanical parts); (3) **no new tool prose** — the tools block
+just paid 3 524 B to say less and the ≤ 5 500 B pin guards it. The 2026-10-28 decision stands:
+extension before more skill text.
