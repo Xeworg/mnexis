@@ -388,6 +388,55 @@ export function sessionIdOf(ctx) {
 	}
 }
 
+/**
+ * The canonical title of the state a closing session leaves behind
+ * (capture-discipline S2).
+ *
+ * The title is the engine's identity: `key_from_title` makes the same title
+ * the same record, so every close lands on the record the previous close
+ * left and bumps its revision instead of adding a second answer to "where
+ * did the last session leave the project". One workspace keeps exactly one
+ * live `project_state` under this title, however many sessions close.
+ */
+export const SESSION_CLOSE_TITLE = "estado al cierre";
+
+/**
+ * The mechanical state a closed session leaves in the engine.
+ *
+ * Code can only state what the engine answered: the session id, its
+ * boundaries, the directory it ran in and the commit it started from. The
+ * summary is the narrative, and the engine's session already carries it (the
+ * door's session-state block shows it), so the mechanical record does not
+ * duplicate it and its budget does not pay for it twice. Nothing is invented,
+ * and a fact the engine did not answer is omitted instead of written as
+ * `undefined`.
+ */
+export function sessionCloseContent(session) {
+	const data = session && typeof session === "object" ? session : {};
+	const text = (value) => (typeof value === "string" ? value.trim() : "");
+	const id = text(data.id) || "unknown";
+	const startedAt = text(data.started_at);
+	const endedAt = text(data.ended_at);
+	const directory = text(data.directory);
+	const branch = text(data.branch);
+	const branchSha = text(data.branch_sha);
+	const branchRemote = text(data.branch_remote);
+
+	const lines = [`Session ${id} ended${endedAt ? ` at ${endedAt}` : ""}.`];
+	if (startedAt) {
+		lines.push(`It started at ${startedAt}.`);
+	}
+	if (directory) {
+		lines.push(`Directory: ${directory}.`);
+	}
+	if (branch) {
+		const at = branchSha ? ` at ${branchSha}` : "";
+		const remote = branchRemote ? ` (${branchRemote})` : "";
+		lines.push(`Branch: ${branch}${at}${remote}.`);
+	}
+	return lines.join("\n");
+}
+
 // --- store recovery (odd/tasks/store-recovery.md, S1-S7) ---
 //
 // A save that lands on a second live record for one fact leaves the store
@@ -1061,6 +1110,33 @@ export default function mnexisMemoryExtension(pi) {
 	}
 
 	/**
+	 * Journal a session close the engine did not take (S2).
+	 *
+	 * A close is the one write no later session can reconstruct: the session
+	 * is gone and its state was never written. A refusal that only lived in a
+	 * swallowed exit code would leave the workspace silently without its
+	 * estado al cierre, so the step, the exit code and the engine's own
+	 * message reach the host's entry journal — never a narrative the store
+	 * could not take.
+	 */
+	function journalSessionClose(ctx, data) {
+		if (typeof pi.appendEntry !== "function") {
+			return;
+		}
+		try {
+			pi.appendEntry("mnexis-session-close", {
+				ts: new Date().toISOString(),
+				kind: "session-close",
+				action: "skipped",
+				session: sessionIdOf(ctx),
+				...data,
+			});
+		} catch {
+			// The journal is a report, never a precondition.
+		}
+	}
+
+	/**
 	 * Journal a compaction summary the store did not take.
 	 *
 	 * A compaction that cannot be stored never stops the session, and the
@@ -1400,15 +1476,80 @@ export default function mnexisMemoryExtension(pi) {
 		}
 	});
 
-	pi.on("session_shutdown", async (_event, ctx) => {
+	// The other end of that session: the engine learns it is over, and the
+	// workspace keeps exactly one live "estado al cierre" `project_state` for
+	// the next session to resume from (capture-discipline S2). The title is
+	// the engine's identity, so a second close revises the record instead of
+	// adding a second one. Code writes the mechanical part; the narrative
+	// stays the session's (the engine already carries its summary).
+	//
+	// A reload replaces this extension's runtime, not the session: pi starts
+	// the same session again right after, so closing it there would claim an
+	// end that did not happen and leave the engine's copy of the live session
+	// ended. A quit, a new session, a resume or a fork is an end, and is.
+	//
+	// Neither half may break the shutdown, and neither refusal may vanish:
+	// the entry journal carries the step and the engine's code, never the
+	// state the store could not take.
+	pi.on("session_shutdown", async (event, ctx) => {
+		if (event?.reason === "reload") {
+			return;
+		}
 		const id = sessionIdOf(ctx);
 		if (!id) {
 			return;
 		}
 		try {
-			await client.sessionEnd({ sessionId: id }, ctx.cwd);
-		} catch {
-			// Same as above: the end of a session is not worth an error.
+			const ended = await client.sessionEnd({ sessionId: id }, ctx.cwd);
+			if (ended.code !== 0) {
+				journalSessionClose(ctx, {
+					step: "end",
+					exit_code: ended.code,
+					error: describeFailure({ code: ended.code, stderr: ended.stderr, command: "end" }),
+				});
+				return;
+			}
+			const session = ended.data && typeof ended.data === "object" ? ended.data : null;
+			const namespace =
+				session && typeof session.namespace === "string" ? session.namespace : "";
+			if (namespace === "") {
+				// The engine owns the workspace's namespace; a close that would
+				// have to guess it is not a close, and says so.
+				journalSessionClose(ctx, {
+					step: "end",
+					error: "the engine ended the session but answered no namespace",
+				});
+				return;
+			}
+			const saved = await client.save(
+				{
+					namespace,
+					title: SESSION_CLOSE_TITLE,
+					type: "project_state",
+					content: sessionCloseContent({ id, ...(session ?? {}) }),
+				},
+				ctx.cwd,
+			);
+			if (saved.code !== 0) {
+				journalSessionClose(ctx, {
+					step: "save",
+					namespace,
+					exit_code: saved.code,
+					error: describeFailure({
+						code: saved.code,
+						stderr: saved.stderr,
+						namespace,
+						command: "save",
+					}),
+				});
+			}
+		} catch (error) {
+			// The session is going away either way; a close that cannot reach
+			// the engine is a report, never an exception in the shutdown path.
+			journalSessionClose(ctx, {
+				step: "hook",
+				error: error instanceof Error ? error.message : String(error),
+			});
 		}
 	});
 
