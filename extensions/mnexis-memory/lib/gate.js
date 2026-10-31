@@ -19,6 +19,11 @@ export const EXIT_CODES = {
 	8: "cursor expired",
 	9: "unsupported version",
 	10: "busy",
+	// What a shell answers when the command does not exist, and what this
+	// extension answers for a binary that was never installed: leaving it out
+	// reported a missing engine as "exited with code 127 (unknown error)"
+	// (S3, audit A8).
+	127: "engine binary not found (exit 127, ENOENT)",
 };
 
 /**
@@ -56,8 +61,47 @@ function conflictHint(command) {
 	);
 }
 
-/** Human-readable, actionable message for a failed CLI call. */
-export function describeFailure({ code, stderr, namespace, command }) {
+/**
+ * A budget as the answer says it: `10 s`, `0.2 s`, or nothing when unknown.
+ */
+function seconds(ms) {
+	const value = Number(ms);
+	if (!Number.isFinite(value) || value <= 0) {
+		return "";
+	}
+	return value % 1000 === 0 ? `${value / 1000} s` : `${Math.round(value / 10) / 100} s`;
+}
+
+/**
+ * Human-readable, actionable message for a failed CLI call.
+ *
+ * The call's own name (`command`) and the budget it had (`timeout_ms`) ride in
+ * the result, so a call the engine never answered says which one it was and
+ * how long it was given — the audit's "a hung mnexis blocks every save" and
+ * "127 (unknown error)" were failures of this one sentence (S2, S3).
+ */
+export function describeFailure({ code, stderr, namespace, command, timed_out, cancelled, timeout_ms }) {
+	const name = command ? `mnexis ${command}` : "the mnexis call";
+	if (cancelled) {
+		return (
+			`${name} was cancelled before it answered, so this call's result is unknown and nothing ` +
+			"else was changed. Retry when the session is ready."
+		);
+	}
+	if (timed_out) {
+		const within = seconds(timeout_ms);
+		return (
+			`${name} did not answer${within ? ` within ${within}` : ""} and was killed, so this ` +
+			"call's result is unknown. Retry; if it times out again the engine is stuck (check it " +
+			"with `mnexis status`), or raise MNEXIS_TIMEOUT_MS if the store is only slow."
+		);
+	}
+	if (code === 127) {
+		return (
+			`${name} could not run: ${EXIT_CODES[127]}, so nothing was read or written. Install the ` +
+			"engine (`./install.sh`) or set MNEXIS_BIN to its path, then retry."
+		);
+	}
 	const label = EXIT_CODES[code] ?? "unknown error";
 	const tail = String(stderr ?? "")
 		.trim()
@@ -83,6 +127,40 @@ export function describeFailure({ code, stderr, namespace, command }) {
 		parts.push(tail);
 	}
 	return parts.join(": ");
+}
+
+/**
+ * The answer for a call the engine did not answer at all (S3, audit A8).
+ *
+ * An engine that exits 0 having printed nothing, or printed something no JSON
+ * reader can use, has not told the caller that the store is empty: it has told
+ * the caller nothing. Reporting that silence as "No memories matched" is the
+ * lie the audit measured, so the three sites read this sentence instead. A
+ * write is a special case: the store may have taken the write before the
+ * answer was lost, so the text says how to find out instead of inviting a
+ * second record.
+ *
+ * @param {{ command?: string, no_answer?: string|null }} result
+ * @param {{ wrote?: boolean }} options
+ */
+export function engineSilence({ command, no_answer } = {}, { wrote = false } = {}) {
+	const name = command ? `mnexis ${command}` : "the mnexis call";
+	const said =
+		no_answer === "unreadable"
+			? `\`${name}\` exited 0 with output this extension cannot read as JSON`
+			: `\`${name}\` exited 0 and printed nothing`;
+	const parts = [
+		`The engine did not answer: ${said}, so this call failed and this is not an empty result.`,
+	];
+	if (wrote) {
+		parts.push(
+			"A write that was not acknowledged may still have landed: confirm with `mnexis_search` " +
+				"before writing it again, or retry with the same idempotency key.",
+		);
+	} else {
+		parts.push(`Retry, and run \`${name}\` in a terminal to read the engine's own error.`);
+	}
+	return parts.join(" ");
 }
 
 /**

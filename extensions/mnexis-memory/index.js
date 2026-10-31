@@ -16,6 +16,7 @@ import {
 	decideAuthorization,
 	decideBinding,
 	describeFailure,
+	engineSilence,
 	allowNamespaceCommand,
 	bindCommand,
 } from "./lib/gate.js";
@@ -301,7 +302,9 @@ export function readNamespace(value) {
 export async function checkProjectBoundary(client, uuids, namespace, cwd) {
 	for (const uuid of uuids) {
 		const result = await client.show(uuid, cwd);
-		if (result.code !== 0) {
+		// A read the engine did not answer is not a memory in another
+		// namespace: it is a read that failed, and nothing was changed (S3).
+		if (result.code !== 0 || result.no_answer) {
 			return {
 				message:
 					`Cannot read the memory ${uuid} to check which project it belongs to, ` +
@@ -693,27 +696,54 @@ export default function mnexisMemoryExtension(pi) {
 	let resolution = null;
 	let writeNamespaces = null;
 
-	/** Resolve the workspace → namespace binding once per session. */
-	async function resolveWorkspace(cwd) {
+	/**
+	 * Resolve the workspace → namespace binding once per session.
+	 *
+	 * The binding is a fact the engine owns, so a `project list` it did not
+	 * answer is not "this workspace has no namespace": the resolution carries
+	 * the failure and nothing is cached, because a workspace the human bound is
+	 * never reported as unbound and a hung engine is not asked twice in one call
+	 * (S2, S3).
+	 */
+	async function resolveWorkspace(cli, cwd) {
 		if (resolution) {
 			return resolution;
 		}
-		const root = await client.git(["rev-parse", "--show-toplevel"], cwd);
+		const root = await cli.git(["rev-parse", "--show-toplevel"], cwd);
 		const repoRoot = root.code === 0 && root.value ? root.value : null;
-		const remote = await client.git(["config", "--get", "remote.origin.url"], repoRoot || cwd);
+		const remote = await cli.git(["config", "--get", "remote.origin.url"], repoRoot || cwd);
 		const remoteUrl = remote.code === 0 && remote.value ? remote.value : null;
 		const key = workspaceKey({ remote: remoteUrl, repoRoot, cwd });
 		const rootPath = repoRoot || cwd;
 
-		const list = await client.projectList(cwd);
-		const bindings = list.code === 0 && list.data && Array.isArray(list.data.bindings) ? list.data.bindings : [];
+		const list = await cli.projectList(cwd);
+		const failure =
+			list.code !== 0
+				? describeFailure({ ...list })
+				: list.no_answer
+					? engineSilence(list)
+					: null;
+		if (failure) {
+			return {
+				key,
+				namespace: null,
+				bound: false,
+				candidate: null,
+				refusal: null,
+				root: rootPath,
+				remote: remoteUrl,
+				failure,
+			};
+		}
+
+		const bindings = list.data && Array.isArray(list.data.bindings) ? list.data.bindings : [];
 		// The engine owns the identity rule: the registry publishes the
 		// canonical key of the workspace this process runs in, so the
 		// binding the human recorded and the one the agent looks up are
 		// the same key. The computed key stays as the fallback for an
 		// older engine that does not publish it yet.
 		const publishedKey =
-			list.code === 0 && list.data && typeof list.data.current_key === "string" && list.data.current_key !== ""
+			list.data && typeof list.data.current_key === "string" && list.data.current_key !== ""
 				? list.data.current_key
 				: null;
 		const canonicalKey = publishedKey ?? key;
@@ -735,7 +765,7 @@ export default function mnexisMemoryExtension(pi) {
 				// yields — and is still only a candidate.
 				candidate = candidateFromMarker(marked);
 			} else {
-				const status = await client.status(cwd);
+				const status = await cli.status(cwd);
 				const published = readWorkspaceCandidate(status.code === 0 ? status.data : null);
 				// Only an engine that cannot answer leaves the derivation to
 				// the extension: the rules in lib/workspace.js (the last
@@ -760,25 +790,38 @@ export default function mnexisMemoryExtension(pi) {
 		return resolution;
 	}
 
-	/** Read the write allowlist from the engine, initializing the profile if needed. */
-	async function readProfileAllowlist(cwd) {
-		let config = await client.configShow(cwd);
+	/**
+	 * Read the write allowlist from the engine, initializing the profile if
+	 * needed.
+	 *
+	 * It answers a failure instead of throwing: a write tool that throws cannot
+	 * tell the model what happened, and a profile read the engine never answered
+	 * is not an empty allowlist (S3, audit A8).
+	 */
+	async function readProfileAllowlist(cli, cwd) {
+		let config = await cli.configShow(cwd);
 		if (config.code !== 0) {
-			throw new Error(describeFailure({ code: config.code, stderr: config.stderr }));
+			return { message: describeFailure({ ...config }) };
+		}
+		if (config.no_answer) {
+			return { message: engineSilence(config) };
 		}
 		// `mnexis project bind` works without a profile, so the binding can
 		// exist while the profile does not. Every write needs the profile.
 		if (needsProfileInit(config.data)) {
-			const init = await client.init(cwd);
+			const init = await cli.init(cwd);
 			if (init.code !== 0) {
-				throw new Error(describeFailure({ code: init.code, stderr: init.stderr }));
+				return { message: describeFailure({ ...init }) };
 			}
-			config = await client.configShow(cwd);
+			config = await cli.configShow(cwd);
 			if (config.code !== 0) {
-				throw new Error(describeFailure({ code: config.code, stderr: config.stderr }));
+				return { message: describeFailure({ ...config }) };
+			}
+			if (config.no_answer) {
+				return { message: engineSilence(config) };
 			}
 		}
-		return readWriteNamespaces(config.data);
+		return { namespaces: readWriteNamespaces(config.data) };
 	}
 
 	/**
@@ -789,12 +832,16 @@ export default function mnexisMemoryExtension(pi) {
 	 * another terminal is what the retry promised by the refusal must find
 	 * (A1).
 	 */
-	async function getWriteNamespaces(cwd, { fresh = false } = {}) {
+	async function getWriteNamespaces(cli, cwd, { fresh = false } = {}) {
 		if (!fresh && writeNamespaces) {
-			return writeNamespaces;
+			return { namespaces: writeNamespaces };
 		}
-		writeNamespaces = await readProfileAllowlist(cwd);
-		return writeNamespaces;
+		const read = await readProfileAllowlist(cli, cwd);
+		if (read.message) {
+			return read;
+		}
+		writeNamespaces = read.namespaces;
+		return read;
 	}
 
 	/**
@@ -803,14 +850,27 @@ export default function mnexisMemoryExtension(pi) {
 	 * Interactive sessions confirm through pi's UI; headless sessions never
 	 * authorize anything and report the exact command a human must run.
 	 */
-	async function ensureWritable(namespace, ctx) {
-		let allowed = await getWriteNamespaces(ctx.cwd);
+	async function ensureWritable(cli, namespace, ctx) {
+		const unreadable = (read) => ({
+			authorized: false,
+			asked: false,
+			message: `${read.message} No memory was written.`,
+		});
+		let read = await getWriteNamespaces(cli, ctx.cwd);
+		if (read.message) {
+			return unreadable(read);
+		}
+		let allowed = read.namespaces;
 		if (!allowed.includes(namespace)) {
 			// The refusal below promises that running the command makes the
 			// retry work, so a cached allowlist is never the last word: the
 			// profile is read again before the write is refused (A1). An
 			// authorized write still pays for one read per session.
-			allowed = await getWriteNamespaces(ctx.cwd, { fresh: true });
+			read = await getWriteNamespaces(cli, ctx.cwd, { fresh: true });
+			if (read.message) {
+				return unreadable(read);
+			}
+			allowed = read.namespaces;
 		}
 		const decision = decideAuthorization({
 			namespace,
@@ -845,12 +905,12 @@ export default function mnexisMemoryExtension(pi) {
 				message: `Authorization for namespace '${namespace}' was declined. No memory was written.`,
 			};
 		}
-		const allow = await client.allowNamespace(namespace, ctx.cwd);
+		const allow = await cli.allowNamespace(namespace, ctx.cwd);
 		if (allow.code !== 0) {
 			return {
 				authorized: false,
 				asked: true,
-				message: describeFailure({ code: allow.code, stderr: allow.stderr, namespace }),
+				message: describeFailure({ ...allow, namespace }),
 			};
 		}
 		writeNamespaces = [...allowed, namespace];
@@ -919,7 +979,7 @@ export default function mnexisMemoryExtension(pi) {
 	 * reason instead of being asked about. The reserved `global` can never
 	 * reach this path — the engine refuses it, and so does the marker rule.
 	 */
-	async function bindOnConfirmation(workspace, ctx) {
+	async function bindOnConfirmation(cli, workspace, ctx) {
 		const decision = decideBinding({
 			candidate: workspace.candidate,
 			refusal: workspace.refusal,
@@ -964,8 +1024,21 @@ export default function mnexisMemoryExtension(pi) {
 				},
 			};
 		}
-		const allowed = await getWriteNamespaces(ctx.cwd);
-		const bind = await client.bind(workspace.candidate, workspace.key, workspace.root, ctx.cwd);
+		const read = await getWriteNamespaces(cli, ctx.cwd);
+		if (read.message) {
+			return {
+				workspace,
+				gate: {
+					authorized: false,
+					asked: true,
+					message:
+						`${read.message} No memory was written: nothing was bound and ` +
+						"nothing was allowed.",
+				},
+			};
+		}
+		const allowed = read.namespaces;
+		const bind = await cli.bind(workspace.candidate, workspace.key, workspace.root, ctx.cwd);
 		if (bind.code !== 0) {
 			return {
 				workspace,
@@ -973,14 +1046,13 @@ export default function mnexisMemoryExtension(pi) {
 					authorized: false,
 					asked: true,
 					message: `${describeFailure({
-						code: bind.code,
-						stderr: bind.stderr,
+						...bind,
 						namespace: workspace.candidate,
 					})}. No memory was written.`,
 				},
 			};
 		}
-		const allow = await client.allowNamespace(workspace.candidate, ctx.cwd);
+		const allow = await cli.allowNamespace(workspace.candidate, ctx.cwd);
 		if (allow.code !== 0) {
 			return {
 				workspace,
@@ -990,8 +1062,7 @@ export default function mnexisMemoryExtension(pi) {
 					message:
 						`The workspace was bound to '${workspace.candidate}', but the write allowlist ` +
 						`could not be updated: ${describeFailure({
-							code: allow.code,
-							stderr: allow.stderr,
+							...allow,
 							namespace: workspace.candidate,
 						})}. No memory was written.`,
 				},
@@ -1100,10 +1171,10 @@ export default function mnexisMemoryExtension(pi) {
 	 * that do not carry the value are never read, so the repair's cost
 	 * follows the matches and not the size of the namespace.
 	 */
-	async function listByValue(namespace, value, ctx) {
+	async function listByValue(cli, namespace, value, ctx) {
 		const items = [];
 		for (let page = 0; page < TWIN_SCAN_MAX_PAGES; page += 1) {
-			const listed = await client.list(
+			const listed = await cli.list(
 				{
 					namespace,
 					value,
@@ -1118,9 +1189,12 @@ export default function mnexisMemoryExtension(pi) {
 					error: {
 						step: "list",
 						value,
-						error: describeFailure({ code: listed.code, stderr: listed.stderr, namespace }),
+						error: describeFailure({ ...listed, namespace }),
 					},
 				};
+			}
+			if (listed.no_answer) {
+				return { error: { step: "list", value, error: engineSilence(listed) } };
 			}
 			const rows = readItems(listed.data);
 			items.push(...rows);
@@ -1154,10 +1228,10 @@ export default function mnexisMemoryExtension(pi) {
 	 * title and the keywords too), so the intersection can only lose a
 	 * record the twin rule would have rejected anyway.
 	 */
-	async function candidatesByValue(saved, ctx) {
+	async function candidatesByValue(cli, saved, ctx) {
 		let candidates = null;
 		for (const value of numericValues(saved.content)) {
-			const answered = await listByValue(saved.namespace, value, ctx);
+			const answered = await listByValue(cli, saved.namespace, value, ctx);
 			if (answered.error) {
 				return answered;
 			}
@@ -1179,23 +1253,25 @@ export default function mnexisMemoryExtension(pi) {
 	 * the rule are read whole — a twin is checked against what the store says,
 	 * never against a preview.
 	 */
-	async function readCandidate(item, ctx) {
+	async function readCandidate(cli, item, ctx) {
 		if (typeof item.content === "string") {
 			return { record: item };
 		}
-		const shown = await client.show(item.uuid, ctx.cwd);
+		const shown = await cli.show(item.uuid, ctx.cwd);
 		if (shown.code !== 0) {
 			return {
 				error: {
 					step: "show",
 					uuid: item.uuid,
 					error: describeFailure({
-						code: shown.code,
-						stderr: shown.stderr,
+						...shown,
 						namespace: item.namespace,
 					}),
 				},
 			};
+		}
+		if (shown.no_answer) {
+			return { error: { step: "show", uuid: item.uuid, error: engineSilence(shown) } };
 		}
 		if (!shown.data || typeof shown.data !== "object" || typeof shown.data.uuid !== "string") {
 			return { error: { step: "show", uuid: item.uuid, error: "the engine answered no record" } };
@@ -1221,7 +1297,7 @@ export default function mnexisMemoryExtension(pi) {
 	 * untouched and journals why (S4): the store is never guessed at, and a
 	 * repair that did not happen is never silent.
 	 */
-	async function repairSavedTwin(workspace, params, answer, ctx) {
+	async function repairSavedTwin(cli, workspace, params, answer, ctx) {
 		const savedUuid = typeof answer?.uuid === "string" ? answer.uuid : "";
 		const content = typeof params?.content === "string" ? params.content : "";
 		// No value of three or more digits means no twin can exist (S2.2), and
@@ -1261,11 +1337,21 @@ export default function mnexisMemoryExtension(pi) {
 						: "",
 		};
 		try {
-			const allowed = await getWriteNamespaces(ctx.cwd);
-			if (!allowed.includes(namespace)) {
+			const read = await getWriteNamespaces(cli, ctx.cwd);
+			if (read.message) {
+				const failure = { step: "profile", error: read.message };
+				appendRecovery(ctx, {
+					action: "failed",
+					namespace,
+					saved: { uuid: savedUuid },
+					...failure,
+				});
+				return { failed: [failure] };
+			}
+			if (!read.namespaces.includes(namespace)) {
 				return null;
 			}
-			const found = await candidatesByValue(saved, ctx);
+			const found = await candidatesByValue(cli, saved, ctx);
 			if (found.error) {
 				appendRecovery(ctx, {
 					action: "failed",
@@ -1281,7 +1367,7 @@ export default function mnexisMemoryExtension(pi) {
 				if (!sharesIdentity(saved, item, namespace)) {
 					continue;
 				}
-				const resolved = await readCandidate(item, ctx);
+				const resolved = await readCandidate(cli, item, ctx);
 				if (resolved.error) {
 					appendRecovery(ctx, {
 						action: "failed",
@@ -1300,7 +1386,7 @@ export default function mnexisMemoryExtension(pi) {
 				// S5 keeps the measured direction: the older record is
 				// superseded onto the one the save wrote, which is the newer
 				// record, and the engine keeps the row and the link.
-				const superseded = await client.supersede(
+				const superseded = await cli.supersede(
 					{ older: pair.older.uuid, newer: savedUuid, reason: twinReason(pair) },
 					ctx.cwd,
 				);
@@ -1310,10 +1396,8 @@ export default function mnexisMemoryExtension(pi) {
 						uuid: pair.older.uuid,
 						value: pair.value,
 						error: describeFailure({
-							code: superseded.code,
-							stderr: superseded.stderr,
+							...superseded,
 							namespace,
-							command: "supersede",
 						}),
 					};
 					appendRecovery(ctx, {
@@ -1372,14 +1456,28 @@ export default function mnexisMemoryExtension(pi) {
 	}
 
 	/** Shared prologue for the write tools. */
-	async function prepareWrite(ctx) {
-		const workspace = await resolveWorkspace(ctx.cwd);
+	async function prepareWrite(cli, ctx) {
+		const workspace = await resolveWorkspace(cli, ctx.cwd);
+		if (workspace.failure) {
+			// The binding is a fact the engine owns: a call it never answered
+			// is not "this workspace is unbound", so the write stops with the
+			// failure instead of asking the human to bind what may already be
+			// bound (S2, S3).
+			return {
+				workspace,
+				gate: {
+					authorized: false,
+					asked: false,
+					message: `${workspace.failure} No memory was written.`,
+				},
+			};
+		}
 		if (!workspace.bound) {
 			// No binding: the namespace is the human's decision. The engine's
 			// candidate is the question; it is never the answer on its own.
-			return bindOnConfirmation(workspace, ctx);
+			return bindOnConfirmation(cli, workspace, ctx);
 		}
-		const gate = await ensureWritable(workspace.namespace, ctx);
+		const gate = await ensureWritable(cli, workspace.namespace, ctx);
 		return { workspace, gate };
 	}
 
@@ -1475,16 +1573,16 @@ export default function mnexisMemoryExtension(pi) {
 		}
 		let namespace = null;
 		try {
-			const workspace = await resolveWorkspace(ctx.cwd);
+			const workspace = await resolveWorkspace(client, ctx.cwd);
 			// Only a bound workspace has a namespace that is a permission: a
 			// marker names a candidate, and a file inside the workspace must
 			// not become the target of a write on its own (auto-namespace S6).
-			if (!workspace.bound || !workspace.namespace) {
+			if (workspace.failure || !workspace.bound || !workspace.namespace) {
 				return;
 			}
 			namespace = workspace.namespace;
-			const allowed = await getWriteNamespaces(ctx.cwd);
-			if (!allowed.includes(namespace)) {
+			const read = await getWriteNamespaces(client, ctx.cwd);
+			if (read.message || !read.namespaces.includes(namespace)) {
 				return;
 			}
 			const id = sessionIdOf(ctx);
@@ -1507,10 +1605,8 @@ export default function mnexisMemoryExtension(pi) {
 					namespace,
 					exit_code: result.code,
 					error: describeFailure({
-						code: result.code,
-						stderr: result.stderr,
+						...result,
 						namespace,
-						command: "save",
 					}),
 				});
 			}
@@ -1587,11 +1683,14 @@ export default function mnexisMemoryExtension(pi) {
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const { workspace, gate } = await prepareWrite(ctx);
+			// pi's abort reaches the engine this call starts, and every call has a
+			// budget even when nothing aborts it (S2).
+			const cli = client.withSignal(signal);
+			const { workspace, gate } = await prepareWrite(cli, ctx);
 			if (!gate.authorized) {
 				return fail(gate.message, { namespace: workspace.namespace, authorized: false });
 			}
-			const result = await client.save(
+			const result = await cli.save(
 				{
 					namespace: workspace.namespace,
 					content: params.content,
@@ -1606,14 +1705,16 @@ export default function mnexisMemoryExtension(pi) {
 			);
 			if (result.code !== 0) {
 				return fail(
-					describeFailure({
-						code: result.code,
-						stderr: result.stderr,
-						namespace: workspace.namespace,
-						command: "save",
-					}),
+					describeFailure({ ...result, namespace: workspace.namespace }),
 					{ namespace: workspace.namespace },
 				);
+			}
+			if (result.no_answer) {
+				// A save that was not acknowledged is not a save, and it is not
+				// an empty store either (S3).
+				return fail(engineSilence(result, { wrote: true }), {
+					namespace: workspace.namespace,
+				});
 			}
 			// The same title lands on the same record, so a save can update
 			// a fact instead of adding a second one. The model has to read
@@ -1649,7 +1750,7 @@ export default function mnexisMemoryExtension(pi) {
 			// onto it before the model reads the answer, and the reply carries
 			// both records and the shared value (S4). A repair that could not
 			// run journals why and never changes the answer.
-			const repair = await repairSavedTwin(workspace, params, result.data, ctx);
+			const repair = await repairSavedTwin(cli, workspace, params, result.data, ctx);
 			// A repair that could not run must never read as a clean save: the
 			// ceiling of the scan is declared to the model, so a second live
 			// record left behind is a fact the caller can see and check.
@@ -1715,15 +1816,20 @@ export default function mnexisMemoryExtension(pi) {
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const cli = client.withSignal(signal);
 			const namespace = readNamespace(params.namespace);
-			const result = await client.search(
+			const result = await cli.search(
 				{ query: params.query, namespace, limit: params.limit, match: params.match, type: params.type },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+				return fail(describeFailure({ ...result }), {
 					namespace: namespace ?? null,
 				});
+			}
+			if (result.no_answer) {
+				// An engine that said nothing has not said "no memories" (S3).
+				return fail(engineSilence(result), { namespace: namespace ?? null });
 			}
 			const hits = readItems(result.data);
 			const relations = readRelations(result.data);
@@ -1768,13 +1874,20 @@ export default function mnexisMemoryExtension(pi) {
 			// tools do — no write confirmation — so the answer is about the
 			// project the agent is working in, not the profile's default
 			// namespace (which the workspace guard refuses).
-			const workspace = await resolveWorkspace(ctx.cwd);
+			const cli = client.withSignal(signal);
+			const workspace = await resolveWorkspace(cli, ctx.cwd);
+			if (workspace.failure) {
+				return fail(workspace.failure, { namespace: null });
+			}
 			const namespace = readNamespace(params.namespace) ?? workspace.namespace;
-			const result = await client.suggestTopicKey({ title: params.title, namespace }, ctx.cwd);
+			const result = await cli.suggestTopicKey({ title: params.title, namespace }, ctx.cwd);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr, namespace }), {
+				return fail(describeFailure({ ...result, namespace }), {
 					namespace: namespace ?? null,
 				});
+			}
+			if (result.no_answer) {
+				return fail(engineSilence(result), { namespace: namespace ?? null });
 			}
 			const data = result.data || {};
 			const key = data.topic_key || "";
@@ -1830,8 +1943,9 @@ export default function mnexisMemoryExtension(pi) {
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const cli = client.withSignal(signal);
 			const namespace = readNamespace(params.namespace);
-			const result = await client.list(
+			const result = await cli.list(
 				{
 					namespace,
 					limit: params.limit,
@@ -1842,9 +1956,12 @@ export default function mnexisMemoryExtension(pi) {
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+				return fail(describeFailure({ ...result }), {
 					namespace: namespace ?? null,
 				});
+			}
+			if (result.no_answer) {
+				return fail(engineSilence(result), { namespace: namespace ?? null });
 			}
 			const items = readItems(result.data);
 			const relations = readRelations(result.data);
@@ -1876,9 +1993,14 @@ export default function mnexisMemoryExtension(pi) {
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const result = await client.show(params.uuid, ctx.cwd);
+			const cli = client.withSignal(signal);
+			const result = await cli.show(params.uuid, ctx.cwd);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr }), { uuid: params.uuid });
+				return fail(describeFailure({ ...result }), { uuid: params.uuid });
+			}
+			if (result.no_answer) {
+				// The old fallback answered the string "null" here (S3, audit A8).
+				return fail(engineSilence(result), { uuid: params.uuid });
 			}
 			return ok(result.stdout.trim() || JSON.stringify(result.data), { uuid: params.uuid, memory: result.data });
 		},
@@ -1904,11 +2026,15 @@ export default function mnexisMemoryExtension(pi) {
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const result = await client.history({ uuid: params.uuid, limit: params.limit }, ctx.cwd);
+			const cli = client.withSignal(signal);
+			const result = await cli.history({ uuid: params.uuid, limit: params.limit }, ctx.cwd);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+				return fail(describeFailure({ ...result }), {
 					uuid: params.uuid,
 				});
+			}
+			if (result.no_answer) {
+				return fail(engineSilence(result), { uuid: params.uuid });
 			}
 			const items = readItems(result.data);
 			return ok(result.stdout.trim() || JSON.stringify(result.data), {
@@ -1942,12 +2068,12 @@ export default function mnexisMemoryExtension(pi) {
 					authorized: false,
 				});
 			}
-			const result = await client.sessionStart(
+			const result = await client.withSignal(signal).sessionStart(
 				{ sessionId, directory: params.directory ?? ctx.cwd },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+				return fail(describeFailure({ ...result }), {
 					session_id: sessionId,
 				});
 			}
@@ -1980,12 +2106,12 @@ export default function mnexisMemoryExtension(pi) {
 					authorized: false,
 				});
 			}
-			const result = await client.sessionEnd(
+			const result = await client.withSignal(signal).sessionEnd(
 				{ sessionId, summary: params.summary },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+				return fail(describeFailure({ ...result }), {
 					session_id: sessionId,
 				});
 			}
@@ -2015,14 +2141,18 @@ export default function mnexisMemoryExtension(pi) {
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const result = await client.savePrompt(
+			const cli = client.withSignal(signal);
+			const result = await cli.savePrompt(
 				{ content: params.content, sessionId: params.session_id ?? sessionIdOf(ctx) },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+				return fail(describeFailure({ ...result }), {
 					authorized: false,
 				});
+			}
+			if (result.no_answer) {
+				return fail(engineSilence(result, { wrote: true }), { authorized: false });
 			}
 			return ok("Stored what the user said.", { prompt: result.data });
 		},
@@ -2051,14 +2181,18 @@ export default function mnexisMemoryExtension(pi) {
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const result = await client.searchPrompts(
+			const cli = client.withSignal(signal);
+			const result = await cli.searchPrompts(
 				{ query: params.query, matchMode: params.match_mode, limit: params.limit },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+				return fail(describeFailure({ ...result }), {
 					authorized: false,
 				});
+			}
+			if (result.no_answer) {
+				return fail(engineSilence(result), { authorized: false });
 			}
 			const items = readItems(result.data);
 			const text = items.length
@@ -2103,12 +2237,18 @@ export default function mnexisMemoryExtension(pi) {
 					{ session: params.session ?? null, previous: Boolean(params.previous) },
 				);
 			}
-			const result = await client.recall(
+			const result = await client.withSignal(signal).recall(
 				{ session: params.session, previous: params.previous, full: params.full },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {
+				return fail(describeFailure({ ...result }), {
+					session: params.session ?? null,
+					previous: Boolean(params.previous),
+				});
+			}
+			if (result.no_answer) {
+				return fail(engineSilence(result), {
 					session: params.session ?? null,
 					previous: Boolean(params.previous),
 				});
@@ -2142,9 +2282,13 @@ export default function mnexisMemoryExtension(pi) {
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const result = await client.status(ctx.cwd);
+			const cli = client.withSignal(signal);
+			const result = await cli.status(ctx.cwd);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr }), {});
+				return fail(describeFailure({ ...result }), {});
+			}
+			if (result.no_answer) {
+				return fail(engineSilence(result), {});
 			}
 			return ok(result.stdout.trim() || JSON.stringify(result.data), {
 				workspace: result.data && result.data.workspace ? result.data.workspace : null,
@@ -2194,11 +2338,14 @@ export default function mnexisMemoryExtension(pi) {
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const cli = client.withSignal(signal);
 			// The engine's own resolution of this workspace's namespace, read
 			// from the status answer: a read, never a binding. The door must
 			// not answer from another project, and the engine is the one that
-			// decides which project this is.
-			const status = await client.status(ctx.cwd);
+			// decides which project this is. A status the engine did not answer
+			// is a hint this call did without; the door's own answer below is
+			// what has to arrive.
+			const status = await cli.status(ctx.cwd);
 			const engineNamespace =
 				status.code === 0 &&
 				status.data &&
@@ -2208,7 +2355,7 @@ export default function mnexisMemoryExtension(pi) {
 					? status.data.workspace.namespace
 					: null;
 			const namespace = readNamespace(params.namespace) ?? engineNamespace ?? undefined;
-			const result = await client.context(
+			const result = await cli.context(
 				{
 					task: params.task,
 					namespace,
@@ -2219,9 +2366,12 @@ export default function mnexisMemoryExtension(pi) {
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
-				return fail(describeFailure({ code: result.code, stderr: result.stderr, namespace }), {
+				return fail(describeFailure({ ...result, namespace }), {
 					namespace: namespace ?? null,
 				});
+			}
+			if (result.no_answer) {
+				return fail(engineSilence(result), { namespace: namespace ?? null });
 			}
 			const items = readItems(result.data);
 			// What the answer did not include: the candidates the budget
@@ -2289,12 +2439,13 @@ export default function mnexisMemoryExtension(pi) {
 			additionalProperties: false,
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const { workspace, gate } = await prepareWrite(ctx);
+			const cli = client.withSignal(signal);
+			const { workspace, gate } = await prepareWrite(cli, ctx);
 			if (!gate.authorized) {
 				return fail(gate.message, { namespace: workspace.namespace, authorized: false });
 			}
 			const boundary = await checkProjectBoundary(
-				client,
+				cli,
 				[params.older, params.newer],
 				workspace.namespace,
 				ctx.cwd,
@@ -2306,18 +2457,13 @@ export default function mnexisMemoryExtension(pi) {
 					...boundary.details,
 				});
 			}
-			const result = await client.supersede(
+			const result = await cli.supersede(
 				{ older: params.older, newer: params.newer, reason: params.reason },
 				ctx.cwd,
 			);
 			if (result.code !== 0) {
 				return fail(
-					describeFailure({
-						code: result.code,
-						stderr: result.stderr,
-						namespace: workspace.namespace,
-						command: "supersede",
-					}),
+					describeFailure({ ...result, namespace: workspace.namespace }),
 					{ namespace: workspace.namespace },
 				);
 			}

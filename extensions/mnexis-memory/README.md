@@ -264,6 +264,28 @@ The extension only drives the mnexis CLI; it never edits `mnexis.toml` or
 | --- | --- |
 | `MNEXIS_BIN` | Path to the `mnexis` binary (default: `mnexis` on `PATH`). |
 | `MNEXIS_DATA_DIR` | Profile directory, forwarded to the CLI unchanged. |
+| `MNEXIS_TIMEOUT_MS` | How long one engine call may take before it is killed (default: 10 s for a read, 30 s for a write). |
+
+## When the engine does not answer
+
+Every call to the engine is bounded, and pi's abort reaches it: a read gets ten
+seconds because it is one indexed query against a local store, a write gets
+thirty because it may wait on the lock and pay for its fsync, and
+`MNEXIS_TIMEOUT_MS` overrides both on a store that is only slow. A call that
+runs out of budget — or that the session cancels — is killed together with
+everything it started (the child runs in its own process group), and its answer
+names the command, the budget and the next step instead of leaving the turn
+waiting on a hung engine.
+
+An engine that says nothing has not said that the store is empty. A call that
+exits 0 with no output, or with output no JSON reader can use, is reported as a
+failed call with the way back (`retry`, and run the same command in a terminal
+to read the engine's own error) — never as "no memories matched" and never as
+`null`. A write that was not acknowledged says that it may still have landed, so
+the next step is to check with `mnexis_search` instead of writing a second
+record. A missing binary is named as such (`exit 127`, ENOENT) with the two ways
+to install it, and a write whose profile read fails returns that reason instead
+of throwing.
 
 ## Tests
 
