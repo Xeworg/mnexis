@@ -67,7 +67,10 @@ one-call door as a pi tool (#64), the doctor's check and repair for the
 records without a title (#65, #71, #72), the type of a memory as a closed set
 the agent writes (#66), and the session state riding the door's answer by
 default — the call-budget experiment's pre-registered ascension (#68, #70).
-The schema is at version 9 (migration 009 re-creates the two `AFTER UPDATE`
+The schema is at version 10 (migration 010 indexes the hot read paths — the live-namespace
+lists and counts, the state block, the previous-session seek, the history window and the
+created-at recall window, all measured with EXPLAIN QUERY PLAN before landing; migration 009
+re-creates the two `AFTER UPDATE`
 triggers of the index, so a store migrated before the guard existed stops
 writing the index row twice on every live update; migration 008 added the
 anchor of a session) and there is no downgrade: an old binary refuses to open

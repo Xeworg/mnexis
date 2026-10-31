@@ -1028,7 +1028,7 @@ dependencies = [
 
 [[package]]
 name = "mnexis"
-version = "0.5.0"
+version = "0.6.0-dev"
 dependencies = [
  "clap",
  "criterion",
