@@ -1397,10 +1397,13 @@ decision came from conversation, repo files and artifacts. The engines differed 
 discipline: Engram's injected protocol compelled ~8 boundary saves; mnexis' advisory skill got 1.
 The value concentrated at the resume door (`mnexis_context` reconstructed the whole plan in one
 call) and in **deferred reads** — the writes are insurance for the next session, not fuel for this
-one. Consequence for the extension: make capture **mechanical, not asked for** — (1) the prompt
-store already exists and nothing writes to it: a before-turn/input hook captures user prompts for
-free; (2) a session-close hook keeps exactly one live "estado al cierre" `project_state` per
-workspace, revisioned through the same-title rule (optionally nudging the model to author the
-narrative, with code writing the mechanical parts); (3) **no new tool prose** — the tools block
+one. Consequence for the extension: make capture **mechanical, not asked for** — (1) prompt
+capture ALREADY SHIPS (`a18a781`, 2026-10-29): the `input` hook writes the user's message to the
+prompt store in the workspace's namespace; the earlier "nothing writes to it" claim was stale,
+seen through the host-drift window; (2) a session-close hook keeps exactly one live "estado al
+cierre" `project_state` per namespace, revisioned through the same-title rule — built on
+`ext/pi-capture` (`d473637`), pending the merge decision; code writes the mechanical parts and
+the narrative deliberately stays on the existing `session_end --summary` path (an
+`agent_before_settle` nudge costs a model call per settle); (3) **no new tool prose** — the tools block
 just paid 3 524 B to say less and the ≤ 5 500 B pin guards it. The 2026-10-28 decision stands:
 extension before more skill text.
