@@ -555,6 +555,65 @@ impl MemoryRepository for SqliteMemoryRepository {
             .map_err(sql_to_domain)
     }
 
+    fn get_by_uuids(&self, uuids: &[String]) -> Result<Vec<Memory>, MnexisError> {
+        if uuids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // One statement for the whole page: the door revalidates what the
+        // index ranked, and a query per hit is a cost with no answer in it.
+        let sql = format!(
+            "SELECT {SELECT_COLUMNS} FROM memories \
+             WHERE uuid IN ({}) AND deleted = 0",
+            placeholders(uuids.len())
+        );
+        let params: Vec<&dyn ToSql> = uuids.iter().map(|uuid| uuid as &dyn ToSql).collect();
+        let mut stmt = self.conn.prepare(&sql).map_err(sql_to_domain)?;
+        let rows = stmt
+            .query_map(&params[..], |row| {
+                Self::row_to_memory(row).map_err(to_sql_err)
+            })
+            .map_err(sql_to_domain)?;
+        let mut memories = Vec::with_capacity(uuids.len());
+        for row in rows {
+            memories.push(row.map_err(sql_to_domain)?);
+        }
+        Ok(memories)
+    }
+
+    fn identities_for(
+        &self,
+        uuids: &[String],
+    ) -> Result<Vec<crate::domain::memory::MemoryIdentity>, MnexisError> {
+        if uuids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // The two fields a read surface keeps, and the namespace that bounds
+        // it — never the content it would throw away.
+        let sql = format!(
+            "SELECT uuid, namespace, title, keywords FROM memories \
+             WHERE uuid IN ({}) AND deleted = 0",
+            placeholders(uuids.len())
+        );
+        let params: Vec<&dyn ToSql> = uuids.iter().map(|uuid| uuid as &dyn ToSql).collect();
+        let mut stmt = self.conn.prepare(&sql).map_err(sql_to_domain)?;
+        let rows = stmt
+            .query_map(&params[..], |row| {
+                let keywords: String = row.get(3)?;
+                Ok(crate::domain::memory::MemoryIdentity {
+                    uuid: row.get(0)?,
+                    namespace: row.get(1)?,
+                    title: row.get(2)?,
+                    keywords: Memory::keywords_from_column(&keywords),
+                })
+            })
+            .map_err(sql_to_domain)?;
+        let mut identities = Vec::with_capacity(uuids.len());
+        for row in rows {
+            identities.push(row.map_err(sql_to_domain)?);
+        }
+        Ok(identities)
+    }
+
     fn list(
         &self,
         namespace: Option<&str>,

@@ -5,7 +5,7 @@
 
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::IdempotencyRecord;
-use crate::domain::memory::{Memory, MemoryHistory, MemoryLink, MemoryTag};
+use crate::domain::memory::{Memory, MemoryHistory, MemoryIdentity, MemoryLink, MemoryTag};
 use crate::domain::query::MatchMode;
 use crate::domain::scope::NamespaceScope;
 use crate::domain::session::{Session, UserPrompt};
@@ -53,6 +53,28 @@ pub trait MemoryRepository {
 
     /// Get a memory by its database rowid.
     fn get_by_rowid(&self, id: i64) -> Result<Option<Memory>, MnexisError>;
+
+    /// The live records of `uuids`, in the database's order, in **one**
+    /// statement.
+    ///
+    /// The door revalidates the hits a search returned: the retrieval layer
+    /// ranked rows, and the pipeline needs the canonical record of each. A
+    /// read per hit is a query per hit — up to a hundred for one answer — so
+    /// the revalidation is one statement and the pairing happens in memory.
+    /// A uuid that resolves to nothing (a record deleted since the index was
+    /// read) is simply absent, exactly as a `get_by_uuid` returning `None`
+    /// would have left it out.
+    fn get_by_uuids(&self, uuids: &[String]) -> Result<Vec<Memory>, MnexisError>;
+
+    /// The identity of each of `uuids` that resolves: uuid, namespace, title
+    /// and words, and **no other column**.
+    ///
+    /// A read surface resolves the identity of every hit, and the content of
+    /// a hit is the biggest column the table has. Reading whole records to
+    /// keep two fields is a cost nobody asked for (post-audit-debts C5); the
+    /// caller matches the rows back to its uuids, and a uuid that resolves to
+    /// nothing is simply absent.
+    fn identities_for(&self, uuids: &[String]) -> Result<Vec<MemoryIdentity>, MnexisError>;
 
     /// List memories with optional namespace/state filter and pagination.
     fn list(

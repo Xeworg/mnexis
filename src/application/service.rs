@@ -10,7 +10,7 @@ use crate::application::io::{ConflictPolicy, ImportDecision, LocalIndex};
 use crate::domain::error::MnexisError;
 use crate::domain::idempotency::{IdempotencyKey, IdempotencyRecord};
 use crate::domain::memory::{
-    Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag, MemoryTimeline,
+    Memory, MemoryHistory, MemoryIdentity, MemoryLink, MemoryState, MemoryTag, MemoryTimeline,
 };
 use crate::domain::query::MatchMode;
 use crate::domain::repository::MemoryRepository;
@@ -287,6 +287,40 @@ impl<R: MemoryRepository> MemoryService<R> {
             self.scope.authorize_read(&m.namespace)?;
         }
         Ok(mem)
+    }
+
+    /// The title and the words of each of `uuids`, in the order given.
+    ///
+    /// A search hit ranks a row and carries neither: the identity of the fact
+    /// lives in the canonical record, so the read surface resolves it. This is
+    /// a projection — two fields and the namespace that bounds them, never the
+    /// content — in one statement for the whole page (post-audit-debts C5).
+    ///
+    /// The scope is still the boundary: a record the caller may not read is
+    /// refused, exactly as [`MemoryService::get`] refuses it. A uuid that
+    /// resolves to nothing reports the empty title and no words, exactly like
+    /// a memory saved without either.
+    pub fn identities(&self, uuids: &[String]) -> Result<Vec<(String, Vec<String>)>, MnexisError> {
+        let mut found: std::collections::HashMap<String, MemoryIdentity> = self
+            .repo
+            .identities_for(uuids)?
+            .into_iter()
+            .map(|identity| (identity.uuid.clone(), identity))
+            .collect();
+        let mut identities = Vec::with_capacity(uuids.len());
+        for uuid in uuids {
+            // The scope check runs in the caller's order, one record at a
+            // time: the first refusal is the one the caller would have met
+            // reading the records one by one.
+            match found.remove(uuid) {
+                Some(identity) => {
+                    self.scope.authorize_read(&identity.namespace)?;
+                    identities.push((identity.title, identity.keywords));
+                }
+                None => identities.push((String::new(), Vec::new())),
+            }
+        }
+        Ok(identities)
     }
 
     // --- get (including soft-deleted) ---
@@ -688,10 +722,22 @@ impl<R: MemoryRepository> MemoryService<R> {
         )?;
 
         // Steps 3+4: revalidate the canonical record and pair the
-        // (hit, memory) tuples the pipeline consumes.
+        // (hit, memory) tuples the pipeline consumes. One statement for the
+        // whole page: the index already ranked the rows and the door only has
+        // to read the records behind them.
+        let hit_uuids: Vec<String> = hits.iter().map(|hit| hit.uuid.clone()).collect();
+        let mut canonical: std::collections::HashMap<String, Memory> = self
+            .repo
+            .get_by_uuids(&hit_uuids)?
+            .into_iter()
+            .map(|mem| (mem.uuid.clone(), mem))
+            .collect();
         let mut pairs: Vec<(crate::retrieval::SearchHit, Memory)> = Vec::with_capacity(hits.len());
         for hit in hits {
-            if let Some(mem) = self.repo.get_by_uuid(&hit.uuid)? {
+            // A hit whose record is gone (deleted since the index was read)
+            // is dropped, exactly as a `get_by_uuid` answering `None` left it
+            // out.
+            if let Some(mem) = canonical.remove(&hit.uuid) {
                 pairs.push((hit, mem));
             }
         }

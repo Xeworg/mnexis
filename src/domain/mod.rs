@@ -18,7 +18,7 @@ pub mod workspace;
 
 pub use error::MnexisError;
 pub use idempotency::{IdempotencyKey, IdempotencyRecord};
-pub use memory::{Memory, MemoryHistory, MemoryLink, MemoryState, MemoryTag};
+pub use memory::{Memory, MemoryHistory, MemoryIdentity, MemoryLink, MemoryState, MemoryTag};
 pub use memory_type::{
     DEFAULT_MEMORY_TYPE, MEMORY_TYPES, is_memory_type, resolve_memory_type, validate_memory_type,
 };
