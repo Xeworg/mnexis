@@ -660,20 +660,25 @@ hold it, and this commit the board. The module is one file and the suite
 another: neither splits without breaking the thing it pins, so the
 ~400-line slice gives way to the unit — the drawing, then the promise.
 
-### 11. The door is not in the MCP surface — the next thing for opencode
+### 11. The door is in the MCP surface — corrected 2026-10-31; what remains is engine polish
 
-The MCP server the binary ships has sixteen tools, and **`memory_context` is
-not one of them**. It has `memory_workspace` (the priced identity and
-preview) and `memory_recall`, but not the one-call door, and therefore not
-the session state that now rides it.
+**Correction:** the premise below was stale. `memory_context` IS in the MCP surface today —
+17 tools, `src/mcp/server.rs:851`, `do_context` at `:509` answering the same envelope as
+`mnexis context --json` (measured by the opencode research, `ext/opencode` `bbbd99e`). An
+opencode agent does NOT rebuild the resume answer by hand anymore.
 
-So in opencode — and in the codex and claude code integrations still to
-come — the agent has to **rebuild the answer by hand**, which is exactly
-what #59 fixed for pi, and it never receives the state block that made one
-complete answer buy the round back (item 9). The order for the multi-host
-goal is: expose the door in the MCP, then add the environments to the
-installer (`AgentEnvironment` knows `pi` and `opencode` today), each one a
-skill plus its host's MCP entry.
+What actually remains for opencode (from the same research, each a small engine unit):
+(1) the installer cannot install the extension — `AgentInstaller::extensions_dir(Opencode)`
+returns `None` (`src/application/agents.rs:194`) and assets embed only the pi extension;
+`install.sh` is the stopgap; (2) V2 defaults `codemode: true`, which hides the door — the
+engine-written entry (`src/application/opencode_config.rs`) must add `"codemode": false`;
+(3) the MCP door answers 160-char previews while the pi extension answers whole facts — the
+"one shape" claim is true for the envelope, not the item bodies; (4) V2's
+`session.compaction.ended` carries the summary text — capture is a documented follow-up.
+The host-side half ships as `extensions/mnexis-opencode/` on `ext/opencode`, pending the merge
+decision.
+
+[Retained from the original section — the chrome question:]
 
 **And the question the chrome opens — measured, and the answer is no.** The
 board's rule 6 says the agent cross-checks an answer before it trusts it, and
