@@ -220,7 +220,7 @@ fn migration_006_indexes_the_title_and_the_topic_key() {
 
     assert_eq!(
         schema_version(&conn),
-        9,
+        10,
         "the ledger must reach the end of the migrations"
     );
 
@@ -273,7 +273,7 @@ fn migration_006_rebuilds_an_index_built_without_the_title() {
 
     run_migrations(&conn).expect("the migration must heal the index");
 
-    assert_eq!(schema_version(&conn), 9);
+    assert_eq!(schema_version(&conn), 10);
     assert_eq!(
         indexed(&conn, "puerto"),
         2,
@@ -307,7 +307,7 @@ fn migration_006_is_idempotent_and_probes_before_it_applies() {
     conn.execute("DELETE FROM schema_migrations WHERE version >= 6", [])
         .unwrap();
     run_migrations(&conn).expect("the re-run must not fail on the index it already built");
-    assert_eq!(schema_version(&conn), 9);
+    assert_eq!(schema_version(&conn), 10);
     assert_eq!(
         indexed(&conn, "puerto"),
         1,
@@ -316,7 +316,7 @@ fn migration_006_is_idempotent_and_probes_before_it_applies() {
 
     // And a plain second run is still safe.
     run_migrations(&conn).expect("a second run must be a no-op");
-    assert_eq!(schema_version(&conn), 9);
+    assert_eq!(schema_version(&conn), 10);
     assert_eq!(indexed(&conn, "puerto"), 1);
 }
 
@@ -1132,7 +1132,7 @@ fn migration_007_rebuilds_an_index_built_without_the_words() {
 
     run_migrations(&conn).expect("the migration must heal the index");
 
-    assert_eq!(schema_version(&conn), 9);
+    assert_eq!(schema_version(&conn), 10);
     assert_eq!(
         indexed(&conn, "puerto"),
         1,
@@ -1154,7 +1154,7 @@ fn migration_007_is_idempotent_and_probes_before_it_applies() {
     conn.execute("DELETE FROM schema_migrations WHERE version = 7", [])
         .unwrap();
     run_migrations(&conn).expect("the re-run must not fail on the index it already built");
-    assert_eq!(schema_version(&conn), 9);
+    assert_eq!(schema_version(&conn), 10);
     assert_eq!(
         indexed(&conn, "puerto"),
         1,
@@ -1163,7 +1163,7 @@ fn migration_007_is_idempotent_and_probes_before_it_applies() {
 
     // And a plain second run is still safe.
     run_migrations(&conn).expect("a second run must be a no-op");
-    assert_eq!(schema_version(&conn), 9);
+    assert_eq!(schema_version(&conn), 10);
     assert_eq!(indexed(&conn, "puerto"), 1);
 }
 

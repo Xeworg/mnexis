@@ -24,6 +24,12 @@ pub struct ExplainedHit {
     pub state: String,
     pub revision: i32,
     pub created_at: String,
+    /// When the fact starts being true, when the record says. The search
+    /// carries it, so the explanation of the same row carries it too: the two
+    /// surfaces describe one hit and cannot disagree about its window.
+    pub valid_from: Option<String>,
+    /// When the fact stops being true, when the record says.
+    pub valid_until: Option<String>,
     /// Tokens from `query` that matched this hit (FTS5 normalisation:
     /// lowercased, simple tokenisation).
     pub matched_terms: Vec<String>,
@@ -50,7 +56,7 @@ pub fn explain(
     let expression = crate::domain::query::compile(query, mode)?;
     let mut sql = String::from(
         "SELECT m.uuid, bm25(memories_fts) AS rank, m.namespace, m.memory_type, m.state, \
-         m.revision, m.created_at, m.content \
+         m.revision, m.created_at, m.valid_from, m.valid_until, m.content \
          FROM memories_fts \
          JOIN memories AS m ON memories_fts.rowid = m.id \
          WHERE memories_fts MATCH ?1",
@@ -156,8 +162,14 @@ pub fn explain(
         let created_at: String = row
             .get(6)
             .map_err(|e| MnexisError::busy(format!("fts5::explain created_at: {e}")))?;
-        let content: String = row
+        let valid_from: Option<String> = row
             .get(7)
+            .map_err(|e| MnexisError::busy(format!("fts5::explain valid_from: {e}")))?;
+        let valid_until: Option<String> = row
+            .get(8)
+            .map_err(|e| MnexisError::busy(format!("fts5::explain valid_until: {e}")))?;
+        let content: String = row
+            .get(9)
             .map_err(|e| MnexisError::busy(format!("fts5::explain content: {e}")))?;
 
         let content_lower = content.to_lowercase();
@@ -175,6 +187,8 @@ pub fn explain(
             state: state_val,
             revision,
             created_at,
+            valid_from,
+            valid_until,
             matched_terms,
         });
     }

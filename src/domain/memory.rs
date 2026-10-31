@@ -162,6 +162,23 @@ impl Memory {
     }
 }
 
+/// What a memory *is*, without what it says: the two fields a read surface
+/// resolves per hit (identity-visibility S1, agent-keywords S4).
+///
+/// A search hit ranks a row and carries neither the title nor the words: they
+/// live in the canonical record. Resolving them is a projection, not a record
+/// read — the content of a hit is the biggest column the table has and the
+/// caller is not going to look at it (post-audit-debts C5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryIdentity {
+    pub uuid: String,
+    /// The namespace the record lives in. Carried so the read surface can
+    /// apply the same boundary it applies to a whole record.
+    pub namespace: String,
+    pub title: String,
+    pub keywords: Vec<String>,
+}
+
 /// A memory revision history record. Maps to `memory_history`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryHistory {

@@ -51,19 +51,14 @@ fn relations_payload(links: &[MemoryLink]) -> Vec<serde_json::Value> {
 /// resolves it (identity-visibility S1, agent-keywords S4). A uuid the scope
 /// no longer resolves reports the empty title and no words, exactly like a
 /// memory saved without either.
+///
+/// The resolution is one statement over the two columns the answer keeps, not
+/// a whole record per hit (post-audit-debts C5).
 fn identities_of(
     service: &ApplicationService,
     uuids: &[String],
 ) -> Result<Vec<(String, Vec<String>)>, MnexisError> {
-    let mut identities = Vec::with_capacity(uuids.len());
-    for uuid in uuids {
-        let memory = service.get(uuid)?;
-        identities.push(match memory {
-            Some(m) => (m.title, m.keywords),
-            None => (String::new(), Vec::new()),
-        });
-    }
-    Ok(identities)
+    service.identities(uuids)
 }
 
 /// How many recent memories the `memory_workspace` tool reports.

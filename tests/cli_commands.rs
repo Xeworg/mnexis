@@ -5612,6 +5612,80 @@ fn the_explain_hits_carry_the_words_and_keep_the_matched_terms() {
 }
 
 #[test]
+fn the_explained_search_carries_the_same_hit_fields_as_the_plain_one() {
+    // `--explain` is the same search with more detail: the plain answer says
+    // when a fact is valid and which hit replaced which, so the explained one
+    // has to say it too (post-audit-debts S2). The envelope shape is the
+    // search's: `relations` is a field, not something the caller can only get
+    // without `--explain`.
+    let p = Profile::new();
+    let windowed = save(
+        &p,
+        "ventana de validez 8081",
+        &[
+            "--title",
+            "temporal",
+            "--valid-from",
+            "2026-01-01T00:00:00Z",
+            "--valid-until",
+            "2026-12-31T00:00:00Z",
+        ],
+    );
+    let open = save(&p, "ventana abierta 8082", &["--title", "sin ventana"]);
+    // A supersede pair: the explanation keeps the field, and the state filter
+    // keeps the superseded end out of the answer, so it carries no link.
+    let older = save(&p, "esquema viejo 441", &[]);
+    let newer = save(&p, "esquema nuevo 442", &[]);
+    p.run_silent(&[
+        "supersede",
+        "--older",
+        &older,
+        "--newer",
+        &newer,
+        "--reason",
+        "newer revision",
+    ])
+    .unwrap_status("supersede");
+
+    let out = p
+        .run_silent(&["search", "--explain", "ventana", "--limit", "10"])
+        .unwrap_status("search --explain");
+    let json = stdout_json(&out);
+    assert_eq!(json["count"], 2, "both live rows are explained: {json}");
+    let items = json["items"].as_array().expect("items is an array");
+    let windowed_item = items
+        .iter()
+        .find(|item| item["uuid"] == windowed.as_str())
+        .unwrap_or_else(|| panic!("the windowed row is explained: {json}"));
+    assert_eq!(
+        windowed_item["valid_from"], "2026-01-01T00:00:00Z",
+        "the explanation carries the start of the window: {json}"
+    );
+    assert_eq!(
+        windowed_item["valid_until"], "2026-12-31T00:00:00Z",
+        "and its end: {json}"
+    );
+    let open_item = items
+        .iter()
+        .find(|item| item["uuid"] == open.as_str())
+        .unwrap_or_else(|| panic!("the unwindowed row is explained: {json}"));
+    assert_eq!(
+        open_item["valid_from"],
+        serde_json::Value::Null,
+        "no window is null, the same as the plain search: {json}"
+    );
+    assert_eq!(open_item["valid_until"], serde_json::Value::Null, "{json}");
+
+    let relations = json
+        .get("relations")
+        .unwrap_or_else(|| panic!("the envelope carries relations, like the search: {json}"));
+    assert!(
+        relations.is_array(),
+        "relations is the list the search answers with: {json}"
+    );
+}
+
+#[test]
 fn the_compact_list_carries_the_words_and_still_carries_the_preview() {
     let p = namespaced_profile(&["proyecto-a"]);
     save(
