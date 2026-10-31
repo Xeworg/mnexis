@@ -28,7 +28,7 @@ skill got 1). This feature makes the pi extension's capture **mechanical**.
 | ID | Specs | Route | Branch / worktree | Commit |
 | --- | --- | --- | --- | --- |
 | T1 | S1–S3 | worker: read the pi extensions doc, then implement + test | `ext/pi-capture` @ `tmp/wt-pi-capture` (task mvvykzl7-7-jb9n) | `d473637` (S2) |
-| T3 | S4 | worker continuation: the settle nudge, evidence-gated | same branch | — |
+| T3 | S4 | worker continuation: the settle nudge, evidence-gated | same branch (task mvvz89wt-9-ye6f) | `dfd1af3` |
 | T2 | all | parent: verify, commit, report for the merge decision | — | — |
 
 ## Log
@@ -53,3 +53,14 @@ skill got 1). This feature makes the pi extension's capture **mechanical**.
   `session_end --summary` path. **S3 holds**: 14 tools, 5 490 B, pin green. Suite 189 tests /
   186 pass / 3 skips. Parent re-ran the 7 session-close tests and the pin. Branch stays UNMERGED
   for the human's decision.
+- **L5 (2026-10-31, T3 result, parent-verified)** — S4 shipped (`dfd1af3`): the extension tracks
+  two cheap event-visible signals per session (a successful `write`/`edit` `tool_execution_end`;
+  any `mnexis_save` `tool_call` — an attempt counts, since the model made the judgment). At
+  `agent_before_settle`: files changed AND zero saves AND the question unspent → one
+  `custom_message` nudge (`display: false`) + one continuation; the flag is spent when the
+  question is asked, so it never repeats; `session_start` resets all three signals for every
+  reason. Read-only sessions, failed writes and sessions that already saved pay NOTHING — one
+  extra model request only in the gated case. 5 fake-event tests; suite 194/191/3 skips; tools
+  unchanged (14 / 5 490 B). Parent re-ran the 5 nudge tests and the full suite. **This is a
+  hypothesis, not a result**: whether it changes what the model saves is what the bench arm must
+  measure. Branch UNMERGED.
