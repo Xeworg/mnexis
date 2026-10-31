@@ -18,7 +18,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::application::budget::{Budget, BudgetMode, SUPPORTED_TOKENIZER_V1, token_count_v1};
+use crate::application::budget::{
+    Budget, BudgetMode, SUPPORTED_TOKENIZER_V1, TokenScan, token_count_v1_from,
+};
 use crate::domain::error::MnexisError;
 use crate::domain::memory::Memory;
 use crate::domain::query::MatchMode;
@@ -161,12 +163,12 @@ pub struct OmittedItem {
 }
 
 impl OmittedItem {
-    fn of(memory: &Memory) -> Self {
+    fn of(item: &ContextItem) -> Self {
         Self {
-            uuid: memory.uuid.clone(),
-            title: memory.title.clone(),
-            memory_type: memory.memory_type.clone(),
-            bytes: memory.content.len(),
+            uuid: item.uuid.clone(),
+            title: item.title.clone(),
+            memory_type: item.memory_type.clone(),
+            bytes: item.content.len(),
         }
     }
 }
@@ -174,13 +176,9 @@ impl OmittedItem {
 impl Coverage {
     /// The coverage of an answer: what it saw, what it carries, what it left
     /// out and by how much.
-    fn of(candidates: usize, carried: usize, left_out: Vec<Memory>) -> Self {
+    fn of(candidates: usize, carried: usize, left_out: Vec<OmittedItem>) -> Self {
         let count = left_out.len();
-        let items = left_out
-            .iter()
-            .take(COVERAGE_ITEM_LIMIT)
-            .map(OmittedItem::of)
-            .collect();
+        let items: Vec<OmittedItem> = left_out.into_iter().take(COVERAGE_ITEM_LIMIT).collect();
         Self {
             candidates,
             carried,
@@ -228,11 +226,11 @@ fn warnings_for(budget: &Budget) -> Vec<&'static str> {
     }
 }
 
-/// Project a (hit, memory) into the public item shape, ordered by
-/// bm25 ASC then `created_at` ASC.
-fn project(out: &mut Vec<ContextItem>, mems: Vec<Memory>) {
-    for mem in mems {
-        out.push(ContextItem {
+impl ContextItem {
+    /// The item a candidate becomes, taking its fields: the projection is the
+    /// last owner of the record, so nothing is cloned to keep both.
+    fn of(mem: Memory) -> Self {
+        Self {
             uuid: mem.uuid,
             title: mem.title,
             keywords: mem.keywords,
@@ -244,7 +242,93 @@ fn project(out: &mut Vec<ContextItem>, mems: Vec<Memory>) {
             topic_key: mem.topic_key,
             assertion_basis: mem.assertion_basis,
             created_at: mem.created_at,
-        });
+        }
+    }
+}
+
+/// The serialised envelope of a growing answer, accounted as it grows.
+///
+/// The fill asks one question per candidate — does this one still fit? — and
+/// the answer used to be *serialise the whole envelope again* (post-audit-debts
+/// C2): quadratic in the accepted items, and in `Estimated` mode the token
+/// count it computed was thrown away. The accumulator answers the same
+/// question in one pass over the candidate, and the envelope it accounts is
+/// byte for byte the one [`serialise_envelope`] builds.
+struct EnvelopeFill {
+    /// The scan state at the end of the envelope's body: the punctuation of
+    /// the separator and of the next item continue it.
+    state: TokenScan,
+    /// The bytes and tokens of the envelope's body — the fixed head plus the
+    /// accepted items — up to (and excluding) the closing `]}`.
+    body_bytes: usize,
+    body_tokens: i64,
+    /// How many items the envelope carries: the empty envelope is the empty
+    /// string, not an empty list.
+    items: usize,
+}
+
+impl EnvelopeFill {
+    fn new(budget: &Budget) -> Self {
+        let prefix = envelope_prefix(budget);
+        let (prefix_tokens, state) = token_count_v1_from(&prefix, TokenScan::start());
+        Self {
+            body_bytes: prefix.len(),
+            body_tokens: prefix_tokens,
+            state,
+            items: 0,
+        }
+    }
+
+    /// What the envelope costs once it carries `items`. The empty envelope is
+    /// the empty string, which is what [`serialise_envelope`] answers and what
+    /// costs the budget nothing.
+    fn cost(&self) -> (usize, i64) {
+        if self.items == 0 {
+            (0, 0)
+        } else {
+            // The closing `]}` is two bytes and two punctuation tokens.
+            (self.body_bytes + 2, self.body_tokens + 2)
+        }
+    }
+
+    /// The body with `item_json` appended, and the scan state at its end.
+    fn projected_body(&self, item_json: &str) -> (usize, i64, TokenScan) {
+        // One `,` between items, and nothing before the first one.
+        let (body_bytes, body_tokens, state) = if self.items == 0 {
+            (self.body_bytes, self.body_tokens, self.state)
+        } else {
+            let (separator_tokens, state) = token_count_v1_from(",", self.state);
+            (
+                self.body_bytes + 1,
+                self.body_tokens + separator_tokens,
+                state,
+            )
+        };
+        let (item_tokens, state) = token_count_v1_from(item_json, state);
+        (
+            body_bytes + item_json.len(),
+            body_tokens + item_tokens,
+            state,
+        )
+    }
+
+    /// Whether the envelope still fits the budget with `item_json` appended.
+    fn fits(&self, item_json: &str, budget: &Budget) -> bool {
+        let (bytes, tokens, _) = self.projected_body(item_json);
+        match budget.mode() {
+            BudgetMode::Exact => tokens + 2 <= budget.token_budget(),
+            // Estimated: byte proxy on the serialised envelope.
+            BudgetMode::Estimated => (bytes + 2) as i64 <= budget.byte_budget(),
+        }
+    }
+
+    /// Account `item_json` as accepted.
+    fn push(&mut self, item_json: &str) {
+        let (bytes, tokens, state) = self.projected_body(item_json);
+        self.body_bytes = bytes;
+        self.body_tokens = tokens;
+        self.state = state;
+        self.items += 1;
     }
 }
 
@@ -268,45 +352,40 @@ pub fn select_response(
     }
 
     // Greedy fill: take the candidates in the door's order until the
-    // serialised envelope does not fit.
+    // serialised envelope does not fit. The envelope is accounted as it grows,
+    // so the question costs one item per candidate instead of the whole
+    // envelope (post-audit-debts C2).
+    let mut fill = EnvelopeFill::new(budget);
     let mut items: Vec<ContextItem> = Vec::with_capacity(candidates.min(20));
-    let mut accepted: Vec<Memory> = Vec::new();
-    let mut left_out: Vec<Memory> = Vec::new();
+    let mut left_out: Vec<OmittedItem> = Vec::new();
     let mut exhausted = false;
     let mut empty_reason: Option<&'static str> = None;
-    for (_, mem) in selected.iter() {
+    for (_, mem) in selected {
+        let item = ContextItem::of(mem);
         if exhausted {
             // The budget is spent: this one and every one after it are
             // declared as left out.
-            left_out.push(mem.clone());
+            left_out.push(OmittedItem::of(&item));
             continue;
         }
-        accepted.push(mem.clone());
-        let mut tentative: Vec<ContextItem> = Vec::new();
-        project(&mut tentative, accepted.clone());
-        let serialised = serialise_envelope(&tentative, budget);
-        let tokens = token_count_v1(&serialised);
-        let over_budget = match budget.mode() {
-            BudgetMode::Exact => tokens > budget.token_budget(),
-            // Estimated: byte proxy on the serialised envelope.
-            BudgetMode::Estimated => serialised.len() as i64 > budget.byte_budget(),
-        };
-        if over_budget {
-            // Drop the last item we just appended.
-            accepted.pop();
-            left_out.push(mem.clone());
-            exhausted = true;
-            if accepted.is_empty() {
-                empty_reason = Some(match budget.mode() {
-                    BudgetMode::Exact => "even the envelope itself exceeds the token budget",
-                    BudgetMode::Estimated => {
-                        "even the envelope itself exceeds the estimated byte budget"
-                    }
-                });
-            }
+        let item_json = serde_json::to_string(&item).expect("serialise item");
+        if fill.fits(&item_json, budget) {
+            fill.push(&item_json);
+            items.push(item);
             continue;
         }
-        items = tentative;
+        // The budget cannot keep it: the item and every one after it are
+        // declared.
+        left_out.push(OmittedItem::of(&item));
+        exhausted = true;
+        if items.is_empty() {
+            empty_reason = Some(match budget.mode() {
+                BudgetMode::Exact => "even the envelope itself exceeds the token budget",
+                BudgetMode::Estimated => {
+                    "even the envelope itself exceeds the estimated byte budget"
+                }
+            });
+        }
     }
     if let Some(reason) = empty_reason {
         // Nothing fits: the empty answer, and every candidate is declared
@@ -318,8 +397,8 @@ pub fn select_response(
         ));
     }
 
-    let tokens_used = token_count_v1(&serialise_envelope(&items, budget));
-    let bytes_used = serialise_envelope(&items, budget).len() as i64;
+    let (bytes_used, tokens_used) = fill.cost();
+    let bytes_used = bytes_used as i64;
     let tokenizer = match budget.mode() {
         BudgetMode::Exact => {
             // Caller asked for exact; we tokenize with the supported
@@ -365,12 +444,7 @@ pub fn serialise_envelope(items: &[ContextItem], budget: &Budget) -> String {
     if items.is_empty() {
         return String::new();
     }
-    let mut s = String::new();
-    s.push_str("{\"budget_enforcement\":\"");
-    s.push_str(budget.enforcement_label());
-    s.push_str("\",\"tokenizer_id\":\"");
-    s.push_str(budget.tokenizer_id());
-    s.push_str("\",\"items\":[");
+    let mut s = envelope_prefix(budget);
     for (i, item) in items.iter().enumerate() {
         if i > 0 {
             s.push(',');
@@ -379,6 +453,20 @@ pub fn serialise_envelope(items: &[ContextItem], budget: &Budget) -> String {
     }
     s.push_str("]}");
     s
+}
+
+/// The fixed head of the serialised envelope: the two labels and the opening
+/// of the item list.
+///
+/// [`serialise_envelope`] and the fill that accounts a growing envelope
+/// ([`EnvelopeFill`]) read it from here, so the bytes one counts are the bytes
+/// the other builds.
+fn envelope_prefix(budget: &Budget) -> String {
+    format!(
+        "{{\"budget_enforcement\":\"{}\",\"tokenizer_id\":\"{}\",\"items\":[",
+        budget.enforcement_label(),
+        budget.tokenizer_id()
+    )
 }
 
 /// Run the full pipeline: FTS5 candidates + canonical revalidation +
@@ -446,6 +534,7 @@ fn dedup(candidates: Vec<(f64, Memory)>) -> Vec<(f64, Memory)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::budget::token_count_v1;
     use crate::domain::memory::MemoryState;
 
     fn memory(uuid: &str, content: &str, kind: &str, state: MemoryState) -> Memory {
@@ -504,6 +593,67 @@ mod tests {
         // serialised envelope produces.
         let serialised = serialise_envelope(&out.items, &budget);
         assert_eq!(out.tokens_used, token_count_v1(&serialised));
+    }
+
+    /// The envelope the fill accounts **is** the envelope it serialises.
+    ///
+    /// The fill used to rebuild (and re-count) the whole envelope per
+    /// candidate; it now accounts it as it grows (post-audit-debts C2). The
+    /// numbers the answer reports, and the decisions the fill takes with them,
+    /// therefore have to be exactly the ones the whole serialisation produces —
+    /// in both modes, over enough items for an off-by-one to show.
+    #[test]
+    fn the_accounted_envelope_is_the_serialised_one() {
+        for mode in [BudgetMode::Exact, BudgetMode::Estimated] {
+            let budget = Budget::new(2_000, mode);
+            let candidates: Vec<(f64, Memory)> = (0..25)
+                .map(|i| {
+                    (
+                        -(i as f64) / 10.0,
+                        memory(
+                            &format!("u{i}"),
+                            &format!("alpha {i} beta, gamma \"delta\" según el PRD {i}000"),
+                            "fact",
+                            MemoryState::Active,
+                        ),
+                    )
+                })
+                .collect();
+            let out = select_response(&budget, SUPPORTED_TOKENIZER_V1, candidates).unwrap();
+            assert!(
+                out.items.len() > 1,
+                "the budget keeps more than one: {mode:?}"
+            );
+            let serialised = serialise_envelope(&out.items, &budget);
+            assert_eq!(
+                out.tokens_used,
+                token_count_v1(&serialised),
+                "the accounted tokens are the serialised ones: {mode:?}"
+            );
+            assert_eq!(
+                out.bytes_used,
+                serialised.len() as i64,
+                "the accounted bytes are the serialised ones: {mode:?}"
+            );
+            // The empty envelope costs nothing, and the door says so.
+            let empty = select_response(
+                &budget,
+                SUPPORTED_TOKENIZER_V1,
+                vec![(
+                    0.0,
+                    memory(
+                        "u-big",
+                        &"alpha ".repeat(4_000),
+                        "fact",
+                        MemoryState::Active,
+                    ),
+                )],
+            )
+            .unwrap();
+            assert!(empty.items.is_empty(), "{mode:?}");
+            assert_eq!(empty.tokens_used, 0, "{mode:?}");
+            assert_eq!(empty.bytes_used, 0, "{mode:?}");
+        }
     }
 
     #[test]
