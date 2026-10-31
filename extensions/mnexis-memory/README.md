@@ -51,8 +51,13 @@ is retired, not just one.
 
 The rule is deliberately narrow. A changed value is a conflict, not a rename,
 and is left alone; a shared number with no shared vocabulary is not one fact;
-records outside the workspace's writable namespace are never touched. Nothing
-is deleted — the superseded record stays visible in `list`, `show` and
+records outside the workspace's writable namespace are never touched. A value
+is identity evidence only while it is **rare**: a number the namespace carries
+in live records other than the fact's own duplicates — a year, a repeated ADR
+id, any incidental number — is ambient, and two facts that share one are two
+facts. The duplicates themselves are the only live carriers a value needs to
+pair: two records of one fact, or three, still converge to one. Nothing is
+deleted — the superseded record stays visible in `list`, `show` and
 `timeline`, and the engine keeps the state the supersede replaced in
 `memory_history`: `mnexis_history` answers the record as it stood before the
 flip, and `mnexis show <uuid> --revision <N>` returns that content.
@@ -60,12 +65,14 @@ flip, and `mnexis show <uuid> --revision <N>` returns that content.
 Candidates are found by the value they carry, never by a page of the
 namespace: the engine answers `mnexis list --value <N>` with exactly the
 records whose indexed text carries the value, so the repair reads the matches
-and not the namespace, and a twin cannot hide behind a scan bound. The
-engine's filter is exhaustive — it answers every record that carries the
-value, however many records the namespace holds. The repair reads those
-matches in pages of 100; if more than 2 000 records carry the *same* value,
-the check does not pretend it finished and says so, as it always did. A
-repair that fails is journaled through `pi.appendEntry` instead of swallowed.
+and not the namespace, and a twin cannot hide behind a scan bound. Those same
+answers count the live records that carry each value, so the ambient rule
+reads no second page. The engine's filter is exhaustive — it answers every
+record that carries the value, however many records the namespace holds. The
+repair reads those matches in pages of 100; if more than 2 000 records carry
+the *same* value, the check does not pretend it finished and says so, as it
+always did. A repair that fails is journaled through `pi.appendEntry` instead
+of swallowed.
 The answer the model reads names both records and the shared value, and
 `details.recovery` carries the structured record.
 

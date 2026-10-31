@@ -613,14 +613,88 @@ export function twinValue(saved, item, namespace) {
 }
 
 /**
+ * How many live records of the namespace carry a value, other than the
+ * record the save just wrote (S1).
+ *
+ * It is read from the answer the repair already has: `list --value <N>`
+ * answers every record that carries the value in the save's namespace, with
+ * its state and its uuid, so counting them costs no second engine call. A
+ * superseded row is history, not a second live fact, and does not carry a
+ * value in the sense this rule means. The record the save wrote is excluded
+ * because the pair under evaluation is always the twins against it.
+ *
+ * The uuids are deduplicated: the pages are disjoint by offset, and a count
+ * that trusted that would double on a retry.
+ */
+function liveCarriers(items, namespace, savedUuid) {
+	const uuids = new Set();
+	for (const item of Array.isArray(items) ? items : []) {
+		if (!item || typeof item !== "object") {
+			continue;
+		}
+		if (item.namespace !== namespace) {
+			continue;
+		}
+		if ((item.state ?? "active") !== "active") {
+			continue;
+		}
+		if (typeof item.uuid !== "string" || item.uuid === "" || item.uuid === savedUuid) {
+			continue;
+		}
+		uuids.add(item.uuid);
+	}
+	return uuids.size;
+}
+
+/**
+ * The values of the save's signature that are ambient, and so are not
+ * identity evidence (S1).
+ *
+ * A value identifies a fact only while it is RARE: when the live records of
+ * the namespace that carry it are the records of this fact and no others
+ * (the human's decision, odd/tasks/trust-batch.md, L2). A year, a repeated
+ * ADR id and every other incidental number are carried by unrelated live
+ * records, and two facts that share one are two facts, however identical
+ * their numeric signatures look.
+ *
+ * `carried` is, per value of the save, how many live records of the
+ * namespace carry it other than the record the save wrote; `twins` is how
+ * many of those records this fact is. A value is ambient when MORE live
+ * records carry it than that. The threshold is what keeps the rule from
+ * swallowing real duplicates: two or three records of one fact pair among
+ * themselves, because they are all the carriers there are, and a value one
+ * more live record also carries never pairs. A caller that did not count
+ * passes no map and no value is judged ambient — the behaviour before this
+ * rule.
+ */
+function ambientValues(saved, carried, twins) {
+	const ambient = [];
+	if (!(carried instanceof Map)) {
+		return ambient;
+	}
+	for (const value of numericValues(saved?.content)) {
+		const carriers = carried.get(value);
+		if (typeof carriers === "number" && carriers > twins) {
+			ambient.push(value);
+		}
+	}
+	return ambient;
+}
+
+/**
  * Every live twin the candidate query answered, as pairs (S1, B3).
  *
  * All of them: S1 promises the fact ends with exactly one live record, and
  * retiring one of N twins delivers "one fewer", not "one". The order is the
  * engine's own id order, which is the order a reader expects the older
  * records in.
+ *
+ * The evidence is the whole signature, so one ambient value refuses every
+ * pair: the values of a twin are the values of the save, and a signature that
+ * includes a number the namespace carries in other live records is not
+ * identity evidence.
  */
-export function twinPairs(saved, candidates, namespace) {
+export function twinPairs(saved, candidates, namespace, carried = null) {
 	const pairs = [];
 	const seen = new Set();
 	for (const item of Array.isArray(candidates) ? candidates : []) {
@@ -637,7 +711,11 @@ export function twinPairs(saved, candidates, namespace) {
 		seen.add(item.uuid);
 		pairs.push({ older: item, newer: saved, value });
 	}
-	return pairs;
+	if (pairs.length === 0) {
+		return pairs;
+	}
+	const ambient = ambientValues(saved, carried, pairs.length);
+	return ambient.length === 0 ? pairs : [];
 }
 
 /** The name of a record in an answer a human or the model reads. */
@@ -1230,19 +1308,24 @@ export default function mnexisMemoryExtension(pi) {
 	 */
 	async function candidatesByValue(cli, saved, ctx) {
 		let candidates = null;
+		const carried = new Map();
 		for (const value of numericValues(saved.content)) {
 			const answered = await listByValue(cli, saved.namespace, value, ctx);
 			if (answered.error) {
 				return answered;
 			}
+			// S1: the same answer that names the records carrying the value
+			// counts the live ones, so an ambient value is judged without a
+			// second engine call.
+			carried.set(value, liveCarriers(answered.items, saved.namespace, saved.uuid));
 			if (candidates === null) {
 				candidates = answered.items;
 				continue;
 			}
-			const carried = new Set(answered.items.map((item) => item.uuid));
-			candidates = candidates.filter((item) => carried.has(item.uuid));
+			const carriedByPage = new Set(answered.items.map((item) => item.uuid));
+			candidates = candidates.filter((item) => carriedByPage.has(item.uuid));
 		}
-		return { items: candidates ?? [], source: "value" };
+		return { items: candidates ?? [], source: "value", carried };
 	}
 
 	/**
@@ -1380,7 +1463,7 @@ export default function mnexisMemoryExtension(pi) {
 				}
 				candidates.push(resolved.record);
 			}
-			const pairs = twinPairs(saved, candidates, namespace);
+			const pairs = twinPairs(saved, candidates, namespace, found.carried);
 			const repaired = [];
 			for (const pair of pairs) {
 				// S5 keeps the measured direction: the older record is
