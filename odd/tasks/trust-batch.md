@@ -29,7 +29,7 @@ emptiness (S3). The trim's behavior bench follows this batch.
 | ID | Specs | Route | Branch / worktree | Commit |
 | --- | --- | --- | --- | --- |
 | T1 | S2, S3 | worker, sequential in one worktree | `fix/trust-batch` @ `tmp/wt-trust` (task mvvy25xq-6-xkfw) | `c2afcd4` |
-| T2 | S1 | DECIDED (L2); queued behind T1 — same worktree, same files | same branch, same worktree | — |
+| T2 | S1 | DECIDED (L2); shipped after T1 — same worktree, same files | same branch, same worktree | `4374f17` |
 | T3 | — | the trim's behavior bench (next batch, referenced only) | bench harness | — |
 
 Allowed edit surfaces: T1 `extensions/mnexis-memory/**`, **excluding the twin-rule functions**
@@ -43,8 +43,8 @@ Allowed edit surfaces: T1 `extensions/mnexis-memory/**`, **excluding the twin-ru
   bench; B2/B3 stay parked pending dogfood.
 - **L2 (2026-10-31, decision)** — the S1 design question was answered by the human:
   **"Valor ambiente ≠ identidad"** (ambient value is not identity) over exclude-years and
-  accept-documented-risk. S1 rewritten above; T2 opens queued behind T1 (same worktree, the twin
-  functions are T1's forbidden zone until it lands).
+  accept-documented-risk. S1 rewritten above; T2 opened queued behind T1 (same worktree, the twin
+  functions were T1's forbidden zone until it landed).
 - **L5 (2026-10-31, T1 result, parent-verified)** — A9 + A8 shipped as ONE commit (`c2afcd4`):
   the worker stated the two-commit split needed hunk surgery (`git add -p`) in adjacent regions,
   so one honest commit is more reviewable than a broken split. A9: detached spawn (own process
@@ -57,3 +57,22 @@ Allowed edit surfaces: T1 `extensions/mnexis-memory/**`, **excluding the twin-ru
   a bound workspace. Suite 200 tests / 198 pass / 2 parity skips (same skips as base). Parent
   re-ran the timeout (4/4) and silence (11/11) tests. Tools prose 5 490 B and the twin-rule
   functions verified untouched. T2 (S1 twin) is now unblocked.
+- **L6 (2026-10-31, T2 result, parent-verified)** — S1 shipped as `4374f17`. **Threshold:
+  `carriers > twins`** (the cluster size): the carriers of each value are counted from the SAME
+  `list --value` answers the repair already issues — zero extra engine calls — counting live
+  records of the namespace that carry the value, excluding the record the save just wrote. A
+  value one more live record also carries never pairs; two or three records of ONE fact still
+  converge to one (the strict alternative, `carriers > 1`, was measured and breaks the shipped
+  "every live twin is retired" case — that measurement is why the threshold is the cluster).
+  RED: the ambient-year corpus and the G5 `{0007, 2026}` chain both superseded a live record
+  before the change; GREEN: neither pairs, with controls proving the refusal is about rarity.
+  PRESERVE: a true twin (8081 carried only by the pair) still supersedes exactly as before. The
+  worker also ran a differential: the base implementation with the new corpus fails only the two
+  new rules — every pre-existing scenario is byte-identical. Suite 203/201/2 skips; tools prose
+  untouched. **Two honest limits carried into the board:** (1) a true twin stops pairing when any
+  live record outside the fact carries any value of its signature — a save mentioning a year no
+  longer pairs in a busy namespace (that IS the decision, applied literally); (2) a frequency rule
+  needs a third live witness — in a namespace of only two records a year looks rare and pairs, so
+  the residual G5 risk survives in stores too small to show the year is ambient (the rejected
+  "exclude years" option would have closed it). Ambient refusals are silent, consistent with the
+  other narrow rules.
