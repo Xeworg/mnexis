@@ -24,8 +24,16 @@
 //! written before the field existed still parse): the title is part of the
 //! fact — it is the label a human reads, and the topic key derives from it —
 //! so an export that dropped it would lose it on the round trip (PRD §331).
-//! The record's keywords are not carried yet: a save normalizes and bounds
-//! them, and the importer has no equivalent rule.
+//! The record carries the memory's `keywords` the same way
+//! (`#[serde(default)]`, so a file written before the field existed still
+//! imports as a record with no words): they are part of the fact too, and a
+//! vocabulary the save stored has to survive a restore. A record the engine
+//! exported already carries normalized words, so its round trip preserves
+//! them exactly.
+//!
+//! Keywords are one of the canonical fields, so a file whose words differ
+//! from the local record's is a `UuidClash` on that uuid — never an
+//! "identical" no-op that silently drops the difference.
 //!
 //! ## Conflict resolution
 //!
@@ -127,6 +135,11 @@ pub struct ImportRecord {
     /// before the field existed still parses as a record with no title.
     #[serde(default)]
     pub title: String,
+    /// The words the fact is called in another language or jargon. Defaulted
+    /// so a file written before the field existed still parses as a record
+    /// with no words.
+    #[serde(default)]
+    pub keywords: Vec<String>,
     pub topic_key: String,
     pub namespace: String,
     pub memory_type: String,
@@ -155,6 +168,7 @@ impl From<&Memory> for ImportRecord {
         Self {
             uuid: m.uuid.clone(),
             title: m.title.clone(),
+            keywords: m.keywords.clone(),
             topic_key: m.topic_key.clone(),
             namespace: m.namespace.clone(),
             memory_type: m.memory_type.clone(),
@@ -181,7 +195,7 @@ impl From<ImportRecord> for Memory {
             id: None,
             uuid: r.uuid,
             title: r.title,
-            keywords: Vec::new(),
+            keywords: r.keywords,
             topic_key: r.topic_key,
             namespace: r.namespace,
             memory_type: r.memory_type,
@@ -207,6 +221,7 @@ impl From<ImportRecord> for Memory {
 pub fn records_canonical_match(a: &Memory, b: &ImportRecord) -> bool {
     a.uuid == b.uuid
         && a.title == b.title
+        && a.keywords == b.keywords
         && a.topic_key == b.topic_key
         && a.namespace == b.namespace
         && a.memory_type == b.memory_type
@@ -514,6 +529,7 @@ mod tests {
         ImportRecord {
             uuid: uuid.into(),
             title: String::new(),
+            keywords: Vec::new(),
             topic_key: topic.into(),
             namespace: ns.into(),
             memory_type: "fact".into(),
