@@ -26,7 +26,7 @@ the token bill of the tools block, the wire debts, the store debts, and the read
 | T2 | S3 (S2 → T4) | worker, wave 1 | `fix/mcp-wire` @ `tmp/wt-mcp-wire` (task mvvw1jxn-2-82ys) | `4bcf0d6` |
 | T3 | S4, S5 | worker, wave 1 | `fix/store-wire` @ `tmp/wt-store-wire` (task mvvw32gz-3-1uo0; spec commit 9b728b1) | `e129687`, `7a315f9` |
 | T4 | S2, S6 | worker, wave 2 (completed in two passes; ruling in L8) | `perf/read-paths` @ `tmp/wt-read-paths` (tasks mvvwh3kx-4-5b4b + mvvxap08-5-3gw2; spec commit 69a566a) | `249095d`, `971191f`, `f2c1949`, `f5ad359`, `16dc6d7` |
-| T5 | all | parent: integration branch `integrate/post-audit` with the FULL suite green before any PR; closing PR re-lands what #106 carried (cherry-pick `odd/tasks/door-merged-measurement.md`, bump the version) | — | — |
+| T5 | all | parent: integration branch `integrate/post-audit` with the FULL suite green before any PR; closing PR re-lands what #106 carried (cherry-pick `odd/tasks/door-merged-measurement.md`, bump the version) | `7ce79b9` | PR **#112** open |
 
 Allowed edit surfaces, wave 1 (disjoint on purpose — the #111 lesson): T1
 `extensions/mnexis-memory/**` + `tmp/bench/**`; T2 `src/mcp/**` + its tests; T3
@@ -100,3 +100,11 @@ Allowed edit surfaces, wave 1 (disjoint on purpose — the #111 lesson): T1
   the background before T5. Slice note: perf/read-paths is 1 131 authored lines across 6 commits —
   past the ~400-line slice; the delivery strategy is T5's integration PR, not more commits here.
   Stale line found: odd/next.md:70 still says schema 9 — folds into T5's version commit.
+- **L10 (2026-10-31, T5 closed)** — Integration gate green: the four branches merged into
+  `integrate/post-audit` (only the spec needed conflict resolution, to the live log;
+  `memory_repo.rs` auto-merged across T3×T4) and the FULL suite ran on the integration —
+  **cargo 829/0 across 26 suites, extension 179 pass / 0 fail / 2 parity skips, fmt clean**.
+  Rescue commit `7ce79b9`: the door re-measurement doc from #106's branch, the 0.6.0-dev bump
+  (toml + lock), the board's schema line now 10/010. Pushed; **PR #112 open** — merge is the
+  human's call. Total: 17 commits, ~2 073 authored lines; the delivery strategy is this one
+  integration PR (the slice boundary), reviewed commit-by-commit via the PR body's unit index.
