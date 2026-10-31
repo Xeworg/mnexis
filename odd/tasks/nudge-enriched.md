@@ -30,7 +30,7 @@ doctrine where the moment of judgment is, not where every call pays for it.
 
 | ID | Specs | Route | Branch / worktree | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S1–S5 | worker: enrich `SETTLE_NUDGE`, extend `settle-nudge.test.js` | `ext/nudge-enriched` @ `tmp/wt-nudge` | — |
+| T1 | S1–S5 | worker: enrich `SETTLE_NUDGE`, extend `settle-nudge.test.js` | `ext/nudge-enriched` @ `tmp/wt-nudge` | `3d18acc` |
 | T2 | all | parent: verify tests, commit, report; the bench (de-saturated fixture) is a separate follow-up that gates on this landing | — | — |
 
 Allowed edit surfaces: `extensions/mnexis-memory/index.js` (the `SETTLE_NUDGE` constant and its
@@ -43,3 +43,10 @@ immediate comment only) and `extensions/mnexis-memory/test/settle-nudge.test.js`
 - **L2 (evidence)** — `tmp/bench/trim-nudge-report.md`: H1 fails on G3 (the marginal fact A saves
   5/10, B 1/10), H2 at its declared ceiling (baseline saves 9/10; the nudge never fired). The
   bench that PROVES the enriched nudge needs a de-saturated fixture and rides its own branch.
+- **L3 (2026-11-01, T1 result, parent-verified)** — Shipped in `3d18acc`: the judgment sentence
+  preserved verbatim, three survival examples, the seven types one gloss line each; 866 B (28 %
+  headroom under the 1 200 B budget); gating byte-identical and pinned by a new firing-matrix
+  test; tools block re-measured 5 490 B (the pin). Suite re-run by the parent: 220 tests, 217
+  pass, 3 parity skips, 0 fail. The text is now 12 lines as one `custom_message` — repo-wide grep
+  found no other consumer. RED was observed before the edit (3 failing assertions). Awaiting the
+  human's merge decision; the proving bench (de-saturated fixture) is the follow-up.
