@@ -8,6 +8,12 @@
  * A read-only session and a session that already saved pay nothing, and the
  * question is never asked twice in one session.
  *
+ * The question carries the doctrine, because the question is priced per fire
+ * and not per call (odd/tasks/nudge-enriched.md, S4): the examples of what
+ * deserves to survive, then the seven record types one line each so the save
+ * arrives typed. The gating is the one from capture-discipline S4 and does not
+ * move with the text (S3), and the text stays inside its per-fire budget (S5).
+ *
  * Each test drives the hooks pi hands the extension and asserts the public
  * boundary result (the entry it would append and whether it requests a
  * continuation), never the counters behind it.
@@ -21,9 +27,32 @@ import { join } from "node:path";
 
 import mnexisMemory from "../index.js";
 
-/** The one-line question the model reads when the evidence says it owes one. */
-const NUDGE =
-	"This session changed files but saved no memory. If a decision, preference, discovery or project-state change deserves to survive the session, save it now with one mnexis_save; otherwise reply that nothing deserves memory.";
+/** The question the model reads when the evidence says it owes one (S4). */
+const NUDGE = [
+	"This session changed files but saved no memory. If a decision, preference, discovery or project-state change deserves to survive the session, save it now with one mnexis_save; otherwise reply that nothing deserves memory.",
+	"",
+	"What deserves to survive, for example: a decision an external change forced (a version pin, a constraint that moved); a discovery about how this repo actually works; a preference the user stated about how they want things done.",
+	"",
+	"Save it typed — pass the one that fits:",
+	"knowledge — a durable fact about the domain, the tools or the data.",
+	"decision — a choice made, and what it beat.",
+	"preference — how the user wants things done.",
+	"procedure — the steps that reliably achieve something.",
+	"project_state — where the work stands now.",
+	"episode — something that happened in a session.",
+	"fact — the neutral default when none of the others fit.",
+].join("\n");
+
+/** The record types the save must name, in the order the nudge lists them. */
+const MEMORY_TYPES = [
+	"knowledge",
+	"decision",
+	"preference",
+	"procedure",
+	"project_state",
+	"episode",
+	"fact",
+];
 
 /** A host that records the handlers, with no engine under the hooks. */
 function fakeHost(t) {
@@ -104,7 +133,6 @@ test("a session that changed files and saved nothing is asked once", async (t) =
 		],
 		`the settle asks once and requests one continuation: ${JSON.stringify(results)}`,
 	);
-	assert.equal(NUDGE.includes("\n"), false, "the nudge is one line");
 });
 
 test("the settle never asks twice in one session, even after another write", async (t) => {
@@ -183,4 +211,86 @@ test("the evidence and the once-per-session question reset with the next session
 			`${reason}: and only once`,
 		);
 	}
+});
+
+/** The text of the one question a writing session is asked. */
+async function askedText(t) {
+	const { handlers } = fakeHost(t);
+	await emit(handlers, "tool_execution_end", wroteFile(), context("01JX"));
+	const results = await emit(handlers, "agent_before_settle", {}, context("01JX"));
+	return results[0]?.entries?.[0]?.content ?? "";
+}
+
+test("the nudge names what deserves to survive, with three concrete examples", async (t) => {
+	const text = await askedText(t);
+
+	// S4a: the moment names the judgment instead of asking for it in the
+	// abstract — an external change, a discovery, a stated preference.
+	assert.match(text, /What deserves to survive, for example:/, `the examples are labelled: ${text}`);
+	for (const example of [
+		"a decision an external change forced",
+		"a discovery about how this repo actually works",
+		"a preference the user stated",
+	]) {
+		assert.ok(text.includes(example), `the nudge names the example "${example}": ${text}`);
+	}
+});
+
+test("the nudge names all seven record types, one line each, so the save arrives typed", async (t) => {
+	const text = await askedText(t);
+	const lines = text.split("\n");
+
+	// S4b: the type is a parameter of the save, and the model writes it only
+	// when the moment names it.
+	for (const type of MEMORY_TYPES) {
+		assert.equal(
+			lines.filter((line) => line.startsWith(`${type} — `)).length,
+			1,
+			`exactly one line defines ${type}: ${text}`,
+		);
+	}
+});
+
+test("the enriched nudge stays inside its per-fire budget", async (t) => {
+	const text = await askedText(t);
+	const bytes = Buffer.byteLength(text, "utf8");
+
+	// S5: the text is paid as one model request the moment it fires, so
+	// doctrine past this belongs to the skill, not to the nudge.
+	assert.ok(bytes <= 1200, `the nudge fits the 1200 B budget: ${bytes} B`);
+});
+
+test("the richer text did not change when the question fires", async (t) => {
+	// S3, condition by condition. A read-only session pays nothing.
+	const readOnly = fakeHost(t);
+	await emit(readOnly.handlers, "tool_execution_end", wroteFile("read"), context("01JX"));
+	assert.deepEqual(
+		await emit(readOnly.handlers, "agent_before_settle", {}, context("01JX")),
+		[undefined],
+		"read-only: no question",
+	);
+
+	// A session that already attempted a save pays nothing.
+	const saved = fakeHost(t);
+	await emit(saved.handlers, "tool_call", savedMemory, context("01JX"));
+	await emit(saved.handlers, "tool_execution_end", wroteFile(), context("01JX"));
+	assert.deepEqual(
+		await emit(saved.handlers, "agent_before_settle", {}, context("01JX")),
+		[undefined],
+		"already saved: no question",
+	);
+
+	// Files changed and no save attempted: exactly one question, one time.
+	const wrote = fakeHost(t);
+	await emit(wrote.handlers, "tool_execution_end", wroteFile(), context("01JX"));
+	assert.equal(
+		(await emit(wrote.handlers, "agent_before_settle", {}, context("01JX")))[0]?.continue,
+		true,
+		"unsaved work: one question",
+	);
+	assert.deepEqual(
+		await emit(wrote.handlers, "agent_before_settle", {}, context("01JX")),
+		[undefined],
+		"unsaved work: and never a second time",
+	);
 });
