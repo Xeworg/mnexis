@@ -809,7 +809,7 @@ fn migration_009_gives_an_existing_store_the_single_write_trigger() {
 
     // Opening it with this binary is the whole migration path.
     let conn = open_sqlite(&path).expect("the store must open again");
-    assert_eq!(schema_version(&conn), 9, "the migration is recorded");
+    assert_eq!(schema_version(&conn), 10, "the migrations are recorded");
     assert_eq!(
         must_be_indexed(&conn, "fact-1"),
         (

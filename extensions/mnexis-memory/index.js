@@ -1554,42 +1554,32 @@ export default function mnexisMemoryExtension(pi) {
 		label: "Save a project memory",
 		promptSnippet: "Store a durable memory of this project in the local mnexis engine.",
 		description:
-			"Store a durable memory about this project so future sessions can recall it. " +
-			"Use it after a decision, a discovery, a milestone or a stated preference — " +
-			"content must make sense months later without the surrounding conversation. " +
-			"The namespace is resolved from the current workspace automatically. " +
-			"Give it a title: the title is what the fact IS, the content is what it says " +
-			"now, and the title decides which record the memory lands on. The same title " +
-			"always means the same record, so a fact that changed updates its record " +
-			"instead of adding a second one. Give it keywords too: the words the same fact " +
-			"is called by in another language or another team's jargon, so it is found " +
-			"when it is asked for that way. They are the topic's vocabulary, never a value.",
+			"Store a durable memory of this project: content must stand alone months later; " +
+			"the namespace is this workspace's. The title is what the fact IS and picks the " +
+			"record — the same title always lands on the same record, so a changed fact " +
+			"updates it. Keywords are other languages' or teams' names for it, never a value.",
 		parameters: {
 			type: "object",
 			properties: {
 				content: { type: "string", description: "One self-contained sentence." },
 				title: {
 					type: "string",
-					description:
-						"Short, stable label of the fact (what it IS, not what it says now). " +
-						"The same title always lands on the same record.",
+					description: "Stable label of the fact (what it IS, not what it says now).",
 				},
 				tags: { type: "string", description: "Comma-separated tags." },
 				keywords: {
 					type: "string",
 					description:
-						"Comma-separated words the fact is called by in another language or " +
-						"another team's jargon (e.g. `puerto, port, listen port`). They are the " +
-						"topic's vocabulary, never a value, and they accumulate across saves.",
+						"Comma-separated synonyms in other languages or jargon; vocabulary, " +
+						"never a value. They accumulate across saves.",
 				},
 				topic_key: { type: "string", description: "Stable key grouping facts about one topic." },
 				type: {
 					type: "string",
 					description:
-						"Optional: the kind of thing this fact is, one of `knowledge`, `decision`, " +
-						"`preference`, `procedure`, `project_state`, `episode`, `fact`. Omit it and a " +
-						"new record is stored as `fact`, while a re-save keeps the type the record " +
-						"already has.",
+						"Optional: `knowledge`, `decision`, `preference`, `procedure`, " +
+						"`project_state`, `episode` or `fact`. Omit and a new record is " +
+						"stored as `fact`; a re-save keeps the type.",
 				},
 				idempotency_key: { type: "string", description: "Makes retries safe." },
 			},
@@ -1695,12 +1685,9 @@ export default function mnexisMemoryExtension(pi) {
 		label: "Search memories",
 		promptSnippet: "Recall what was recorded, across projects.",
 		description:
-			"Search stored memories (full-text, ranked). Use it before answering " +
-			"from scratch when prior context may exist, and to check what was already recorded. " +
-			"The search reaches every project by default, because projects share components; " +
-			"pass `namespace` to narrow it to one project. " +
-			"Write the query the way you would say it: every word counts and a hyphen is " +
-			"part of a word, so `staging-eu` and `puerto base de datos` both work.",
+			"Search stored memories (full-text, ranked) before answering from scratch. " +
+			"Reaches every project by default; `namespace` narrows it. Write the query as " +
+			"you would say it: every word counts, a hyphen is part of a word (`staging-eu`).",
 		parameters: {
 			type: "object",
 			properties: {
@@ -1708,7 +1695,7 @@ export default function mnexisMemoryExtension(pi) {
 				limit: { type: "number", description: "Maximum number of hits (default: 10)." },
 				namespace: {
 					type: "string",
-					description: "Optional namespace to narrow the search to one project.",
+					description: "Optional namespace to narrow the search.",
 				},
 				match: {
 					type: "string",
@@ -1720,9 +1707,8 @@ export default function mnexisMemoryExtension(pi) {
 				type: {
 					type: "string",
 					description:
-						"Optional: keep only the memories of these kinds — a comma-separated list of " +
-						"`knowledge`, `decision`, `preference`, `procedure`, `project_state`, " +
-						"`episode`, `fact`.",
+						"Optional: only these kinds (comma-separated, the seven in " +
+						"`mnexis_save.type`).",
 				},
 			},
 			required: ["query"],
@@ -1762,10 +1748,9 @@ export default function mnexisMemoryExtension(pi) {
 		label: "Suggest the topic key",
 		promptSnippet: "Ask which topic key a fact is already recorded under.",
 		description:
-			"Ask which topic key a title yields, and whether this project already records " +
-			"it. Use it before saving a fact you are not sure about: the same title always " +
-			"lands on the same record, so a fact that changed updates its record instead of " +
-			"adding a second one.",
+			"Ask which topic key a title yields and whether this project records it. Use " +
+			"it before saving an unsure fact: the answer names the record the title would " +
+			"update.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -1813,37 +1798,33 @@ export default function mnexisMemoryExtension(pi) {
 		label: "List memories",
 		promptSnippet: "List the memories recorded, across projects.",
 		description:
-			"List the memories stored: what is there, with a preview " +
-			"of each one. Use it to review what is already recorded before saving " +
-			"something new. The list reaches every project by default; pass `namespace` " +
-			"to narrow it to one project. Each item names the memory and shows a few " +
-			"words of it: read the one that matters with `mnexis_show`, and ask for " +
-			"`full` only when you need the whole text of every memory.",
+			"List the memories stored, with a preview of each. Reaches every project by " +
+			"default; `namespace` narrows it. Read one with `mnexis_show`; `full` gives " +
+			"every memory whole.",
 		parameters: {
 			type: "object",
 			properties: {
 				namespace: {
 					type: "string",
-					description: "Optional namespace to narrow the list to one project.",
+					description: "Optional namespace to narrow the list.",
 				},
 				limit: { type: "number", description: "Maximum number of memories." },
 				full: {
 					type: "boolean",
-					description: "The complete content of every memory, not a preview.",
+					description: "Whole memories, not previews.",
 				},
 				type: {
 					type: "string",
 					description:
-						"Optional: keep only the memories of these kinds — a comma-separated list of " +
-						"`knowledge`, `decision`, `preference`, `procedure`, `project_state`, " +
-						"`episode`, `fact`.",
+						"Optional: only these kinds (comma-separated, the seven in " +
+						"`mnexis_save.type`).",
 				},
 				value: {
 					type: "string",
 					description:
-						"Optional: keep only the memories that carry this value — a run of three or " +
-						"more digits, exactly as written (8081 is a value, 80 is not). The answer is " +
-						"every record that carries it, not a page of the namespace.",
+						"Optional: only memories carrying this value — three or more digits, " +
+						"exactly as written (8081 is a value, 80 is not); the answer is every " +
+						"record, not a page.",
 				},
 			},
 			additionalProperties: false,
@@ -1908,9 +1889,8 @@ export default function mnexisMemoryExtension(pi) {
 		label: "The history of a memory",
 		promptSnippet: "Every revision of one memory, and why each happened.",
 		description:
-			"Return the revision history of one memory: every revision in order, with its state, " +
-			"content, who changed it and why. Use it to see how a fact evolved before updating or " +
-			"superseding it — the current record alone does not say what it used to claim.",
+			"Return one memory's revision history: every revision in order with its state, " +
+			"content, who changed it and why. Use it before updating or superseding the fact.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -1944,14 +1924,14 @@ export default function mnexisMemoryExtension(pi) {
 		label: "Start the session",
 		promptSnippet: "Register the session you are running in.",
 		description:
-			"Register the session you are running in, so the engine knows its boundaries. Call it " +
-			"once, at the start of the session: the session id is yours (the one you were given), " +
-			"never invented. The engine never ends a session for you.",
+			"Register your session, so the engine knows its boundaries. Call it once with " +
+			"the session id you were given — never invented. The engine never ends a " +
+			"session for you.",
 		parameters: {
 			type: "object",
 			properties: {
 				session_id: { type: "string", description: "The session id you were given." },
-				directory: { type: "string", description: "Where the session runs (informational)." },
+				directory: { type: "string", description: "Where the session runs." },
 			},
 			additionalProperties: false,
 		},
@@ -1983,13 +1963,13 @@ export default function mnexisMemoryExtension(pi) {
 		label: "End the session",
 		promptSnippet: "End the session with a summary of what it did.",
 		description:
-			"End the session you are running in, with a short summary of what it did. The summary " +
-			"is what the next session reads first, so it must make sense with no surrounding chat.",
+			"End your session with a short summary of what it did. The next session reads it " +
+			"first, so it must stand alone.",
 		parameters: {
 			type: "object",
 			properties: {
 				session_id: { type: "string", description: "The session id you were given." },
-				summary: { type: "string", description: "What the session did, in a few sentences." },
+				summary: { type: "string", description: "What the session did." },
 			},
 			additionalProperties: false,
 		},
@@ -2021,10 +2001,10 @@ export default function mnexisMemoryExtension(pi) {
 		label: "Save what the user said",
 		promptSnippet: "Store a message from outside this session, so it survives.",
 		description:
-			"Store a message verbatim, for the one case the automatic capture does not cover: " +
-			"something the user pasted from another conversation, or a statement that must be found " +
-			"again by its exact words. Every message of this session is already stored when it " +
-			"arrives, by the extension and not by you, so do not copy the conversation here.",
+			"Store a message verbatim for the one case automatic capture misses: something " +
+			"pasted from another conversation, or a statement that must be found by its " +
+			"exact words. This session's messages are already stored, so do not copy the " +
+			"conversation here.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -2053,9 +2033,9 @@ export default function mnexisMemoryExtension(pi) {
 		label: "Search what the user said",
 		promptSnippet: "Find what the user asked before, across sessions.",
 		description:
-			"Search what the user said before, across sessions. Use it when you need the request " +
-			"behind the work: the prompt is not in the files. Write the query the way you would " +
-			"say it: every word counts and a hyphen is part of a word.",
+			"Search what the user said before, across sessions: the request behind the " +
+			"work. Write the query as you would say it: every word counts, a hyphen is part " +
+			"of a word.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -2063,9 +2043,7 @@ export default function mnexisMemoryExtension(pi) {
 				match_mode: {
 					type: "string",
 					enum: ["any", "all", "phrase"],
-					description:
-						"How the words are matched: any (default) counts every word, all requires " +
-						"every word, phrase keeps the query as one exact phrase.",
+					description: "How the words are matched, as in `mnexis_search`'s `match`.",
 				},
 				limit: { type: "number", description: "Maximum number of hits (default: 20)." },
 			},
@@ -2095,25 +2073,23 @@ export default function mnexisMemoryExtension(pi) {
 		label: "Recall a session",
 		promptSnippet: "What a session was, in one answer.",
 		description:
-			"Recall what a session was: the session itself, what the user said in it in order, and " +
-			"the memories of the namespace in its window. Use `previous` for the session before this " +
-			"one — the most recent finished session of this workspace's namespace — or `session` for a " +
-			"known id. The memories are the namespace's, read by time: the engine does not know which " +
-			"session wrote which memory. Each memory is answered with its identity and a preview; pass " +
-			"`full` for the whole records, and read one with `mnexis_show`. The answer also carries the " +
-			"state of the branch the session was anchored to, validated at read time and never stored: " +
-			"`merged`, `not_merged`, or `unknown` when it could not be checked.",
+			"Recall a session: the session, what the user said in order, and the namespace's " +
+			"memories in its window. `previous` is this workspace namespace's most recent " +
+			"finished session; `session` takes an id. Memories are read by time, not by " +
+			"session, each with identity and a preview; `full` gives whole records. The " +
+			"answer also carries the branch state the session was anchored to, checked at " +
+			"read time and never stored: `merged`, `not_merged` or `unknown`.",
 		parameters: {
 			type: "object",
 			properties: {
 				session: { type: "string", description: "The session id to recall." },
 				previous: {
 					type: "boolean",
-					description: "The session before this one (the most recent finished session of the workspace's namespace).",
+					description: "The most recent finished session of the workspace's namespace.",
 				},
 				full: {
 					type: "boolean",
-					description: "The complete content of every memory in the window, not a preview.",
+					description: "Whole records, not previews.",
 				},
 			},
 			additionalProperties: false,
@@ -2155,11 +2131,11 @@ export default function mnexisMemoryExtension(pi) {
 		label: "This workspace, in one answer",
 		promptSnippet: "Where this session may write, and what is already there.",
 		description:
-			"Call this FIRST, at the start of every session and before you change code that already " +
-			"exists: it returns the namespace this workspace writes into, the read and write " +
-			"allowlists, how many memories the scope can see, and the most recent of them — each " +
-			"with its title and a preview, never the whole record (open one with mnexis_show when " +
-			"it is the memory you need). The decisions behind the code live here, not in the files.",
+			"Call this FIRST, at the start of every session and before changing code: " +
+			"the namespace this workspace writes into, the read and write allowlists, how " +
+			"many memories the scope can see, and the most recent — title and preview, never " +
+			"the whole record (open one with `mnexis_show`). The decisions live here, not in " +
+			"the files.",
 		parameters: {
 			type: "object",
 			properties: {},
@@ -2182,55 +2158,36 @@ export default function mnexisMemoryExtension(pi) {
 		label: "The context of this task",
 		promptSnippet: "Ask the project what it knows about this task, in one call.",
 		description:
-			"Ask the project a question in one call and get the answer: the facts " +
-			"this project recorded that match the task, whole — the uuid, the title " +
-			"and the entire content of each memory, never a cut one, because the " +
-			"budget decides which facts fit, not how much of a fact you see — PLUS " +
-			"the declaration of what the answer did not include: the candidates the " +
-			"budget could not keep, with their size, so a cross-check round has " +
-			"something to look for, and a fact that did not fit is one " +
-			"mnexis_show away. It also carries the " +
-			"session state — the live project_state and decision " +
-			"records with the content that fits the block's budget, newest first, " +
-			"the index of the live records that did not fit (kind, title, uuid and " +
-			"date, no content — pull one with mnexis_show), and the previous " +
-			"session's summary — so one call answers 'where did we leave off' " +
-			"instead of rebuilding it from several surfaces. The block has a budget " +
-			"of its own and is outside the door's budget, so it never moves which " +
-			"memories the door picks; a record the block could not fit is still " +
-			"named, never dropped. Use it as the FIRST call of a session, before " +
-			"you read the code, and whenever the task is shaped like a question " +
-			"('where did we leave off', 'which port does it listen on', 'what did " +
-			"we decide about X'). Read the session state it returns before calling " +
-			"list, search or recall for the same question: the state is already " +
-			"here. It searches this workspace's namespace — the one a save lands in " +
-			"— and the answer declares the namespace it searched, the tokens it " +
-			"spent and how far the read reached, so an empty answer is never " +
-			"another project's silence. It does not replace mnexis_search: the " +
-			"search is the exact query, the context is the project-shaped question.",
+			"Ask the project about this task in one call: the facts that match the task, " +
+			"whole — the budget decides which facts fit, not how much of a fact you see — " +
+			"plus what it did not include (the candidates the budget cut, with their size). " +
+			"It also returns session state: the live project_state and decision records " +
+			"up to the block's budget, newest first; the index of records that did not fit " +
+			"(kind, title, uuid, date, no content); and the previous session's summary. That " +
+			"budget is outside the door's budget, so a record it could not fit is still named. " +
+			"It reads this workspace's namespace (the one a save lands in) and declares the " +
+			"namespace searched, the tokens spent and how far the read reached. " +
+			"`mnexis_search` is the exact query.",
 		parameters: {
 			type: "object",
 			properties: {
 				task: { type: "string", description: "The task in one line." },
 				namespace: {
 					type: "string",
-					description:
-						"Optional namespace to ask another project. Defaults to this workspace's.",
+					description: "Optional: ask another project's namespace.",
 				},
 				token_budget: {
 					type: "number",
-					description: "Token budget for the answer (default: 1024).",
+					description: "Token budget (default: 1024).",
 				},
 				max_items: {
 					type: "number",
-					description: "Maximum number of memories to consider (default: 20, capped at 100).",
+					description: "Maximum memories (default: 20, max 100).",
 				},
 				match: {
 					type: "string",
 					enum: ["any", "all", "phrase"],
-					description:
-						"How the task's words are matched: any (default) counts every word, all " +
-						"requires every word, phrase keeps the task as one exact phrase.",
+					description: "How the task's words are matched, as in `mnexis_search`'s `match`.",
 				},
 			},
 			required: ["task"],
@@ -2318,10 +2275,9 @@ export default function mnexisMemoryExtension(pi) {
 		label: "Supersede a memory",
 		promptSnippet: "Replace an outdated memory with a newer one, keeping the history.",
 		description:
-			"Replace an outdated memory with a newer one, keeping the history. Use it when a fact " +
-			"changed: save the new fact first, then link both records with this tool. Both memories " +
-			"must live in this project's namespace: the tool refuses to touch a memory that belongs " +
-			"to another project.",
+			"Replace an outdated memory with a newer one, keeping the history. Use it when a " +
+			"fact changed: save the new one first, then link both here. Both must live in " +
+			"this project's namespace; another project's memory is refused.",
 		parameters: {
 			type: "object",
 			properties: {

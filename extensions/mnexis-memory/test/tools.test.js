@@ -1798,7 +1798,7 @@ test("the context tool's description says the facts come whole", () => {
 	);
 	assert.match(
 		contextTool.description,
-		/declaration of what the answer did not include/,
+		/what it did not include/,
 		`and that it declares what it left out: ${contextTool.description}`,
 	);
 	assert.doesNotMatch(
@@ -1837,12 +1837,12 @@ test("the context tool declares the session state it returns", () => {
 	);
 	assert.match(
 		contextTool.description,
-		/the content that fits the block's budget/,
+		/up to the block's budget/,
 		`and that the content is bounded: ${contextTool.description}`,
 	);
 	assert.match(
 		contextTool.description,
-		/index of the live records that did not fit/,
+		/the index of records that did not fit/,
 		`and that what did not fit is indexed: ${contextTool.description}`,
 	);
 	assert.match(
@@ -1854,6 +1854,123 @@ test("the context tool declares the session state it returns", () => {
 		contextTool.description,
 		/records with their whole content/,
 		`the promise the block cannot keep is gone: ${contextTool.description}`,
+	);
+});
+
+/** Every word the tools block puts in front of the model: the descriptions
+ * and the parameter prose, exactly as the round-4 instrument measured it
+ * (no separators, no schema keys — the prose the model pays for). */
+function toolsProse(tools) {
+	const parts = [];
+	for (const tool of tools.values()) {
+		parts.push(tool.description);
+		for (const property of Object.values(tool.parameters?.properties ?? {})) {
+			parts.push(property?.description ?? "");
+		}
+	}
+	return parts.join("");
+}
+
+const proseBytes = (text) => Buffer.byteLength(text, "utf8");
+
+test("the tools block states the seven kinds once", () => {
+	// S1: the enum was written three times (save, search, list) and the
+	// audit's 8 950 B bill counted all three. It is stated once, where a
+	// write chooses it, and the two read filters point at that statement.
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const prose = toolsProse(tools);
+
+	assert.equal(
+		prose.split("`knowledge`, `decision`, `preference`, `procedure`").length - 1,
+		1,
+		`the seven kinds are listed once: ${prose}`,
+	);
+	for (const name of ["mnexis_search", "mnexis_list"]) {
+		const described = tools.get(name).parameters.properties.type.description;
+		assert.match(
+			described,
+			/the seven in `mnexis_save\.type`/,
+			`${name} refers to the one list: ${described}`,
+		);
+	}
+});
+
+test("the tools block states how the words are matched once", () => {
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const prose = toolsProse(tools);
+
+	assert.equal(
+		prose.split("counts every word").length - 1,
+		1,
+		`the match semantics are stated once: ${prose}`,
+	);
+	for (const [name, field] of [
+		["mnexis_search_prompts", "match_mode"],
+		["mnexis_context", "match"],
+	]) {
+		const described = tools.get(name).parameters.properties[field].description;
+		assert.match(
+			described,
+			/as in `mnexis_search`/,
+			`${name} refers to the one statement: ${described}`,
+		);
+	}
+});
+
+test("the tools block states the same-title rule once", () => {
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const prose = toolsProse(tools);
+
+	assert.equal(
+		(prose.match(/same title/gi) ?? []).length,
+		1,
+		`the same-title rule is stated once: ${prose}`,
+	);
+	assert.match(
+		tools.get("mnexis_save").description,
+		/same title/,
+		"and the save is the tool that states it",
+	);
+	assert.doesNotMatch(
+		tools.get("mnexis_suggest_topic_key").description,
+		/same title/i,
+		"the suggestion names the record instead of repeating the rule",
+	);
+});
+
+test("exactly one tool claims the first call of a session", () => {
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const claiming = [...tools.values()]
+		.filter((tool) => /\bFIRST\b/.test(tool.description))
+		.map((tool) => tool.name);
+
+	assert.deepEqual(
+		claiming,
+		["mnexis_workspace"],
+		`only the workspace claims the first call: ${claiming}`,
+	);
+	assert.doesNotMatch(
+		tools.get("mnexis_context").description,
+		/call this first|first call/i,
+		`the context does not compete for it: ${tools.get("mnexis_context").description}`,
+	);
+});
+
+test("the tools block costs less prose than the audit measured", () => {
+	// S1: the block billed 8 950 B per call with the round-4 instrument
+	// (read the definitions the extension registers, not the source). The
+	// target is 5 500 B, the audit's halving, without losing a contract.
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const total = proseBytes(toolsProse(tools));
+
+	assert.ok(
+		total <= 5500,
+		`the tools block stays under the target: ${total} B (budget 5500 B)`,
 	);
 });
 

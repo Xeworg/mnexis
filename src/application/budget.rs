@@ -139,6 +139,30 @@ impl Budget {
 // Tokenizer v1
 // ---------------------------------------------------------------------------
 
+/// Where a [`token_count_v1`] scan stands: whether the last character it read
+/// was whitespace, and whether it was inside an alphanumeric run.
+///
+/// The counter is a left-to-right automaton, so the count of a concatenation
+/// is the count of its parts read from the state the previous part ended in.
+/// That is what lets a growing envelope be counted without being rebuilt
+/// (post-audit-debts C2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenScan {
+    in_ws: bool,
+    in_alnum: bool,
+}
+
+impl TokenScan {
+    /// The state a fresh string starts in: no character read yet, so leading
+    /// whitespace collapses exactly as [`token_count_v1`] collapses it.
+    pub fn start() -> Self {
+        Self {
+            in_ws: true,
+            in_alnum: false,
+        }
+    }
+}
+
 /// Tokenize a UTF-8 string with the supported tokenizer v1.
 ///
 /// **Algorithm** (deliberately std-only, BPE-lite, upper-bound):
@@ -155,9 +179,19 @@ impl Budget {
 /// substituted later behind the same [`SUPPORTED_TOKENIZER_V1`] id
 /// without changing the public contract.
 pub fn token_count_v1(input: &str) -> i64 {
+    token_count_v1_from(input, TokenScan::start()).0
+}
+
+/// Count the tokens of `input` as the continuation of a scan that ended in
+/// `state`, and report the state it ends in.
+///
+/// [`token_count_v1`] is this function started from [`TokenScan::start`]; the
+/// two cannot disagree because there is one automaton.
+pub fn token_count_v1_from(input: &str, state: TokenScan) -> (i64, TokenScan) {
     let mut count: i64 = 0;
-    let mut in_ws = true; // leading whitespace is collapsed
-    let mut in_alnum = false;
+    // `in_ws = true` at the start: leading whitespace is collapsed.
+    let mut in_ws = state.in_ws;
+    let mut in_alnum = state.in_alnum;
     for ch in input.chars() {
         if ch.is_whitespace() {
             if in_alnum {
@@ -192,12 +226,53 @@ pub fn token_count_v1(input: &str) -> i64 {
             count += 1;
         }
     }
-    count
+    (count, TokenScan { in_ws, in_alnum })
+}
+
+/// A scan that is fed in pieces counts what the whole string counts.
+#[cfg(test)]
+fn token_count_v1_in_pieces(pieces: &[&str]) -> i64 {
+    let mut total = 0;
+    let mut state = TokenScan::start();
+    for piece in pieces {
+        let (count, end) = token_count_v1_from(piece, state);
+        total += count;
+        state = end;
+    }
+    total
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_piecewise_scan_counts_what_the_whole_string_counts() {
+        // The door counts a growing envelope without rebuilding it, so the
+        // piecewise count has to be the whole count — on the boundaries that
+        // matter: whitespace, an alphanumeric run split in two, punctuation
+        // and non-ASCII.
+        let whole = r#"{"budget_enforcement":"estimated","tokenizer_id":"supported-tokenizer-v1","items":[{"uuid":"a-1","content":"el puerto es 8081, según el PRD"}]}"#;
+        let pieces = [
+            r#"{"budget_enforcement":"estimated","tokenizer_id":"supported-tokenizer-v1","items":["#,
+            r#"{"uuid":"a-1","content":"el puerto es 8081, según el PRD"}"#,
+            "]}",
+        ];
+        assert_eq!(token_count_v1_in_pieces(&pieces), token_count_v1(whole));
+        // Splitting inside a word and inside whitespace is the same count.
+        assert_eq!(
+            token_count_v1_in_pieces(&["alpha ", "beta"]),
+            token_count_v1("alpha beta")
+        );
+        assert_eq!(
+            token_count_v1_in_pieces(&["alph", "a"]),
+            token_count_v1("alpha")
+        );
+        assert_eq!(
+            token_count_v1_in_pieces(&["a", ",", "b"]),
+            token_count_v1("a,b")
+        );
+    }
 
     #[test]
     fn estimated_mode_uses_4_bytes_per_token() {

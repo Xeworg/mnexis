@@ -224,6 +224,7 @@ impl SqliteMemoryRepository {
                 newest_first,
                 memory_types,
                 None,
+                None,
             ),
             Some(value) => self.list_by_value(
                 namespaces,
@@ -244,6 +245,11 @@ impl SqliteMemoryRepository {
     /// somewhere, not necessarily as a whole run), so it can only remove
     /// rows that cannot carry the value. The exact rule is decided after
     /// the row is read.
+    ///
+    /// `after_id` is the keyset that continues a scan: only rows after it are
+    /// read, in `id` order. It is what the value filter pages with — an
+    /// `OFFSET` would re-walk every row the previous pages had already read
+    /// (post-audit-debts C3).
     #[allow(clippy::too_many_arguments)]
     fn list_page(
         &self,
@@ -255,6 +261,7 @@ impl SqliteMemoryRepository {
         newest_first: bool,
         memory_types: &[String],
         like_value: Option<&str>,
+        after_id: Option<i64>,
     ) -> Result<Vec<Memory>, MnexisError> {
         // The superset predicate of the value filter, declared before the
         // parameters that borrow it (it outlives them).
@@ -264,6 +271,12 @@ impl SqliteMemoryRepository {
             return Ok(Vec::new());
         };
         let mut sql = format!("SELECT {SELECT_COLUMNS}{filter}");
+        let after_val: i64 = after_id.unwrap_or(0);
+        if after_id.is_some() {
+            // The keyset: the next page starts where the last one ended.
+            sql.push_str(" AND id > ?");
+            param_refs.push(&after_val);
+        }
         if let Some(pattern) = like_pattern.as_ref() {
             // The value is digits, so it carries no wildcard of its own:
             // the pattern is a plain substring search over the four
@@ -275,15 +288,23 @@ impl SqliteMemoryRepository {
                 param_refs.push(pattern as &dyn ToSql);
             }
         }
-        sql.push_str(if newest_first {
-            " ORDER BY id DESC LIMIT ? OFFSET ?"
+        if after_id.is_some() {
+            // A keyset scan reads forward, always: it is exhaustive, and its
+            // caller counts matches, not rows.
+            sql.push_str(" ORDER BY id LIMIT ?");
         } else {
-            " ORDER BY id LIMIT ? OFFSET ?"
-        });
+            sql.push_str(if newest_first {
+                " ORDER BY id DESC LIMIT ? OFFSET ?"
+            } else {
+                " ORDER BY id LIMIT ? OFFSET ?"
+            });
+        }
         let limit_val: i64 = limit as i64;
         let offset_val: i64 = offset as i64;
         param_refs.push(&limit_val);
-        param_refs.push(&offset_val);
+        if after_id.is_none() {
+            param_refs.push(&offset_val);
+        }
 
         let mut stmt = self.conn.prepare(&sql).map_err(sql_to_domain)?;
         let rows = stmt
@@ -306,6 +327,11 @@ impl SqliteMemoryRepository {
     /// that was read. The limit and the offset count **matches**, not the
     /// rows the engine scanned: a namespace of five thousand records with
     /// two that carry the value answers with those two.
+    ///
+    /// The scan pages with a **keyset** (`id > last`), never with an
+    /// `OFFSET`: an offset makes the engine re-walk every row the previous
+    /// pages had already read, which costs quadratic row visits on the hot
+    /// path the extension calls (post-audit-debts C3).
     #[allow(clippy::too_many_arguments)]
     fn list_by_value(
         &self,
@@ -323,24 +349,27 @@ impl SqliteMemoryRepository {
         let mut matched: Vec<Memory> = Vec::new();
         // The matches the offset skips.
         let mut skipped = 0usize;
-        // The rows the engine has read so far: the scan's own offset.
-        let mut scanned = 0usize;
+        // The last row the scan has read: the next chunk continues after it.
+        let mut after: Option<i64> = None;
         loop {
             let rows = self.list_page(
                 namespaces,
                 states,
                 VALUE_SCAN_CHUNK,
-                scanned,
+                0,
                 deleted,
                 false,
                 memory_types,
                 Some(value),
+                after,
             )?;
             if rows.is_empty() {
                 break;
             }
-            scanned += rows.len();
             let read = rows.len();
+            // Every page read from the table carries its ids: without one the
+            // scan cannot continue, and the pages it has are the answer.
+            after = rows.last().and_then(|row| row.id);
             for row in rows {
                 if !crate::domain::value::record_carries_value(
                     &row.content,
@@ -360,7 +389,7 @@ impl SqliteMemoryRepository {
                     return Ok(matched);
                 }
             }
-            if read < VALUE_SCAN_CHUNK {
+            if read < VALUE_SCAN_CHUNK || after.is_none() {
                 break;
             }
         }
@@ -526,6 +555,65 @@ impl MemoryRepository for SqliteMemoryRepository {
             .map_err(sql_to_domain)
     }
 
+    fn get_by_uuids(&self, uuids: &[String]) -> Result<Vec<Memory>, MnexisError> {
+        if uuids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // One statement for the whole page: the door revalidates what the
+        // index ranked, and a query per hit is a cost with no answer in it.
+        let sql = format!(
+            "SELECT {SELECT_COLUMNS} FROM memories \
+             WHERE uuid IN ({}) AND deleted = 0",
+            placeholders(uuids.len())
+        );
+        let params: Vec<&dyn ToSql> = uuids.iter().map(|uuid| uuid as &dyn ToSql).collect();
+        let mut stmt = self.conn.prepare(&sql).map_err(sql_to_domain)?;
+        let rows = stmt
+            .query_map(&params[..], |row| {
+                Self::row_to_memory(row).map_err(to_sql_err)
+            })
+            .map_err(sql_to_domain)?;
+        let mut memories = Vec::with_capacity(uuids.len());
+        for row in rows {
+            memories.push(row.map_err(sql_to_domain)?);
+        }
+        Ok(memories)
+    }
+
+    fn identities_for(
+        &self,
+        uuids: &[String],
+    ) -> Result<Vec<crate::domain::memory::MemoryIdentity>, MnexisError> {
+        if uuids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // The two fields a read surface keeps, and the namespace that bounds
+        // it — never the content it would throw away.
+        let sql = format!(
+            "SELECT uuid, namespace, title, keywords FROM memories \
+             WHERE uuid IN ({}) AND deleted = 0",
+            placeholders(uuids.len())
+        );
+        let params: Vec<&dyn ToSql> = uuids.iter().map(|uuid| uuid as &dyn ToSql).collect();
+        let mut stmt = self.conn.prepare(&sql).map_err(sql_to_domain)?;
+        let rows = stmt
+            .query_map(&params[..], |row| {
+                let keywords: String = row.get(3)?;
+                Ok(crate::domain::memory::MemoryIdentity {
+                    uuid: row.get(0)?,
+                    namespace: row.get(1)?,
+                    title: row.get(2)?,
+                    keywords: Memory::keywords_from_column(&keywords),
+                })
+            })
+            .map_err(sql_to_domain)?;
+        let mut identities = Vec::with_capacity(uuids.len());
+        for row in rows {
+            identities.push(row.map_err(sql_to_domain)?);
+        }
+        Ok(identities)
+    }
+
     fn list(
         &self,
         namespace: Option<&str>,
@@ -625,12 +713,13 @@ impl MemoryRepository for SqliteMemoryRepository {
             .conn
             .execute(
                 "UPDATE memories SET
-                    content = ?1, state = ?2, topic_key = ?3, memory_type = ?4,
-                    actor = ?5, channel = ?6, assertion_basis = ?7,
-                    valid_from = ?8, valid_until = ?9,
-                    revision = ?10, updated_at = ?11, keywords = ?12
-                 WHERE id = ?13 AND revision = ?14",
+                    title = ?1, content = ?2, state = ?3, topic_key = ?4, memory_type = ?5,
+                    actor = ?6, channel = ?7, assertion_basis = ?8,
+                    valid_from = ?9, valid_until = ?10,
+                    revision = ?11, updated_at = ?12, keywords = ?13
+                 WHERE id = ?14 AND revision = ?15",
                 params![
+                    mem.title,
                     mem.content,
                     state_str,
                     mem.topic_key,
@@ -1731,6 +1820,53 @@ mod tests {
     }
 
     #[test]
+    fn update_persists_every_field_including_the_title() {
+        let (mut repo, _dir) = make_repo(1);
+        let m0 = repo.get_by_uuid("uuid-0").unwrap().unwrap();
+        assert_eq!(m0.title, "", "the fixture starts with no title");
+
+        let mut changed = m0.clone();
+        changed.title = "the label of the fact".to_string();
+        changed.content = "updated body".to_string();
+        changed.topic_key = "topic.renamed".to_string();
+        changed.state = MemoryState::Active;
+        changed.actor = "agent".to_string();
+        changed.channel = "mcp".to_string();
+        changed.assertion_basis = "observed".to_string();
+        changed.valid_from = Some("2026-01-01T00:00:00Z".to_string());
+        changed.valid_until = Some("2026-12-31T00:00:00Z".to_string());
+        changed.updated_at = "2026-01-02T00:00:00Z".to_string();
+        changed.keywords = vec!["puerto".to_string(), "port".to_string()];
+
+        let returned = repo.update(&changed, 1).unwrap();
+        assert_eq!(returned.revision, 2);
+        assert_eq!(
+            returned.title, "the label of the fact",
+            "update must not drop the title the caller passed"
+        );
+
+        // The answer and the row must agree: a fresh read of the row is what
+        // proves the write, not the shape of the returned value.
+        let fresh = repo.get_by_rowid(m0.id.unwrap()).unwrap().unwrap();
+        assert_eq!(
+            fresh.title, "the label of the fact",
+            "the title is on disk, not only in the answer"
+        );
+        assert_eq!(fresh.content, "updated body");
+        assert_eq!(fresh.topic_key, "topic.renamed");
+        assert_eq!(fresh.memory_type, changed.memory_type);
+        assert_eq!(fresh.state, MemoryState::Active);
+        assert_eq!(fresh.actor, "agent");
+        assert_eq!(fresh.channel, "mcp");
+        assert_eq!(fresh.assertion_basis, "observed");
+        assert_eq!(fresh.valid_from.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert_eq!(fresh.valid_until.as_deref(), Some("2026-12-31T00:00:00Z"));
+        assert_eq!(fresh.revision, 2);
+        assert_eq!(fresh.updated_at, "2026-01-02T00:00:00Z");
+        assert_eq!(fresh.keywords, vec!["puerto", "port"]);
+    }
+
+    #[test]
     fn update_with_wrong_revision_returns_revision_conflict() {
         let (mut repo, _dir) = make_repo(1);
         let m0 = repo.get_by_uuid("uuid-0").unwrap().unwrap();
@@ -1839,6 +1975,76 @@ mod tests {
         );
         let err = repo.save(&m2).unwrap_err();
         assert!(matches!(err, MnexisError::TopicConflict { .. }));
+    }
+
+    /// A value filter that needs more than one chunk still pages exactly, and
+    /// it pages by keyset: the chunk after the first continues from the last
+    /// row it read, so no row is read twice (post-audit-debts C3).
+    ///
+    /// The fixture makes the superset predicate wide on purpose: most rows
+    /// only *contain* the digits inside a longer run (and therefore do not
+    /// carry the value), which is the shape that made the old `OFFSET` scan
+    /// re-walk the table page after page.
+    #[test]
+    fn the_value_filter_pages_across_the_scan_chunk() {
+        let dir = tempdir_in("target").unwrap();
+        let conn = open_sqlite(&dir.path().join("value.db")).unwrap();
+        let mut repo = SqliteMemoryRepository::new(conn);
+        // 700 rows, more than two scan chunks of 256: every third row carries
+        // the value as a whole run, the rest carry it inside a longer run.
+        let mut expected: Vec<String> = Vec::new();
+        let mut rows: Vec<Memory> = Vec::new();
+        for i in 0..700 {
+            let uuid = format!("uuid-{i}");
+            let content = if i % 3 == 0 {
+                format!("the port is 8081 in row {i}")
+            } else {
+                format!("the port is 80810 in row {i}")
+            };
+            let mut mem = Memory::new_proposed(
+                uuid.clone(),
+                format!("topic.{i}"),
+                "proyecto-a".to_string(),
+                "fact".to_string(),
+                content,
+                "user".to_string(),
+                "cli".to_string(),
+                "user_stated".to_string(),
+                "2026-01-01T00:00:00Z".to_string(),
+            );
+            mem.state = MemoryState::Active;
+            if i % 3 == 0 {
+                expected.push(uuid);
+            }
+            rows.push(mem);
+        }
+        // One batch: the fixture is 700 rows and the test is about the scan,
+        // not about how fast the engine can write them.
+        repo.save_batch(&rows).unwrap();
+
+        let scope = NamespaceScope::Only(vec!["proyecto-a".to_string()]);
+        let uuids =
+            |rows: Vec<Memory>| -> Vec<String> { rows.into_iter().map(|row| row.uuid).collect() };
+
+        // Pages that cross the 256-row chunk boundary, and pages that start
+        // after it: the offset counts matches, the scan still reads forward.
+        for (offset, limit) in [(0usize, 5usize), (80, 5), (170, 5), (230, 10), (0, 300)] {
+            let page = repo
+                .list_in_typed(&scope, None, limit, offset, false, &[], Some("8081"))
+                .expect("the value filter answers");
+            let want: Vec<String> = expected.iter().skip(offset).take(limit).cloned().collect();
+            assert_eq!(
+                uuids(page),
+                want,
+                "offset {offset}, limit {limit}: the page is the matches, in row order"
+            );
+        }
+
+        // A page past the last match answers nothing, not the first page.
+        let empty = repo
+            .list_in_typed(&scope, None, 5, expected.len(), false, &[], Some("8081"))
+            .expect("the value filter answers");
+        assert!(empty.is_empty(), "past the last match is an empty page");
     }
 
     #[test]
