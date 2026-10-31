@@ -437,6 +437,22 @@ export function sessionCloseContent(session) {
 	return lines.join("\n");
 }
 
+/**
+ * The one-line question the settle nudge asks (capture-discipline S4).
+ *
+ * The hooks capture the mechanical floor; whether a session deserved a
+ * memory is judgment. This is the one sentence the model reads when the
+ * session's own events show unsaved work, and it is spent once per session:
+ * it asks for the judgment, not for a quota.
+ */
+export const SETTLE_NUDGE =
+	"This session changed files but saved no memory. If a decision, preference, " +
+	"discovery or project-state change deserves to survive the session, save it " +
+	"now with one mnexis_save; otherwise reply that nothing deserves memory.";
+
+/** The tools whose successful run changed a file (capture-discipline S4). */
+const FILE_WRITING_TOOLS = new Set(["write", "edit"]);
+
 // --- store recovery (odd/tasks/store-recovery.md, S1-S7) ---
 //
 // A save that lands on a second live record for one fact leaves the store
@@ -741,6 +757,12 @@ export default function mnexisMemoryExtension(pi) {
 	});
 	let resolution = null;
 	let writeNamespaces = null;
+	// S4: the session's own evidence, cheap enough to keep per event. The
+	// settle nudges only when the session changed files and saved nothing,
+	// and only once per session; a fresh session starts with nothing here.
+	let sessionFilesChanged = false;
+	let sessionSaveCalls = 0;
+	let settleNudgeSent = false;
 
 	/** Resolve the workspace → namespace binding once per session. */
 	async function resolveWorkspace(cwd) {
@@ -1464,6 +1486,12 @@ export default function mnexisMemoryExtension(pi) {
 	// effort — a session that was never registered is not an error, it is
 	// a session the engine did not hear about.
 	pi.on("session_start", async (_event, ctx) => {
+		// A new session (new, resume, fork, reload) carries no evidence and
+		// no spent question from the previous one. Reset before the engine
+		// call so a session the engine does not know yet still starts clean.
+		sessionFilesChanged = false;
+		sessionSaveCalls = 0;
+		settleNudgeSent = false;
 		const id = sessionIdOf(ctx);
 		if (!id) {
 			return;
@@ -1595,6 +1623,56 @@ export default function mnexisMemoryExtension(pi) {
 				exit_code: result.code,
 			});
 		}
+	});
+
+	// --- S4: judgment, asked once and only when the evidence says so ---
+	//
+	// The hooks above capture the floor. Whether the session deserved a
+	// memory is judgment, and a model that never considers the question is
+	// the gap the dogfood measured. The extension does not put the question
+	// into the tools block (S3); it asks the model once, at the final
+	// actionable boundary, when the session's own events show unsaved work —
+	// a successful write/edit and no `mnexis_save` call. Read-only sessions
+	// and sessions that already saved pay nothing: no entry, no continuation.
+	//
+	// The answer is the model's. `continue: true` is one more model request,
+	// so the question is spent as soon as it is asked: a second settle in
+	// the same session never opens it again.
+	pi.on("tool_execution_end", (event) => {
+		// A tool that did not run, or ran and failed, changed no file: it is
+		// not evidence of unsaved work.
+		if (event?.isError === true) {
+			return;
+		}
+		if (FILE_WRITING_TOOLS.has(event?.toolName)) {
+			sessionFilesChanged = true;
+		}
+	});
+
+	pi.on("tool_call", (event) => {
+		// A call that is later refused still shows the model made the
+		// judgment: the nudge is about goodwill, not about success.
+		if (event?.toolName === "mnexis_save") {
+			sessionSaveCalls += 1;
+		}
+	});
+
+	pi.on("agent_before_settle", () => {
+		if (settleNudgeSent || !sessionFilesChanged || sessionSaveCalls > 0) {
+			return undefined;
+		}
+		settleNudgeSent = true;
+		return {
+			entries: [
+				{
+					type: "custom_message",
+					customType: "mnexis-settle-nudge",
+					content: SETTLE_NUDGE,
+					display: false,
+				},
+			],
+			continue: true,
+		};
 	});
 
 	// Where a compaction lands. The summary of the compacted context is
