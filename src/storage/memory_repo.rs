@@ -625,12 +625,13 @@ impl MemoryRepository for SqliteMemoryRepository {
             .conn
             .execute(
                 "UPDATE memories SET
-                    content = ?1, state = ?2, topic_key = ?3, memory_type = ?4,
-                    actor = ?5, channel = ?6, assertion_basis = ?7,
-                    valid_from = ?8, valid_until = ?9,
-                    revision = ?10, updated_at = ?11, keywords = ?12
-                 WHERE id = ?13 AND revision = ?14",
+                    title = ?1, content = ?2, state = ?3, topic_key = ?4, memory_type = ?5,
+                    actor = ?6, channel = ?7, assertion_basis = ?8,
+                    valid_from = ?9, valid_until = ?10,
+                    revision = ?11, updated_at = ?12, keywords = ?13
+                 WHERE id = ?14 AND revision = ?15",
                 params![
+                    mem.title,
                     mem.content,
                     state_str,
                     mem.topic_key,
@@ -1728,6 +1729,53 @@ mod tests {
         let m2 = repo.update(&m1, 1).unwrap();
         assert_eq!(m2.revision, 2);
         assert_eq!(m2.content, "updated body");
+    }
+
+    #[test]
+    fn update_persists_every_field_including_the_title() {
+        let (mut repo, _dir) = make_repo(1);
+        let m0 = repo.get_by_uuid("uuid-0").unwrap().unwrap();
+        assert_eq!(m0.title, "", "the fixture starts with no title");
+
+        let mut changed = m0.clone();
+        changed.title = "the label of the fact".to_string();
+        changed.content = "updated body".to_string();
+        changed.topic_key = "topic.renamed".to_string();
+        changed.state = MemoryState::Active;
+        changed.actor = "agent".to_string();
+        changed.channel = "mcp".to_string();
+        changed.assertion_basis = "observed".to_string();
+        changed.valid_from = Some("2026-01-01T00:00:00Z".to_string());
+        changed.valid_until = Some("2026-12-31T00:00:00Z".to_string());
+        changed.updated_at = "2026-01-02T00:00:00Z".to_string();
+        changed.keywords = vec!["puerto".to_string(), "port".to_string()];
+
+        let returned = repo.update(&changed, 1).unwrap();
+        assert_eq!(returned.revision, 2);
+        assert_eq!(
+            returned.title, "the label of the fact",
+            "update must not drop the title the caller passed"
+        );
+
+        // The answer and the row must agree: a fresh read of the row is what
+        // proves the write, not the shape of the returned value.
+        let fresh = repo.get_by_rowid(m0.id.unwrap()).unwrap().unwrap();
+        assert_eq!(
+            fresh.title, "the label of the fact",
+            "the title is on disk, not only in the answer"
+        );
+        assert_eq!(fresh.content, "updated body");
+        assert_eq!(fresh.topic_key, "topic.renamed");
+        assert_eq!(fresh.memory_type, changed.memory_type);
+        assert_eq!(fresh.state, MemoryState::Active);
+        assert_eq!(fresh.actor, "agent");
+        assert_eq!(fresh.channel, "mcp");
+        assert_eq!(fresh.assertion_basis, "observed");
+        assert_eq!(fresh.valid_from.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert_eq!(fresh.valid_until.as_deref(), Some("2026-12-31T00:00:00Z"));
+        assert_eq!(fresh.revision, 2);
+        assert_eq!(fresh.updated_at, "2026-01-02T00:00:00Z");
+        assert_eq!(fresh.keywords, vec!["puerto", "port"]);
     }
 
     #[test]
