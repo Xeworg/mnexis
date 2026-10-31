@@ -152,3 +152,73 @@ fn explain_finds_a_record_by_the_words_of_its_title() {
         explained[0].rank
     );
 }
+
+// ── the explanation carries the same hit fields as the search ────────────────
+
+/// Explain is the same query with more detail: a hit that says when the fact
+/// is valid cannot say it in one surface and forget it in the other.
+///
+/// `retrieval::fts5::search` reads `m.valid_from` and `m.valid_until`; the
+/// explanation read neither, so `search --explain` answered with less than the
+/// search it explains (post-audit-debts S2).
+#[test]
+fn explain_carries_the_validity_window_of_each_hit() {
+    let dir = tempfile::tempdir_in("target").unwrap();
+    let conn = open_sqlite(&db_path(&dir)).unwrap();
+    conn.execute(
+        "INSERT INTO memories (
+            uuid, topic_key, namespace, memory_type, content, state,
+            valid_from, valid_until, actor, channel, assertion_basis
+         ) VALUES ('uuid-w', '', 'ns', 'fact', 'ventana de validez', 'active',
+         '2026-01-01T00:00:00Z', '2026-12-31T00:00:00Z', 'user', 'cli', 'user_stated')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO memories (
+            uuid, topic_key, namespace, memory_type, content, state,
+            actor, channel, assertion_basis
+         ) VALUES ('uuid-n', '', 'ns', 'fact', 'ventana de validez', 'active',
+         'user', 'cli', 'user_stated')",
+        [],
+    )
+    .unwrap();
+
+    let explained = explain(
+        &conn,
+        "ventana",
+        MatchMode::Any,
+        NamespaceFilter::Any,
+        StateFilter::default(),
+        DeletedFilter::default(),
+        None,
+        &[],
+        10,
+    )
+    .expect("the explanation must run");
+
+    assert_eq!(explained.len(), 2, "both rows match: {explained:?}");
+    let windowed = explained
+        .iter()
+        .find(|hit| hit.uuid == "uuid-w")
+        .expect("the windowed row is explained");
+    assert_eq!(
+        windowed.valid_from.as_deref(),
+        Some("2026-01-01T00:00:00Z"),
+        "the explanation carries the start of the window: {windowed:?}"
+    );
+    assert_eq!(
+        windowed.valid_until.as_deref(),
+        Some("2026-12-31T00:00:00Z"),
+        "and its end: {windowed:?}"
+    );
+    let open = explained
+        .iter()
+        .find(|hit| hit.uuid == "uuid-n")
+        .expect("the unwindowed row is explained");
+    assert_eq!(
+        open.valid_from, None,
+        "no window is no window, never a made-up one: {open:?}"
+    );
+    assert_eq!(open.valid_until, None, "{open:?}");
+}

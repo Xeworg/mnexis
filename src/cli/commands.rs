@@ -558,6 +558,10 @@ pub fn search(
         )?;
         let explained_uuids: Vec<String> = explained.iter().map(|h| h.uuid.clone()).collect();
         let explained_identities = identities_of(profile.service_ref(), &explained_uuids)?;
+        // Which of the explained hits replaced which. The plain search answers
+        // with this list, and `--explain` is the same answer with more detail:
+        // a field that disappears when the caller asks why is a trap.
+        let explained_relations = profile.service_ref().relations_between(&explained_uuids)?;
         let items: Vec<_> = explained
             .iter()
             .zip(explained_identities.iter())
@@ -572,6 +576,8 @@ pub fn search(
                     "state": h.state,
                     "revision": h.revision,
                     "created_at": h.created_at,
+                    "valid_from": h.valid_from,
+                    "valid_until": h.valid_until,
                     "matched_terms": h.matched_terms,
                 })
             })
@@ -595,6 +601,7 @@ pub fn search(
                 "namespace": namespace,
                 "count": explained.len(),
                 "items": items,
+                "relations": explained_relations,
                 "read_scope": read_scope,
             }),
             crate::cli::output::with_read_scope(
