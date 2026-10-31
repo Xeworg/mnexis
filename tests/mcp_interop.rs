@@ -2855,6 +2855,116 @@ async fn memory_recall_answers_what_a_session_was() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// `memory_recall` refuses an argument it does not have, exactly like the
+/// other tools: `type` is not one of its arguments (recall narrows nothing
+/// by kind), so a recall that sends it used to be read as a recall that
+/// said nothing extra and answered the whole session — a silent no-op on
+/// the last argument object still open (post-audit debts S3).
+#[tokio::test]
+async fn memory_recall_refuses_an_unknown_argument_instead_of_ignoring_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+
+    // One finished session with one memory in its window, so a valid recall
+    // has an answer to give.
+    call_tool_text(
+        &client,
+        "memory_session_start",
+        serde_json::json!({ "session_id": "01JY", "directory": "/work/project" }),
+    )
+    .await?;
+    let saved: serde_json::Value = serde_json::from_str(
+        &call_tool_text(
+            &client,
+            "memory_save",
+            serde_json::json!({ "content": "el puerto del servicio es 8081" }),
+        )
+        .await?,
+    )?;
+    let uuid = saved["uuid"].as_str().expect("uuid").to_string();
+    call_tool_text(
+        &client,
+        "memory_session_end",
+        serde_json::json!({ "session_id": "01JY", "summary": "el puerto del servicio" }),
+    )
+    .await?;
+
+    // `type` is not an argument of the tool: rmcp answers a parameter it
+    // cannot deserialize as an error result (is_error) and the recall never
+    // runs, instead of dropping the field and answering as if it had not
+    // been sent.
+    let refused = client
+        .call_tool(
+            CallToolRequestParams::new("memory_recall").with_arguments(
+                serde_json::json!({ "previous": true, "type": "decision" })
+                    .as_object()
+                    .expect("static object")
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("the refusal is an answer, not a transport failure");
+    assert_eq!(
+        refused.is_error,
+        Some(true),
+        "an unknown argument must be an error result, not a silent no-op: {refused:?}"
+    );
+    let message = refused
+        .content
+        .iter()
+        .find_map(|b| match b {
+            ContentBlock::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .expect("the refusal carries a message");
+    assert!(
+        message.contains("unknown field"),
+        "the refusal must name the problem: {message}"
+    );
+    assert!(
+        message.contains("type"),
+        "the refusal must name the argument it did not recognise: {message}"
+    );
+
+    // The refusal changed nothing: the record is still at its first revision,
+    // with the content it was saved with.
+    let intact: serde_json::Value = serde_json::from_str(
+        &call_tool_text(&client, "memory_get", serde_json::json!({ "uuid": uuid })).await?,
+    )?;
+    assert_eq!(intact["revision"], 1, "{intact}");
+    assert_eq!(
+        intact["content"], "el puerto del servicio es 8081",
+        "{intact}"
+    );
+
+    // The same recall, spelled right, still answers the session.
+    let text = call_tool_text(
+        &client,
+        "memory_recall",
+        serde_json::json!({ "previous": true }),
+    )
+    .await?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(parsed["session"]["id"], "01JY", "{parsed}");
+    assert_eq!(
+        parsed["memories_in_window"][0]["uuid"],
+        uuid.as_str(),
+        "{parsed}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // memory_session_start: the session lands in the workspace's namespace
 // (memory-types A1)

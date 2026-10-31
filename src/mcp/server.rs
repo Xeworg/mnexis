@@ -71,7 +71,13 @@ const WORKSPACE_RECENT_LIMIT: usize = 3;
 
 /// Arguments for `memory_recall`: the two ways to ask what a session was,
 /// the same two the CLI has.
+///
+/// Closed like every argument object in `mcp::tools`
+/// (`deny_unknown_fields`): a field the tool does not have is refused
+/// instead of dropped, so an argument nobody reads never looks like it
+/// worked (post-audit debts S3).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RecallArgs {
     /// The session to recall, by its id.
     #[serde(default)]
