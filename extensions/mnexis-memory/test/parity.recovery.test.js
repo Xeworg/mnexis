@@ -85,8 +85,8 @@ function context(workDir) {
 	};
 }
 
-/** Every active record of the namespace, read page by page from the engine. */
-async function activeRecords(client, workDir) {
+/** Every record of the namespace in `state`, read page by page from the engine. */
+async function recordsInState(client, workDir, state) {
 	const items = [];
 	for (let offset = 0; ; offset += 100) {
 		const page = await client.run(
@@ -95,7 +95,7 @@ async function activeRecords(client, workDir) {
 				"--namespace",
 				NAMESPACE,
 				"--state",
-				"active",
+				state,
 				"--limit",
 				"100",
 				"--offset",
@@ -127,6 +127,41 @@ async function fillers(client, workDir, count, filler) {
 	for (let index = 0; index < count; index += 1) {
 		const saved = await client.save(filler(index), workDir);
 		assert.equal(saved.code, 0, `filler ${index} failed: ${saved.stderr.trim()}`);
+	}
+}
+
+/**
+ * Save `count` records that carry the value, then retire every one of them.
+ *
+ * A value live records of the namespace use everywhere is ambient and pairs
+ * nothing (S1, odd/tasks/trust-batch.md L2), and the engine answers a
+ * `list --value` page with superseded rows too: retiring them keeps the page
+ * of MATCHES full while the value stays rare among live records, which is the
+ * only question the pagination corpus asks.
+ */
+async function retiredFillers(client, workDir, count, filler) {
+	const retired = [];
+	for (let index = 0; index < count; index += 1) {
+		const saved = await client.save(filler(index), workDir);
+		assert.equal(saved.code, 0, `retired filler ${index} failed: ${saved.stderr.trim()}`);
+		retired.push(saved.data.uuid);
+	}
+	const closer = await client.save(
+		{
+			namespace: NAMESPACE,
+			title: "Cierre de la tanda de tickets",
+			content: "Los tickets de esta tanda se cerraron sin cambios.",
+			keywords: "ticket, cierre",
+		},
+		workDir,
+	);
+	assert.equal(closer.code, 0, `the closing record failed: ${closer.stderr.trim()}`);
+	for (const uuid of retired) {
+		const done = await client.supersede(
+			{ older: uuid, newer: closer.data.uuid, reason: "the ticket was closed" },
+			workDir,
+		);
+		assert.equal(done.code, 0, `retiring ${uuid} failed: ${done.stderr.trim()}`);
 	}
 }
 
@@ -167,7 +202,7 @@ test("parity: a twin past the page the engine returns is repaired (B1)", { skip 
 	assert.equal(entries.length, 1, "the intervention is journaled");
 	assert.equal(entries[0].data.older.uuid, older.data.uuid, "the twin was retired");
 
-	const live = liveForFact(await activeRecords(client, workDir), "8081", "puerto");
+	const live = liveForFact(await recordsInState(client, workDir, "active"), "8081", "puerto");
 	assert.deepEqual(
 		live.map((item) => item.uuid),
 		[saved.details.uuid],
@@ -226,7 +261,9 @@ test("parity: a twin behind a page of matches is repaired (B1, S6)", { skip }, a
 	// page (`MAX_LIMIT`, 100) of matches without ever being twins of this
 	// fact, and they are written before the twin, so the twin is the 121st
 	// match — behind the first page of MATCHES, not just of the namespace.
-	await fillers(client, workDir, 120, (index) => ({
+	// They are retired before the save below: the value's live carriers are
+	// the pair, and a page of matches can be history (S1, L2).
+	await retiredFillers(client, workDir, 120, (index) => ({
 		namespace: NAMESPACE,
 		title: `Ticket ${index}`,
 		content: "8081",
@@ -283,11 +320,17 @@ test("parity: a twin behind a page of matches is repaired (B1, S6)", { skip }, a
 	assert.doesNotMatch(answerText, /duplicate check did not finish/i, "the answer declares no unfinished check");
 	assert.equal(saved.details.recovery_failed, undefined, "and nothing failed");
 
-	const live = liveForFact(await activeRecords(client, workDir), "8081", "puerto");
+	const live = liveForFact(await recordsInState(client, workDir, "active"), "8081", "puerto");
 	assert.deepEqual(live.map((item) => item.uuid), [saved.details.uuid], "exactly one live record for the fact");
 	assert.equal(
-		(await activeRecords(client, workDir)).filter((item) => item.title.startsWith("Ticket ")).length,
+		(await recordsInState(client, workDir, "active")).filter((item) => item.title.startsWith("Ticket ")).length,
+		0,
+		"no ticket row was brought back to life",
+	);
+	assert.equal(
+		(await recordsInState(client, workDir, "superseded")).filter((item) => item.title.startsWith("Ticket "))
+			.length,
 		120,
-		"the records that only share the value were never touched",
+		"the rows that only share the value are still history, untouched",
 	);
 });

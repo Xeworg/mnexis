@@ -51,8 +51,13 @@ is retired, not just one.
 
 The rule is deliberately narrow. A changed value is a conflict, not a rename,
 and is left alone; a shared number with no shared vocabulary is not one fact;
-records outside the workspace's writable namespace are never touched. Nothing
-is deleted — the superseded record stays visible in `list`, `show` and
+records outside the workspace's writable namespace are never touched. A value
+is identity evidence only while it is **rare**: a number the namespace carries
+in live records other than the fact's own duplicates — a year, a repeated ADR
+id, any incidental number — is ambient, and two facts that share one are two
+facts. The duplicates themselves are the only live carriers a value needs to
+pair: two records of one fact, or three, still converge to one. Nothing is
+deleted — the superseded record stays visible in `list`, `show` and
 `timeline`, and the engine keeps the state the supersede replaced in
 `memory_history`: `mnexis_history` answers the record as it stood before the
 flip, and `mnexis show <uuid> --revision <N>` returns that content.
@@ -60,12 +65,14 @@ flip, and `mnexis show <uuid> --revision <N>` returns that content.
 Candidates are found by the value they carry, never by a page of the
 namespace: the engine answers `mnexis list --value <N>` with exactly the
 records whose indexed text carries the value, so the repair reads the matches
-and not the namespace, and a twin cannot hide behind a scan bound. The
-engine's filter is exhaustive — it answers every record that carries the
-value, however many records the namespace holds. The repair reads those
-matches in pages of 100; if more than 2 000 records carry the *same* value,
-the check does not pretend it finished and says so, as it always did. A
-repair that fails is journaled through `pi.appendEntry` instead of swallowed.
+and not the namespace, and a twin cannot hide behind a scan bound. Those same
+answers count the live records that carry each value, so the ambient rule
+reads no second page. The engine's filter is exhaustive — it answers every
+record that carries the value, however many records the namespace holds. The
+repair reads those matches in pages of 100; if more than 2 000 records carry
+the *same* value, the check does not pretend it finished and says so, as it
+always did. A repair that fails is journaled through `pi.appendEntry` instead
+of swallowed.
 The answer the model reads names both records and the shared value, and
 `details.recovery` carries the structured record.
 
@@ -264,6 +271,28 @@ The extension only drives the mnexis CLI; it never edits `mnexis.toml` or
 | --- | --- |
 | `MNEXIS_BIN` | Path to the `mnexis` binary (default: `mnexis` on `PATH`). |
 | `MNEXIS_DATA_DIR` | Profile directory, forwarded to the CLI unchanged. |
+| `MNEXIS_TIMEOUT_MS` | How long one engine call may take before it is killed (default: 10 s for a read, 30 s for a write). |
+
+## When the engine does not answer
+
+Every call to the engine is bounded, and pi's abort reaches it: a read gets ten
+seconds because it is one indexed query against a local store, a write gets
+thirty because it may wait on the lock and pay for its fsync, and
+`MNEXIS_TIMEOUT_MS` overrides both on a store that is only slow. A call that
+runs out of budget — or that the session cancels — is killed together with
+everything it started (the child runs in its own process group), and its answer
+names the command, the budget and the next step instead of leaving the turn
+waiting on a hung engine.
+
+An engine that says nothing has not said that the store is empty. A call that
+exits 0 with no output, or with output no JSON reader can use, is reported as a
+failed call with the way back (`retry`, and run the same command in a terminal
+to read the engine's own error) — never as "no memories matched" and never as
+`null`. A write that was not acknowledged says that it may still have landed, so
+the next step is to check with `mnexis_search` instead of writing a second
+record. A missing binary is named as such (`exit 127`, ENOENT) with the two ways
+to install it, and a write whose profile read fails returns that reason instead
+of throwing.
 
 ## Tests
 

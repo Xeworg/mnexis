@@ -543,7 +543,7 @@ function fillerNotes(count) {
 }
 
 /** Filler records that all carry the save's value, with another vocabulary. */
-function fillerTickets(count, value) {
+function fillerTickets(count, value, state = "active") {
 	const tickets = [];
 	for (let index = 0; index < count; index += 1) {
 		tickets.push(
@@ -553,10 +553,28 @@ function fillerTickets(count, value) {
 				title: `Ticket ${index}`,
 				content: value,
 				keywords: ["ticket"],
+				state,
 			}),
 		);
 	}
 	return tickets;
+}
+
+/** Filler records that carry the save's value in a note of their own. */
+function fillerYears(count, value = "2026") {
+	const notes = [];
+	for (let index = 0; index < count; index += 1) {
+		notes.push(
+			record({
+				id: index + 2,
+				uuid: `u-year-${index}`,
+				title: `Nota de planificacion ${index}`,
+				content: `Nota de trabajo sobre la planificacion de ${value} y su operacion diaria.`,
+				keywords: ["nota", "bitacora"],
+			}),
+		);
+	}
+	return notes;
 }
 
 /** A workspace, a store, and the hooks pi would hand to the extension. */
@@ -695,6 +713,13 @@ const TWIN_SAVE = {
 	keywords: "puerto, listen port",
 };
 
+/** The same twin with a year in the signature: {8081, 2026}. */
+const TWIN_SAVE_WITH_YEAR = {
+	title: "Puerto de la API de pagos",
+	content: "El puerto del servicio es 8081 durante 2026.",
+	keywords: "puerto, listen port",
+};
+
 test("a second save for one fact leaves exactly one live record (S1, S3, S4, S5)", async (t) => {
 	// The measured corpus (R1): two live records, the same value, different
 	// titles, one shared keyword. The save's record is the newer one.
@@ -801,6 +826,157 @@ test("every live twin is retired: three converge to one (B3, S1)", async (t) => 
 	assert.equal(answer.details.recovery.superseded.length, 3, "the details carry all three");
 });
 
+test("an ambient value is not identity: a year the namespace carries does not pair records (S1)", async (t) => {
+	// The human's decision (odd/tasks/trust-batch.md, L2): a value carried by
+	// MANY live records of the namespace is not identity evidence. Both records
+	// here are the same type, share a keyword and carry the identical
+	// signature {8081, 2026}; the year is what makes that signature incidental,
+	// and before this rule the pair was repaired.
+	const corpus = (notes) => [
+		record({
+			id: 1,
+			uuid: "u-old",
+			title: "Puerto de escucha del servicio",
+			content: "El servicio de pagos escucha en el puerto 8081 durante 2026.",
+			keywords: ["puerto", "port"],
+		}),
+		...notes,
+	];
+
+	const sc = scenario(t, { store: corpus(fillerYears(12)) });
+	const answer = await save(sc, TWIN_SAVE_WITH_YEAR);
+
+	assert.notEqual(answer.result.isError, true, "the save itself succeeded");
+	assert.equal(answer.supersedes.length, 0, "a value the namespace carries everywhere pairs nothing");
+	assert.doesNotMatch(answer.text, /Repaired a duplicate/, "the answer claims no repair");
+	assert.equal(answer.entries.length, 0, "and nothing is reported as an intervention");
+	assert.equal(
+		answer.store.find((item) => item.uuid === "u-old").state,
+		"active",
+		"the older record stays live: a year is not a rename",
+	);
+	assert.equal(
+		answer.store.find((item) => item.uuid === "u-new").state,
+		"active",
+		"and the save stands on its own",
+	);
+
+	// The count that decides this is the answer the repair already asked for:
+	// one query per value of the save, and no extra engine call to measure the
+	// namespace.
+	assert.equal(answer.lists.length, 2, "one query per value of the save: 8081 and 2026");
+	assert.deepEqual(
+		answer.lists.map((args) => args[args.indexOf("--value") + 1]),
+		["8081", "2026"],
+		"the ambient count reads the same two answers the candidates came from",
+	);
+
+	// Control: with the same pair and no ambient year in the namespace, the
+	// repair happens, so the refusal above is about the value and not about a
+	// pair that fails some other rule.
+	const control = await save(scenario(t, { store: corpus([]) }), TWIN_SAVE_WITH_YEAR);
+	assert.equal(control.supersedes.length, 1, "the same pair pairs when the year is rare");
+	assert.equal(
+		control.store.find((item) => item.uuid === "u-old").state,
+		"superseded",
+		"and the older record is retired as before",
+	);
+});
+
+test("the G5 chain does not pair: an ADR id and a year are not identity (S1)", async (t) => {
+	// The bench failure this rule closes (odd/tasks/post-audit-debts.md, L2):
+	// the decision 'Target de deploy por defecto' and the episode 'Incidente
+	// del 2026-02-27' carried the same signature {0007, 2026}, the same type
+	// and a shared word, and the repair retired the decision the team kept.
+	const G5_SAVE = {
+		title: "Incidente del 2026-02-27",
+		content: "El incidente del 2026-02-27 se cerro sin cambiar el ADR 0007.",
+		keywords: "deploy, incidente",
+	};
+	const decision = () =>
+		record({
+			id: 1,
+			uuid: "u-decision",
+			title: "Target de deploy por defecto",
+			content: "El ADR 0007 fija el target de deploy por defecto para 2026.",
+			keywords: ["deploy", "target"],
+		});
+
+	const sc = scenario(t, { store: [decision(), ...fillerYears(6)] });
+	const answer = await save(sc, G5_SAVE);
+
+	assert.notEqual(answer.result.isError, true, "the save itself succeeded");
+	assert.equal(answer.supersedes.length, 0, "the chain does not pair: the year is ambient");
+	assert.doesNotMatch(answer.text, /Repaired a duplicate/, "the answer claims no repair");
+	assert.equal(answer.entries.length, 0, "and nothing is reported as an intervention");
+	assert.equal(
+		answer.store.find((item) => item.uuid === "u-decision").state,
+		"active",
+		"the decision the team kept stays live",
+	);
+
+	// Control: the same two records pair when the year they share is rare, so
+	// the signature itself is still evidence — what refuses the pair above is
+	// the year every other note carries.
+	const control = await save(scenario(t, { store: [decision()] }), G5_SAVE);
+	assert.equal(control.supersedes.length, 1, "with a rare year the pair is still the same fact");
+	assert.equal(
+		control.store.find((item) => item.uuid === "u-decision").state,
+		"superseded",
+		"and the older record is retired as before",
+	);
+});
+
+test("a rare value still pairs: the true twin is repaired exactly as before (PRESERVE, S1)", async (t) => {
+	// The control the ambient rule must never swallow: the same fact recorded
+	// twice under two titles in a namespace where 8081 is a value only that
+	// fact carries live. The notes around it carry other values, and the one
+	// row that also carries 8081 is history — a superseded row is not a live
+	// carrier.
+	const sc = scenario(t, {
+		store: [
+			...twinStore(fillerNotes(30)),
+			record({
+				id: 40,
+				uuid: "u-history",
+				title: "Puerto anterior del servicio",
+				content: "El puerto anterior del servicio era 8081.",
+				keywords: ["puerto"],
+				state: "superseded",
+			}),
+		],
+	});
+	const answer = await save(sc, TWIN_SAVE);
+
+	assert.notEqual(answer.result.isError, true, "the save itself succeeded");
+	assert.equal(answer.supersedes.length, 1, "one value only the pair carries still pairs");
+	assert.deepEqual(
+		[
+			answer.supersedes[0][answer.supersedes[0].indexOf("--older") + 1],
+			answer.supersedes[0][answer.supersedes[0].indexOf("--newer") + 1],
+		],
+		["u-old", "u-new"],
+		"the older record is superseded onto the one the save created",
+	);
+	assert.equal(
+		answer.store.find((item) => item.uuid === "u-old").state,
+		"superseded",
+		"the older record is history",
+	);
+	assert.equal(
+		answer.store.find((item) => item.uuid === "u-history").state,
+		"superseded",
+		"the row that already was history is untouched",
+	);
+	assert.deepEqual(
+		liveCarrying(answer.store, "8081").map((item) => item.uuid),
+		["u-new"],
+		"one live record for the value",
+	);
+	assert.match(answer.text, /Repaired a duplicate/, "the model reads the repair");
+	assert.match(answer.text, /8081/, "with the shared value");
+});
+
 test("a twin is repaired in a namespace far larger than the scan bound (B1)", async (t) => {
 	// The verifier's reproduction: a namespace of 141 live records, the fact
 	// at the very first one. `list --limit N` answers the OLDEST rows
@@ -832,10 +1008,17 @@ test("a twin behind a page of matches is still found (B1: the answer is exhausti
 	// records in four pages. The answer to a filter is a set of matches, and
 	// the repair reads it to the end (S6): no ranked page, no walk of the
 	// namespace, no blind spot.
+	//
+	// The 120 rows that carry the value are HISTORY (superseded), and that is
+	// the point twice over: `list --value` answers them after their state, so
+	// they still fill the page, and a value live records of the namespace use
+	// everywhere is ambient and pairs nothing (S1) — the pagination subject and
+	// the ambient rule are not the same question, and this corpus asks only the
+	// first one.
 	const sc = scenario(t, {
 		store: [
 			...fillerNotes(200),
-			...fillerTickets(120, "8081").map((item, index) => ({ ...item, id: index + 202 })),
+			...fillerTickets(120, "8081", "superseded").map((item, index) => ({ ...item, id: index + 202 })),
 			record({
 				id: 322,
 				uuid: "u-old",
@@ -868,9 +1051,9 @@ test("a twin behind a page of matches is still found (B1: the answer is exhausti
 		"one live record for the fact",
 	);
 	assert.equal(
-		tickets.every((item) => item.state === "active"),
+		tickets.every((item) => item.state === "superseded"),
 		true,
-		"the records that only share the value are untouched",
+		"the history that only shares the value is untouched",
 	);
 
 	// The repair asks the engine for the records that carry the value — never
