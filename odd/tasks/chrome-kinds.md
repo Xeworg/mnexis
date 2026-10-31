@@ -28,7 +28,7 @@ draws one even expanded, and with the store at 20/20 `fact` the only renderable 
 
 | ID | Specs | Route | Branch / worktree | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S1–S5 | worker: collapsed-line kinds in `lib/chrome.js`, tests in `test/chrome.test.js` | `ext/chrome-kinds` @ `tmp/wt-chrome` | — |
+| T1 | S1–S5 | worker: collapsed-line kinds in `lib/chrome.js`, tests in `test/chrome.test.js` | `ext/chrome-kinds` @ `tmp/wt-chrome` | `0f142f6` |
 | T2 | all | parent: verify tests, commit, report | — | — |
 
 Allowed edit surfaces: `extensions/mnexis-memory/lib/chrome.js` and
@@ -41,3 +41,12 @@ Allowed edit surfaces: `extensions/mnexis-memory/lib/chrome.js` and
 - **L2 (evidence)** — the icon theory T1 (gentle-ai-explore, confirmed against the live store):
   `chrome.js:74,129` (shared `🤖`), `chrome.js:63-72` (kind icons), `chrome.js:193` (collapsed has
   no emoji), `chrome.js:219-221` (save never draws one), store 20/20 `fact`.
+- **L3 (2026-11-01, T1 result, parent-verified)** — Shipped in `0f142f6`: the save answer DOES
+  carry `memory_type` (resolved into `details` at index.js:2079-2093 — no invented parse), so the
+  collapsed save line reads `↳ ✓ saved · 🎯 decision · <title>` with the honest `🧠 fact` fallback;
+  list/search/context/workspace draw the kind census, history names the kind once, show gains its
+  glyph. RED observed (11 failing), GREEN 58/58, full suite re-run by the parent: 225 tests, 222
+  pass, 3 parity skips, 0 fail. Differential vs the base chrome.js: 9 diffs, every one a requested
+  S2/S3 addition; every error line, expanded panel and empty result byte-identical. Judgement
+  calls recorded: history kind-once (not ×N), census first-seen order, untyped counts as the fact
+  the expanded panel draws. Awaiting the human's merge decision.
