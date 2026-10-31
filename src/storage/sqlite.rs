@@ -8,6 +8,11 @@ use rusqlite::{Connection, OpenFlags};
 
 use crate::domain::error::MnexisError;
 
+/// The schema version this binary knows: the highest migration number
+/// [`run_migrations`] applies, and the number a store may not exceed (the
+/// no-downgrade rule). The doctor reports against it, so the two cannot drift.
+pub const LATEST_SCHEMA_VERSION: i64 = 10;
+
 /// Opens the canonical local database, applies the standard pragmas, and
 /// runs pending migrations. Returns the configured connection.
 ///
@@ -527,6 +532,59 @@ fn rebuild_fts_update_triggers(conn: &Connection) -> Result<(), MnexisError> {
         .map_err(|e| MnexisError::busy(format!("migration 009: {e}")))
 }
 
+/// Migration 010: the indexes the read paths ask for.
+///
+/// Six statements the store answers on every door call, every `status` and
+/// every list were table scans:
+///
+/// - the live count (`COUNT(*) ... WHERE deleted = 0`, and the namespace/state
+///   forms of it) walked the content pages of `memories`;
+/// - the door's state block walked backwards from the end of the table until it
+///   had the 25 live `project_state`/`decision` rows it carries;
+/// - the plain list page and the value filter's scan ordered by `id` with a
+///   filter the planner could not use an index for;
+/// - `recall`'s window scan ordered `memories` by `created_at` and sorted;
+/// - the previous-session lookup full-scanned `sessions` and sorted, on every
+///   door call;
+/// - `history` (and the purge's trail delete) full-scanned `memory_history`,
+///   because SQLite does not index the child side of a foreign key.
+///
+/// The indexes are chosen for the shape the reads have, not for the columns
+/// they name: `memories(namespace, state)` and `memories(namespace, id)` are
+/// **partial** on `deleted = 0` (the only rows every read keeps), the state
+/// block's index carries its own predicate as well (a twelfth of the table),
+/// and the rest lead with the column the query constrains (`namespace`,
+/// `memory_uuid`). `EXPLAIN QUERY PLAN` on a 10 000-row store confirms each
+/// one: the count and the history lookup become covering-index reads, the state
+/// block, the list page and the window become seeks, and the previous-session
+/// lookup stops scanning and sorting.
+///
+/// `CREATE INDEX IF NOT EXISTS` is idempotent, so a migration that failed
+/// halfway heals on the next run and a store that already carries an index ends
+/// exactly as it started. Nothing is rewritten: the migration builds one index
+/// per statement and touches no row.
+const MIGRATION_010: &str = r#"
+CREATE INDEX IF NOT EXISTS memories_live_namespace_state
+    ON memories(namespace, state) WHERE deleted = 0;
+
+CREATE INDEX IF NOT EXISTS memories_live_namespace_id
+    ON memories(namespace, id) WHERE deleted = 0;
+
+CREATE INDEX IF NOT EXISTS memories_state_block
+    ON memories(namespace, id) WHERE deleted = 0
+        AND state IN ('active','disputed')
+        AND memory_type IN ('project_state','decision');
+
+CREATE INDEX IF NOT EXISTS memories_namespace_created
+    ON memories(namespace, created_at, id);
+
+CREATE INDEX IF NOT EXISTS sessions_namespace_ended
+    ON sessions(namespace, ended_at DESC, started_at DESC);
+
+CREATE INDEX IF NOT EXISTS memory_history_uuid_revision
+    ON memory_history(memory_uuid, revision DESC);
+"#;
+
 /// The columns of [`MEMORIES_FTS_COLUMNS`] that `memories_fts` does not
 /// carry. An empty result means the index has the current shape; `content`
 /// among the missing means the index does not exist at all.
@@ -558,7 +616,7 @@ pub fn missing_fts_columns(conn: &Connection) -> Result<Vec<&'static str>, Mnexi
 }
 
 /// Applies pending migrations. Creates the `schema_migrations` ledger if
-/// absent. Applies migrations 001 through 009 if not already recorded. A
+/// absent. Applies migrations 001 through 010 if not already recorded. A
 /// recorded version higher than the binary's known migrations returns
 /// `MnexisError::UnsupportedVersion` (no-downgrade rule).
 pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
@@ -578,7 +636,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
         )
         .map_err(|e| MnexisError::busy(format!("read schema_migrations: {e}")))?;
 
-    if applied > 9 {
+    if applied > LATEST_SCHEMA_VERSION {
         return Err(MnexisError::unsupported_version(applied));
     }
 
@@ -717,6 +775,26 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MnexisError> {
             .map_err(|e| MnexisError::busy(format!("record migration 009: {e}")))?;
     }
 
+    if applied < 10 {
+        // Migration 010: the indexes the read paths ask for.
+        //
+        // Every statement the reads above issue was a table scan when this
+        // migration landed: the live count read content pages, the door's
+        // state block walked ~1 250 rows to keep 25, `recall`'s window sorted,
+        // the previous-session lookup scanned and sorted `sessions` on every
+        // door call, and `history` scanned `memory_history` because SQLite
+        // does not index the child side of a foreign key.
+        //
+        // The batch is idempotent (`CREATE INDEX IF NOT EXISTS`), so the
+        // schema is what decides whether an index still has to be built
+        // (migration 005's lesson): a ledger that stopped below 10, or a
+        // migration that failed halfway, heals on the next run.
+        conn.execute_batch(MIGRATION_010)
+            .map_err(|e| MnexisError::busy(format!("migration 010: {e}")))?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (10)", [])
+            .map_err(|e| MnexisError::busy(format!("record migration 010: {e}")))?;
+    }
+
     Ok(())
 }
 
@@ -736,7 +814,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 9, "migrations 001 through 009 should be recorded");
+        assert_eq!(version, 10, "migrations 001 through 010 should be recorded");
 
         // Migration 003 added the persisted supersede reason column.
         let (col_type, dflt, notnull): (String, String, i64) = conn
@@ -758,7 +836,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version_again, 9, "009 must not double-record on a re-run");
+        assert_eq!(version_again, 10, "010 must not double-record on a re-run");
     }
 
     #[test]
@@ -835,7 +913,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 9, "the migration was applied");
+        assert_eq!(version, 10, "the migration was applied");
     }
 
     #[test]
@@ -869,7 +947,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 9, "the ledger records the migration");
+        assert_eq!(version, 10, "the ledger records the migration");
 
         // The session survived, and reads back with no anchor: it happened
         // before the engine knew how to record one.
@@ -930,7 +1008,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 9, "the ledger records it");
+        assert_eq!(version, 10, "the ledger records it");
     }
 
     #[test]
@@ -984,7 +1062,7 @@ mod tests {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(version, 9, "the ledger records it");
+        assert_eq!(version, 10, "the ledger records it");
     }
 
     #[test]
@@ -1181,6 +1259,154 @@ mod tests {
             count, 1,
             "restored-to-active memory should be re-indexed in FTS5"
         );
+    }
+
+    /// The six indexes the read paths ask for, and the two plans that prove
+    /// the store can use them (post-audit-debts C6).
+    ///
+    /// A present index nobody uses is a write cost with no read saving, so the
+    /// test asks the store the same question the reads ask it: `EXPLAIN QUERY
+    /// PLAN` has to name the index, and the count and history plans have to be
+    /// reading the index alone (a covering read is what turns the live count
+    /// from a content-page scan into an index scan).
+    #[test]
+    fn migration_010_indexes_the_hot_read_paths() {
+        let dir = tempdir_in("target").unwrap();
+        let path = dir.path().join("mig010.db");
+        let conn = open_sqlite(&path).unwrap();
+
+        let indexes: Vec<String> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT name FROM sqlite_master WHERE type='index' \
+                     AND name IN ('memories_live_namespace_state', \
+                                  'memories_live_namespace_id', \
+                                  'memories_state_block', \
+                                  'memories_namespace_created', \
+                                  'sessions_namespace_ended', \
+                                  'memory_history_uuid_revision') \
+                     ORDER BY name",
+                )
+                .unwrap();
+            let rows = stmt.query_map([], |r| r.get(0)).unwrap();
+            rows.collect::<Result<_, _>>().unwrap()
+        };
+        assert_eq!(
+            indexes,
+            vec![
+                "memories_live_namespace_id".to_string(),
+                "memories_live_namespace_state".to_string(),
+                "memories_namespace_created".to_string(),
+                "memories_state_block".to_string(),
+                "memory_history_uuid_revision".to_string(),
+                "sessions_namespace_ended".to_string(),
+            ],
+            "the six indexes landed"
+        );
+
+        let plan = |sql: &str| -> String {
+            let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(3))
+                .unwrap()
+                .collect::<Result<Vec<String>, _>>()
+                .unwrap();
+            rows.join(" | ")
+        };
+
+        // The live count reads an index alone: `count(*)` needs no column the
+        // partial indexes do not carry, so the content pages are never touched.
+        // Which of the two it picks depends on the filter (both are covering);
+        // the namespace+state form is the one the narrowing index answers.
+        let count_plan = plan("SELECT count(*) FROM memories WHERE deleted = 0");
+        assert!(
+            count_plan.contains("USING COVERING INDEX memories_live_namespace_"),
+            "the live count reads a covering index: {count_plan}"
+        );
+        let narrowed_plan = plan(
+            "SELECT count(*) FROM memories WHERE deleted = 0 \
+             AND namespace IN ('ns') AND state IN ('active')",
+        );
+        assert!(
+            narrowed_plan.contains("COVERING INDEX memories_live_namespace_state"),
+            "the narrowed count reads the namespace/state index: {narrowed_plan}"
+        );
+
+        // The history read is a seek on `memory_uuid` and needs no sort: the
+        // index carries the revision in the order the answer asks for.
+        let history_plan =
+            plan("SELECT id FROM memory_history WHERE memory_uuid = 'u1' ORDER BY revision DESC");
+        assert!(
+            history_plan.contains("COVERING INDEX memory_history_uuid_revision"),
+            "the history read is a covering seek: {history_plan}"
+        );
+        assert!(
+            !history_plan.contains("TEMP B-TREE"),
+            "the revision order comes from the index: {history_plan}"
+        );
+
+        // The state block is a seek on its own partial predicate, and the
+        // previous-session lookup stops scanning `sessions`.
+        let block_plan = plan(
+            "SELECT id FROM memories WHERE deleted = 0 AND namespace IN ('ns') \
+             AND state IN ('active','disputed') \
+             AND memory_type IN ('project_state','decision') \
+             ORDER BY id DESC LIMIT 25",
+        );
+        assert!(
+            block_plan.contains("INDEX memories_state_block"),
+            "the state block is a seek: {block_plan}"
+        );
+        let session_plan = plan(
+            "SELECT id FROM sessions WHERE namespace = 'ns' AND ended_at IS NOT NULL \
+             ORDER BY ended_at DESC, started_at DESC, rowid DESC LIMIT 1",
+        );
+        assert!(
+            session_plan.contains("INDEX sessions_namespace_ended"),
+            "the previous-session lookup seeks: {session_plan}"
+        );
+    }
+
+    #[test]
+    fn migration_010_heals_a_store_whose_ledger_stopped_below_it() {
+        let dir = tempdir_in("target").unwrap();
+        let path = dir.path().join("mig010_heal.db");
+        let conn = open_sqlite(&path).unwrap();
+        // A store at 9: the indexes are not there yet, and the ledger says so.
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS memories_live_namespace_state; \
+             DELETE FROM schema_migrations WHERE version >= 10;",
+        )
+        .unwrap();
+        assert_eq!(
+            index_count(&conn, "memories_live_namespace_state"),
+            0,
+            "the fixture is a store without the index"
+        );
+
+        run_migrations(&conn).expect("the migration applies to an existing store");
+        assert_eq!(
+            index_count(&conn, "memories_live_namespace_state"),
+            1,
+            "the index reached the store that already existed"
+        );
+        // Re-running is safe: `CREATE INDEX IF NOT EXISTS` rewrites nothing.
+        run_migrations(&conn).expect("the migration is idempotent");
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, LATEST_SCHEMA_VERSION, "the ledger records it once");
+    }
+
+    fn index_count(conn: &Connection, name: &str) -> i64 {
+        conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='index' AND name = ?1",
+            [name],
+            |r| r.get(0),
+        )
+        .unwrap()
     }
 
     #[test]
