@@ -1412,3 +1412,19 @@ the narrative deliberately stays on the existing `session_end --summary` path (a
 `agent_before_settle` nudge costs a model call per settle); (3) **no new tool prose** — the tools block
 just paid 3 524 B to say less and the ≤ 5 500 B pin guards it. The 2026-10-28 decision stands:
 extension before more skill text.
+
+**The enriched nudge — examples and the type vocabulary at the moment of judgment (human steering,
+2026-11-01).** Theory to test, not decided work: the agent may save better if the moment of judgment
+comes with **examples of what deserves to survive** and a **broader explanation of the seven types**
+("talvez el agente necesite ejemplos de qué es lo que debería guardar o una explicación más amplia
+de los tipos de memoria"). The trim-nudge bench already measured both sides of this: prose invites
+saving — the fat block pulled 24 save attempts vs the trim's 11, and its extra saves were exactly
+the marginal `knowledge`/`procedure` facts (H1-G3's failure) — but standing prose is priced **per
+call** (+11.5 % billed tokens). The architectural consequence: the vehicle for examples is the
+**nudge text, not the tools block** — the nudge is priced **per need** (0/10 fired in the bench,
+zero cost when the model already saved) and the ≤ 5 500 B pin stays untouched. It also feeds the
+B1 axis and the chrome: marginal saves that arrive typed light the per-kind icons the user never
+sees. **Test design:** nudge-plain vs nudge-with-examples, on a **de-saturated fixture** (work less
+obviously memorable than a timeout decision + ADR — the current fixture gives the nudge no headroom,
+9/10 baseline saves), gates pre-registered the trim-nudge way. Bench verdicts that frame this:
+`tmp/bench/trim-nudge-report.md` (H1 fails on G3; H2 at its ceiling).
