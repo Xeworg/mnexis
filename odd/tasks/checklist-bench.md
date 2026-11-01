@@ -84,3 +84,21 @@ checklist is that rule. This bench measures it.
   what survives; more description cannot" (the exploration's transfer from "LLMs struggle to
   self-correct without external feedback, and performance even degrades"). This bench is the test
   of that transfer, on the one population where text can move anything: the fired sessions.
+
+- **L4 (2026-11-02, T1 result — the bench did NOT run)** — 41 pilot sessions across seven fixture
+  revisions; **the measured batch was not spent** (the pilot's load-bearing condition failed: the
+  nudge fired in **2 of 41**, 4.9 %, against a required ≥4/10). The criterion was sealed before the
+  pilot (sha256 `8dc591a5…`) and the gates did not move; Appendix A of
+  `tmp/bench/checklist-measurement.md` is the pilot record, with the seven revisions and the
+  mechanism. **The measured mechanism, and it is the deliverable:** (1) the model saves the
+  session's salient fact in **40/41** sessions, before the settle boundary, so the nudge's
+  `sessionSaveCalls > 0` gate silences it; (2) the other gate is a `write`/`edit` **tool call**,
+  not a changed file — **6/41** sessions fixed the repo through `bash` (`chmod`, `sed -i`) and are
+  invisible to it. Across the revisions: every one that leaves a fact in the session ends with the
+  model saving it; the one that leaves no fact produces no `write`/`edit` call. The three arms
+  (`current`, `checklist`, `checklist+files`) and the image (`bench-mem:checklist`) were built and
+  pre-flighted (all three saved on their own — the same population problem). **Consequence, recorded
+  in the board (commit `12e5e48`): the memory-quality gap lives in the sessions where the model
+  already saved (40/41) and the nudge never fires there — so the checklist's lever is the smallest
+  of the three proposals and the second reader's is the largest. This reverses the earlier
+  ordering, which was made before the measurement.**
