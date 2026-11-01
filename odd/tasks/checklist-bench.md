@@ -24,17 +24,24 @@ checklist is that rule. This bench measures it.
   - `C checklist+files` — `B` + the nudge naming the files the session wrote ("This session wrote
     X, Y and saved no memory"), the context exploration's proposal, riding the same bench because
     it is cheap to test and cheap to drop.
-- **S3 (the fixture — the thing both earlier benches could not do)** — a session whose work yields
-  **two distinct candidate facts of different kinds**: a *decision* the model naturally saves (a
-  config value moved because an external constraint changed) and a *procedure/knowledge* the model
-  naturally skips (something discovered while working that is **not written in the repo** and that a
-  later session would otherwise have to rediscover). The prompt asks for the work and never mentions
-  memory. **The pilot must show, before the measured batch:** (a) the nudge fires in **≥ 4/10**
-  sessions (headroom — the sh-check fixture gave 3-5/10 and the trim fixture 0/10), (b) the
-  model's spontaneous saves are **decision-shaped** (so the marginal fact's absence is a judgment
-  failure and not a fixture artifact), and (c) the procedure fact is discoverable but not stated
-  anywhere in the repo. If the pilot cannot produce a fixture that satisfies all three, the bench
-  reports that and does not spend the batch.
+- **S3 (the fixture — the thing both earlier benches could not do)** — a session whose work leaves
+  **one durable, discoverable fact on the table that is not obviously memorable**: the model does
+  **not** save it on its own (it makes **zero** `mnexis_save` calls, so the nudge fires), and it is
+  not written anywhere in the repo — but it is there, it is worth saving, and a specific question
+  surfaces it where the vague one does not. The prompt asks for the work and never mentions memory.
+  **The pilot must show, before the measured batch:** (a) the nudge fires in **≥ 4/10** sessions
+  (the load-bearing condition: the nudge's gate is `sessionSaveCalls > 0`, so it is silent in every
+  session where the model called save at all — the first fixture revision failed here, firing in
+  1 of 20 pilot runs, and the pilot record says so), (b) the fact is discoverable in the work and
+  **not** in the repo (a probe that greps the repo for the fact's words and finds nothing), (c) the
+  end state is unambiguous and readable from the workspace. If the pilot cannot produce a fixture
+  that satisfies all three, the bench reports that and does not spend the batch.
+  **The shape that was rejected, and why:** "two facts, one of them skipped" measures the gap the
+  **second reader** addresses (a session that saved one thing and missed the other) — but the nudge
+  never fires in a session that saved anything, so the checklist's lever cannot be observed there.
+  The checklist's lever lives in the sessions where the model saved **nothing**: arm A's vague
+  "deserves to survive" answers "nothing deserves memory", arm B's two answerable tests catch the
+  fact. That difference is the hypothesis, and it is measurable per session.
 - **S4 (the gates, pre-registered before any run)**:
   - **C-G1 (the boundary is reached).** Nudge transcripts ≥ 4/10 in each nudge arm. Fewer → report,
     no verdict.
