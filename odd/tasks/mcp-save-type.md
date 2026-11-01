@@ -39,7 +39,7 @@ then the full `cargo test`, plus `cargo fmt --check`.
 | T1 | S1, S2, S4 | inline (parent): the RED test in `tests/mcp_harness.rs` — the answer names the type that landed, the default when the request named none, the kind an upsert kept, and the original's on a replay | `feat/mcp-save-type` @ `tmp/wt-a1` | `b7beb53` |
 | T2 | S1, S2, S3, S4 | inline (parent): the answer in `src/mcp/server.rs` | `feat/mcp-save-type` @ `tmp/wt-a1` | `b7beb53` |
 | T3 | S5, S6 | inline (parent): the differential against `f93d473`, the suite, the docs | `feat/mcp-save-type` @ `tmp/wt-a1` | `b7beb53` |
-| T4 | S7 | inline (parent): the RED test for the revision, the answer in `src/mcp/server.rs`, the differential, the suite | `feat/mcp-save-type` @ `tmp/wt-a1` | — |
+| T4 | S7 | inline (parent): the RED test for the revision, the answer in `src/mcp/server.rs`, the differential, the suite | `feat/mcp-save-type` @ `tmp/wt-a1` | `b4d1beb` |
 
 ## Log
 
@@ -98,3 +98,14 @@ then the full `cargo test`, plus `cargo fmt --check`.
   tell a create from an update. On a host that reads the answer, that is the difference between
   "I created a record" and "I rewrote a record" — and rewriting a record is how a `decision`
   becomes a `fact`. The same envelope, the same source (the saved `Memory`), one more key.
+- **L9 (2026-11-02, T4 — RED, GREEN and the differential)** — RED: the answer gave
+  `{"keywords":[],"memory_type":"fact","row_id":1,"uuid":"…"}` with **no** revision. GREEN:
+  `cargo test --test mcp_harness` **4 passed, 0 failed**; the whole suite **831 passed, 0
+  failed**; `cargo fmt --check` clean. The differential against `f93d473`: the **CLI surfaces
+  byte-identical** over 223 lines across 15 invocations, and the **MCP surfaces differ only in
+  the three save answers**, which now carry `memory_type` **and** `revision`;
+  `memory_list`, `memory_search`, `memory_workspace`, `memory_context`, the value-filtered
+  `memory_list` and the invalid-argument error are byte-identical. The three saves' answers
+  read, in order: `fact`/revision 1 (a create), `decision`/revision 1 (a create that names the
+  type), `decision`/revision 2 (the upsert that names no type and keeps the record's kind).
+  The work unit is `b4d1beb`.
