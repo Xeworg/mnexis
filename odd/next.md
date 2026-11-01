@@ -1695,3 +1695,49 @@ survival. The arms, the criterion and the falsifier are pre-registered in the do
 measured marginal-fact gap, whose control baseline is ≤ 5/10 — with the kill being "B records
 the marginal fact no more often than A′". opencode has no settle seat, and its V1 analogue
 (`session.idle`) is named but unmeasured, so the mechanism is pi-only until someone measures it.
+
+### 26. The assembly, measured — the fixture has no headroom left
+
+**The bench** (`bench/nudge-harness`, `8801905` + `54de3be` + `780b0a8`; feature doc
+`odd/tasks/nudge-harness-bench.md`; criterion `tmp/bench/nudge-measurement.md`, sealed **before the
+first session of any kind**: sha256 `68bea3d7…` over its first 22 052 bytes, re-verified after the
+appendix). Three arms: `nudge` (the shipped file, byte-identical), `control` (the same file with
+three inserted lines that neuter the settle seat) and `assembly` (the control plus a **standalone**
+17 228 B extension). The fixture is the trim bench's own **`ingest-api`** — the one with the
+measured marginal-fact gap — and the **verdict logic was sealed with the criterion**: N-G1 fails →
+report, no verdict; N-G1 holds and N-G2 null → the assembly is refuted as it stands; N-G2 holds
+with N-G3/N-G4/N-G5 → it moves what survives at acceptable cost.
+
+**The control was read before the batch, and it kills the fixture.** The control records the
+marginal fact in **9 of 10** sessions, against the **≤ 5/10** that N-G1 requires. The sealed rule
+says: *N-G1 fails → report, no verdict — the fixture cannot show the gap*. **The thirty measured
+sessions were not spent.**
+
+**Why, and it is not a number alone.** The control's own saves state the fact — *"scripts/check.sh
+(make check) valida que quede entre p99 y cap"*, with the 1100 and 2000 bounds, and one save
+quoting the checker's own output line. That is the **checklist bench's measured mechanism running
+on this fixture too**: the model audits the tool it is asked to trust (read in 10/10, probed in
+5/10) and records what it finds. The trim bench measured **1/10** for the same fact under the same
+tools text, so **the baseline moved** — with two differences that must not be folded together (the
+trim's 1/10 was a **human read** of the saved facts; this is a **declared string**, with the
+near-miss class printed and never counted — and the fixture here is `ingest-api`, the trim bench's
+own, not the checklist worktree's different `ingest-contract`).
+
+**This is not a refutation of the assembly** — the fixture cannot show the gap, so there is no
+verdict either way. It says the **premise the analysis rested on no longer holds here**: the
+affordance class was chosen because it had a sub-ceiling baseline, and today the model records it
+by itself 9/10.
+
+**What the pilot did measure about the mechanism** (reported, not gated): it fires **10/10**, the
+payload computes, the pointer check ran **12 times (9 verified, 1 rejected, 2 no_quote)**, the end
+state holds **10/10** in both arms, the tools block stays **5490 B**, zero refusals, zero `busy`,
+zero change-log records, and the cost is **indistinguishable** ($0.002214 vs $0.002232 per run;
+8.2 vs 8.1 calls) — the extra request did not bill as an extra call. **The mechanism works
+mechanically; this fixture cannot tell whether it changes what survives.**
+
+**And the consequence, which is the program's next question.** The class that remains at risk is
+**not** the one the pointer rule targets: it is the facts the model **cannot audit by reading a
+tool** — what the environment does, what a neighbour expects, a constraint stated in another
+session — which the pointer rule cannot cite (nothing in the transcript) and the coverage rule
+cannot see (not in the diff). A next bench would have to change **the class and the instrument**:
+that is a program decision, not another fixture revision.
