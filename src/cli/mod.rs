@@ -121,10 +121,13 @@ pub enum Command {
         #[arg(long, value_name = "TEXT")]
         title: Option<String>,
         /// Comma-separated words the fact is called by in another language or
-        /// another jargon (max 32, 48 bytes each); they accumulate across saves
+        /// another jargon (max 32, 48 bytes each); they accumulate across
+        /// saves, and the cap counts the union with the words the record
+        /// already carries
         #[arg(long, value_name = "WORD[,...]")]
         keywords: Option<String>,
-        /// Replace the words the record already carries instead of adding to them
+        /// Replace the words the record already carries instead of adding to
+        /// them; also the way out when that list is near the 32 cap
         #[arg(long)]
         replace_keywords: bool,
         /// Topic key (unique per namespace when non-empty; allowed: lowercase letters, digits, '.', '-' and '/')
