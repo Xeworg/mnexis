@@ -1786,3 +1786,36 @@ that the memory-quality gap the programme has been chasing is not in what the mo
 independent score of the twenty sessions agrees with the worker's gate by gate. A scorer bug
 found while scoring is disclosed in the measurement file's appendix B.3 with **both** readings
 (contradicting 0 vs 1 under the sealed sentence, 0 vs 3 under the literal bug).
+
+### 28. The three PRs — and three records rescued before the branches went
+
+The human asked what was pending a PR. The answer was **seven branches**, and only one of them
+was code:
+
+| PR | branch | what it carries |
+| --- | --- | --- |
+| **#113** | `feat/mcp-save-type` | the code: the MCP save answer names the type **and** the revision (4 commits, 312 lines, with the tests and the differential) |
+| **#114** | `docs/board-2026-11-02` | this board, six commits |
+| **#115** | `docs/records-2026-11-02` | the session's records: two decisions, two analyses, three bench verdicts — and, added last, three rescued records (14 commits) |
+
+**And the inventory of the remote leftovers found something worth fixing before deleting
+anything.** Five of the six branches that survived on the remote (and were already superseded
+by main) held **three records main does not carry** — and `tmp/` is gitignored, so those
+branches were the only durable copy of measurements the board cites:
+
+- `odd/tasks/prefix-cost.md` + **`odd/reports/prefix-cost-report.md`** — the prefix
+  experiment's criterion and its measured report;
+- `odd/tasks/steering-experiment.md` — the steering experiment's record;
+- `odd/tasks/near-duplicate-titles.md` — the archived feature's document (its **code** stays
+  where it was archived to be: `origin/archive/near-duplicate-titles`, which is the human's own
+  archive act and was kept).
+
+Those three landed in #115 before the branches went. The **retired implementations** did not
+come back — the door's census, the surface test, the duplicates module: they were measured,
+superseded, and their local branches were deleted with the human's OK. **What survives is the
+evidence, which is what the records are for.**
+
+**The remote now carries** `main`, the three PR branches, and `archive/near-duplicate-titles`.
+The four superseded branches (`bench/chrome-shape`, `bench/prefix-cost`, `bench/steering-arms`,
+`docs/board-value-filter`) and the merged `integrate/post-audit` are gone. The three PRs are
+**open and waiting for the human**: the push was authorised, the merge is not.
