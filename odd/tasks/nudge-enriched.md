@@ -63,3 +63,25 @@ immediate comment only) and `extensions/mnexis-memory/test/settle-nudge.test.js`
   The suite is 243 tests, 240 pass, 0 fail, and the differential against `main` shows one changed
   case only: a file changed through `bash` is now asked about. The tools block stays at 5 490 B
   and the opencode drift pin stays green.
+- **L5 (2026-11-02, session close — where the program stands)** — the host runs the whole session's
+  work: the enriched nudge, the chrome kinds, the busy retry (`7bbbac6`) and the workspace gate
+  (`4865f51`); the opencode plugin is installed with the curated catalog seat and the MCP entry
+  says `codemode: false`. Three benches are measured: the trim (H1 fails on G3), the enriched nudge
+  (**8/8 conversion — the first positive evidence for the mechanism**; E-G0 fails by its letter
+  while its conclusion is false) and the checklist (**did not run**: 41 pilot sessions, the nudge
+  fired in 2/41, the batch was not spent). **The finding that reorders the program:** the nudge's
+  gate is its blind spot — the model saves the session's salient fact in **40/41** sessions before
+  the settle, so the nudge is silent in the very population where the memory-quality gap lives
+  (the trim's H1-G3: the marginal fact 5/10 vs 1/10). The checklist's lever is therefore the
+  **smallest** of the three proposals (the fired population, 2/41) and the **second reader's** is
+  the largest (it reaches the 40/41) — the earlier order was made before this measurement and this
+  measurement reverses it. Next, in this order: (A1) the engine names the type in the MCP save
+  answer (`src/mcp/server.rs:256-260`; the CLI already does since #107) — it is what makes the type
+  visible on the host where the transcript is the host's; (A2) the checklist bench continues in
+  `tmp/wt-bench3`: the gates are sealed, and what is missing is a fixture that can discriminate (a
+  session with no salient diagnosis that leaves a durable procedure); (B) a product decision on the
+  mechanism that reaches the 40/41 — the second reader (the extension decides what survives) or the
+  cheaper variant (the nudge asks "you saved X, is anything missing?", at the price of firing in
+  every session that changed files); (C) cleanup — the old branches are superseded (PR #106 is
+  closed), the stale `~/.pi/agent` copy is outside the project and needs an explicit OK, and the
+  scratch in `/tmp` goes.
