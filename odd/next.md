@@ -1592,8 +1592,43 @@ stale copy of the extension in `~/.pi/agent/extensions/mnexis-memory` (the 28-Oc
 build) was **refreshed, not deleted**: the extension's `index.js` and the skill's `SKILL.md`
 are now byte-identical to the repository's and to the ones the live host runs.
 
-**A2 — the checklist bench** (branch `bench/checklist-nudge`, worktree `tmp/wt-bench3`) is
-**running**: a worker is building the fixture the seven previous revisions could not produce —
-a session that leaves a durable, discoverable fact on the table, that the model does not save
-on its own, and that is not written anywhere in the repo — and it will spend the measured
-batch only if the pilot's three conditions hold. The gates C-G1..C-G6 stay sealed.
+**A2 — the checklist bench: the procedure fixture, and the batch is not spent again** (branch
+`bench/checklist-nudge`, worktree `tmp/wt-bench3`, commit `f9cd908`; the record is Appendix B of
+`tmp/bench/checklist-measurement.md` and L5 of `odd/tasks/checklist-bench.md`). The board named
+the one shape not yet tried — a fact that is **not a diagnosis** — and it was built and measured:
+`tmp/bench/fixtures/verify-gap/` has **nothing broken** (the check is green before and after),
+the prompt asks for one config key plus its bound, and the marginal fact is a **procedure**: a
+bound declared in `bounds.txt` is **inert**, because the checker reads a fixed list of three
+config keys, so a green check says nothing about the new one. Two revisions: **R9** left the
+checker announcing the keys it reads (the model noticed, probed and saved: 0/1 fires), **R10**
+silenced that announcement so the fact is discovered by reading the tool (image
+`bench-mem:checklist-r10` `827e58312664`). **The pilot: 11 sessions of arm `current`, 104 model
+calls, 708 740 billed tokens, $0.0268.** Condition **(i) failed: the nudge fired in 1 of 10**, so
+S3 forbids spending the measured batch — it was prepared and deliberately unspent, with the
+runbook in Appendix B.7. Conditions **(ii) and (iii) hold**: the fixture states the fact nowhere
+(a `grep` over it exits 1) and probe C reads it from the end state in 10/10; the check is 0, both
+mutation probes fail, the key is present, the four bounds are intact, exactly two files changed.
+**The gate is recorded per run because it is a confound against L4's pilot**: every session used
+the image's `write`/`edit` gate (main's `4865f51` is not installed), and it was never the
+limiting factor — the work is two edits, made in 10/10 sessions, so main's workspace gate would
+have fired in the same 1/10. **The criterion did not move**: the seal is still `8dc591a5…`
+(re-verified after Appendix B was appended) and no new sealed revision was needed.
+
+**And the finding is bigger than the bench — it changes what the second reader has to prove.**
+The measured mechanism: the model **audits the tool before trusting its green answer** — it read
+`/usr/local/bin/ingest-check` in **10/10** sessions and probed it with a deliberately violating
+value in **5/10** — and then **recorded** what it found in **10/10** (9/10 by the declared
+rule). So the settle boundary opens in 1/10 while the fact survives 10/10: **the baseline sits
+at the ceiling and C-G2's "≥ 2×" clause is unreachable.** Two consequences, both honest:
+(1) the checklist arm is now closed **as a measurement** — two rounds, 52 sessions, and the fact
+this bench needs (worth saving, needed by a later session, and **not inspected by this model**)
+has not been found; the smaller the work, the more the tool is the subject, and the more the
+model reads it. A batch on this fixture could only return a negative C-G2 that says nothing
+about the rule (C-G6's own warning).
+(2) the brief's gate 2 ("the reviewer records the marginal fact in ≥ 2× the session model's own
+rate") inherits the same ceiling: it is only meaningful on a fixture where the model's rate is
+**not** the ceiling — that is, where the model demonstrably misses something. So the second
+reader's measurement needs a fixture of a third kind, not a third revision of this one: a fact
+the model misses **because the work is too big to read the tool**, not because the fact is too
+quiet to notice. That fixture does not exist yet, and finding it is now the program's next
+measurement, not the checklist's.
