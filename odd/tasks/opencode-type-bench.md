@@ -58,8 +58,8 @@ revision unit). Test runner: the podman harness of `bench/checklist-nudge`, reus
 | ID | Specs | Route | Branch / worktree | Commit |
 | --- | --- | --- | --- | --- |
 | T1 | S6, and the parts of S2/S3 that depend on the host | delegated: `gentle-ai-explore` (read-only) — the opencode host's feasibility, with sources | `bench/opencode-type` @ `tmp/wt-bench4` | — |
-| T2 | S1–S6 | inline (parent): the criterion's seal, the two arms, the fixture, the runner and the scorer | `bench/opencode-type` @ `tmp/wt-bench4` | — |
-| T3 | S4 | inline (parent): the measured batch, the scoring, the report | `bench/opencode-type` @ `tmp/wt-bench4` | — |
+| T2 | S1–S6 | done: the criterion's seal (`tmp/bench/opencode-type-measurement.md`, `44322ffb…` over 17 339 bytes, revision 2 `76052e83…` over 20 557), the two arms (`bench-oc:base` = `f93d473`, `bench-oc:names` = `feat/mcp-save-type`), the fixture (`fixtures/type-churn`), the runner (`run/opencode-type-bench.sh`) and the scorer (`run/score-opencode-type.py`) | `bench/opencode-type` @ `tmp/wt-bench4` | — |
+| T3 | S4 | done: the pilot cleared all five conditions, the batch was spent (N = 10 per arm, 20 sessions), the gates were scored, and the report is `tmp/bench/opencode-type-report.md` | `bench/opencode-type` @ `tmp/wt-bench4` | — |
 
 ## Log
 
@@ -133,3 +133,30 @@ revision unit). Test runner: the podman harness of `bench/checklist-nudge`, reus
   explorer was pointed at the wrong path and answered from the parent's brief instead. Its
   answer stands on its sources, but the locator was wrong and is fixed here.
 
+- **L6 (2026-10-31, T2+T3 — the bench ran, and the answer bought nothing; the document's other
+  entries carry `2026-11-02`, this one carries the clock the artifacts carry)** — the host was never
+  benched, and now it is. **What the pilot settled:** opencode `2.2.5` runs headless in the container
+  (`opencode run --standalone --model opencode-go/deepseek-v4.1-flash --format json --auto`), the
+  bench's own key (`cf78c94d2257`) authenticates `opencode-go` from `OPENCODE_API_KEY` alone — no
+  credential store read, nothing written into the repo — the transcript carries the tool calls with
+  their arguments and their answers (both metrics scoreable), and **the plugin's curated description
+  fires headless in both arms** (`Save it typed — memory_type is the one that fits:` reaches the
+  model), so metric (i) starts at the ceiling on this host. **What the batch measured** (N = 10 per
+  arm, 20 sessions, `tmp/bench/opencode-type-report.md`): typed share **1.000 vs 1.000** (T-G2 holds,
+  trivially — the axis cannot move), churn rate **0.250 vs 0.421** (T-G3 **fails**, the direction is
+  against S1's claim), contradicting records **0 vs 1** (T-G4 **fails** — one session left the
+  stage-1 value 5000 in the record while its workspace ended at 3000), billed tokens/run **190 522.3
+  vs 203 719.9 = 1.069×** (T-G5 **fails**; median 1.004×, and 1.011× without the one 0-save run).
+  Provider cost per session: **$0.00** for this model, measured from the transcript (`step_finish`),
+  never transferred from pi. **The criterion was sealed before the first bench run** (`44322ffb…`)
+  and revised **once**, before the batch, as revision 2 (`76052e83…`): v1's honesty rule fired on the
+  fixture's own two-stage design (the stage-1 record legitimately states the value of its stage), so
+  metric (iv)'s unit became "the record the session leaves must not contradict the workspace it
+  leaves". The gates did not move. A scorer bug found while scoring (the last save *with* a number vs
+  the last save, whose claim may be unverifiable) is disclosed with both readings in the measurement
+  file's appendix B.3: `contradicting` is 0 vs 1 under the sealed sentence, 0 vs 3 under the literal
+  bug. **The reading this bench supports:** on a host that carries the plugin, naming the type and
+  revision in the save answer is confirmation of a vocabulary the model already has, not instruction —
+  it does not move the axis, it does not lower the churn, and it can coincide with a stale record.
+  That is a statement about this model, this host, this fixture and N = 10 (T-G6), and it is the null
+  S4 pre-registered as publishable.
