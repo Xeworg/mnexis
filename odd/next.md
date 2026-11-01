@@ -1632,3 +1632,66 @@ reader's measurement needs a fixture of a third kind, not a third revision of th
 the model misses **because the work is too big to read the tool**, not because the fact is too
 quiet to notice. That fixture does not exist yet, and finding it is now the program's next
 measurement, not the checklist's.
+
+### 25. The nudge's harness, analyzed again — and the answer that names what landed
+
+**A1b — the save answer names the revision too** (branch `feat/mcp-save-type`, `b4d1beb` +
+`5929f16`). The human asked whether A1 was an improvement or only parity; the honest answer was
+parity — **no bench had measured any behavioural effect**, and the rationale inherited from #107
+(a model told "Saved" re-saves to tidy the duplicate, and the same-title upsert rewrites the
+record's type) is an argument, not a measurement. The revision is the other half of the same
+envelope: the MCP `memory_update` answer already carried `revision` and `memory_type`
+(`src/mcp/server.rs:596-601`), so the save answer was the only one of the two that could not
+tell a create from an update — and the update is the path that rewrites a type. The answer now
+reads `memory_type` **and** `revision`, both from the saved record. RED observed, GREEN
+observed, the whole suite **831 passed, 0 failed**, and the differential against `f93d473`
+unchanged in shape: the CLI byte-identical over 223 lines, the MCP different only in the three
+save answers.
+
+**And the bench that would measure the claim is specified** (branch `bench/opencode-type`,
+`8aa79ac`, feature doc `odd/tasks/opencode-type-bench.md`). The host has to be **opencode**:
+on pi the extension already shows the type, so the answer's content is invisible to the model
+there, and opencode is the host that reads the MCP answer directly. The feasibility is in the
+document's L4: the headless invocation (`opencode run --standalone --model provider/model
+--format json --auto`), the transcript's shape (one `tool_use` record per call, with the
+arguments **and** the result in the same object — enough to score both metrics), the MCP path
+confirmed (`codemode: false` exposes the tools directly), the install (`@opencode/cli`, network
+at build time), the credential (opencode-go is a built-in provider whose key lives in
+opencode's own store), and **the confound**: the plugin's curated description names the seven
+kinds and primes the typed-save metric, so it must be byte-identical in both arms and the
+bench must record which description reached the model. **The pi cost numbers do not transfer** —
+opencode reports its own bill per step, so the session's cost is measured, not assumed.
+
+**The nudge's harness, analyzed again, with everything now measured** (branch
+`docs/nudge-harness-analysis`, `6296cbb`, feature doc
+`odd/tasks/nudge-harness-analysis.md`). The human asked for the three-agent analysis to be
+redone, on the nudge, to improve the harness. Three read-only agents, one proposal each, with
+the dead ends named so nobody re-proposes them (more description is null at 1.14×; the
+checklist's baseline sits at the ceiling; naming the files was predicted null). **The three are
+complementary, not competing**: HARNESSES answers **WHEN** (the moment: `turn_end` of the turn
+that changed the workspace, carrying that turn's `toolResults`, dropping the
+`sessionSaveCalls > 0` clause that silences the nudge in the 40/41), CONTEXT answers **WHAT**
+(the coverage gap: the extension diffs what the session changed and read against what it saved
+and names the uncovered values — the data is already there, the tool results are discarded
+today), and AI TECHNIQUE answers **WHICH** (the output-pointer rule: a fact about how a tool
+behaves is saved only with the output line that shows it, a citation the extension can verify
+in the transcript).
+
+**The synthesis, and the reason it is admissible:** the class all three address is the one
+with a **sub-ceiling baseline** — the model **writes what it executed and drops what it merely
+read**: the `--explain` procedure appeared in **10/10** transcripts and was saved **0/10**, while
+the same session's typo diagnosis was saved **10/10** (R5), and the trim bench prices the same
+gap at **5/10 against 1/10**. The checklist died because its own fact's baseline sat at 9–10/10;
+this class does not. And the pieces compose: `turn_end`'s `toolResults` are exactly the
+material the pointer rule needs to verify a citation, and the workspace's diff is exactly the
+material the coverage rule needs — **one event, both rules**.
+
+**What is not measured, stated plainly:** the whole assembly. The fire rate moves from ~2/41 to
+~41/41, so the cost moves from ~zero to one extra request per changed session (≈+$0.00025,
+≈+9.3 % of the calls), and the constraint moves from the firing rate to **the judgment** — the
+coverage set is non-empty in most sessions, so the rule has to be right about what deserves
+survival. The arms, the criterion and the falsifier are pre-registered in the document: arms A
+(shipped), A′ (no nudge) and B (the assembly), on the **trim fixture** — the only one with a
+measured marginal-fact gap, whose control baseline is ≤ 5/10 — with the kill being "B records
+the marginal fact no more often than A′". opencode has no settle seat, and its V1 analogue
+(`session.idle`) is named but unmeasured, so the mechanism is pi-only until someone measures it.
