@@ -1528,3 +1528,72 @@ not a diagnosis at all: a *procedure* the session discovers without an error to 
 check only passes from the repository root because the script resolves paths against the working
 directory). That is the human's call: another pilot round, or moving to the mechanism that reaches
 the population where the measured gap actually lives.
+
+### 24. Four units in parallel — the type in the MCP answer, the decision brief, the cleanup, and the bench that is still running
+
+The human asked where the program stood; the board's four open items (A1, A2, B, C) went out
+together, each in its own worktree, with the decision brief researched in parallel.
+
+**A1 — the MCP save answer names the type that landed** (branch `feat/mcp-save-type`, worktree
+`tmp/wt-a1`, commits `b7beb53` and `29caf12`; the feature document is
+`odd/tasks/mcp-save-type.md`). The CLI's `mnexis save --json` has named the type the engine
+resolved since #107; the MCP answer did not, so on a host whose transcript is the host's —
+opencode, which draws no chrome of ours — nothing said what kind of record landed. The answer
+gains one key, `memory_type`, read from the same stored record the uuid and the row_id come
+from. **The differential against the base commit `f93d473`** (the same data-dir path, the uuids
+and the timestamps normalized): the CLI surfaces **byte-identical** over 223 lines across 15
+invocations, and the MCP surfaces differ in **exactly one place** — the added key in the three
+save answers; `memory_list`, `memory_search`, `memory_workspace`, `memory_context`, the
+value-filtered `memory_list` and the invalid-argument error are byte-identical. The whole
+suite: **830 passed, 0 failed** across 26 suites; `cargo fmt --check` clean.
+
+Two contract facts the test taught, both now pinned: **the idempotency hash covers the type**
+(`src/application/service.rs:189-212`), so the same key with a different type is a
+`TOPIC_CONFLICT` and not a replay; and **a save that names no type keeps the kind the record
+already has**, with the title rule landing the upsert on the same record. The MCP answer still
+lacks `revision` (the CLI has it since #107) — out of this unit's scope, recorded in the
+feature document so the decision is visible.
+
+**B — the decision brief for the mechanism that reaches the 40/41** (branch
+`docs/second-reader-decision`, worktree `tmp/wt-docs`, commit `e6763be`; the document is
+`odd/tasks/second-reader-decision.md`, 283 lines). A read-only explorer answered the board's
+three open questions with `path:line` evidence. **Doctrine:** no rule exists — the nudge's own
+text is measured null at 1.14× cost, the seven types are labels (their per-type rules are
+inadmissible by measurement), the similarity cannot separate one fact from two, and the only
+rule-like candidate, the checklist, has **never been measured**. **Feasibility:** yes, and this
+is the load-bearing fact — `agent_before_settle` is an actionable boundary
+(`docs/extensions.md:118`), `ctx.modelRegistry` makes a provider-neutral nested call (`:215`),
+the digest is `event.context.llmMessages` (`types.d.ts:779-799`), and the hook can return only
+`{entries?, continue?}`: it cannot block or revert what the session model already saved.
+**Cost:** it would fire in ~41 of 41 sessions against the nudge's 2 of 41 (≈20× the
+population), it would give the extension its **first** provider dependency, and its own cost is
+**not measured** — the measured 401 class is a stale key, and the 401 *rate* is not measured
+either.
+
+**The recommendation the brief carries:** the cheap variant is **dominated by the
+measurement** — a bigger population for a mechanism already measured null, at a cost that goes
+from ~zero to per-session — and the second reader is the only lever that reaches the 40/41
+*and* can decide what was missed, but its **doctrine does not exist yet**. So the decision is
+not "which of the two": the second reader *is* the mechanism and the **rule** is the missing
+piece, to be written and measured in the harness that already exists. Five gates are
+pre-registered in the brief, and the falsifier is named: the reviewer arm failing the
+checklist's own C-G2 gate in the 40/41 population. The three questions that are the human's and
+not evidence's: what a session's memory is worth, whose credential the reviewer uses, and who
+decides when the reviewer is wrong.
+
+**C — the cleanup** (the human approved each part). The two commits `bench/steering-arms` had
+without a remote were pushed first (`bc03256..274dafe`), and then the six superseded branches
+were deleted: `bench/chrome-shape`, `bench/prefix-cost`, `bench/steering-arms`,
+`docs/board-value-filter` (all four with a remote copy) and `feat/door-coverage-census` plus
+`feat/near-duplicate-titles` (local only; the latter is byte-identical to
+`origin/archive/near-duplicate-titles`). The merged worktree `tmp/wt-ocpolish` was removed
+(**3,0 GB**) and the **1474** empty `mnexis-agents-*` scratch directories were deleted. The
+stale copy of the extension in `~/.pi/agent/extensions/mnexis-memory` (the 28-Oct pre-trim
+build) was **refreshed, not deleted**: the extension's `index.js` and the skill's `SKILL.md`
+are now byte-identical to the repository's and to the ones the live host runs.
+
+**A2 — the checklist bench** (branch `bench/checklist-nudge`, worktree `tmp/wt-bench3`) is
+**running**: a worker is building the fixture the seven previous revisions could not produce —
+a session that leaves a durable, discoverable fact on the table, that the model does not save
+on its own, and that is not written anywhere in the repo — and it will spend the measured
+batch only if the pilot's three conditions hold. The gates C-G1..C-G6 stay sealed.
