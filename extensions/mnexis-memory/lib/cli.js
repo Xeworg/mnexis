@@ -25,6 +25,26 @@ export const WRITE_TIMEOUT_MS = 30_000;
 /** How long a killed child has to honour SIGTERM before it gets SIGKILL. */
 const KILL_GRACE_MS = 200;
 
+/**
+ * The engine's exit code for a store that was locked (`src/cli/output.rs:83`).
+ *
+ * The engine waits two seconds on the lock itself and then gives up
+ * (`src/storage/sqlite.rs:35`); the extension had no second try, so a fact
+ * the model had decided to save was lost whenever another process held the
+ * store. The trim-nudge bench measured eight such losses in thirty runs.
+ */
+export const BUSY_EXIT_CODE = 10;
+
+/**
+ * The waits between the tries of a save that found the store locked.
+ *
+ * The lock is another process's write commit, and it is usually gone in
+ * milliseconds; the two waits are short and then longer. The tries share the
+ * write budget (thirty seconds), they never add to it: a save that cannot
+ * land inside its own budget is a save that has to fail.
+ */
+export const BUSY_RETRY_DELAYS_MS = [250, 750];
+
 /** The most output one call may accumulate, as the execFile cap it replaced. */
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
@@ -64,6 +84,59 @@ function timeoutFor(args, override) {
 		return override;
 	}
 	return WRITE_COMMANDS.has(commandName(args)) ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS;
+}
+
+/**
+ * Whether a save names the record it writes.
+ *
+ * The engine's identity comes from the title: the key is a function of it
+ * (`src/domain/title.rs`), and a save that names no key writes a new record
+ * every time. A key the caller gave, or an idempotency key, names the
+ * record as well. A title made only of punctuation yields no key, so it
+ * names nothing: that save is not one to try again.
+ *
+ * @param {{title?: string, topicKey?: string, idempotencyKey?: string}} save
+ * @returns {boolean} whether a second try would be the same record
+ */
+export function namesItsRecord({ title, topicKey, idempotencyKey } = {}) {
+	if (typeof topicKey === "string" && topicKey.trim() !== "") {
+		return true;
+	}
+	if (typeof idempotencyKey === "string" && idempotencyKey.trim() !== "") {
+		return true;
+	}
+	if (typeof title !== "string") {
+		return false;
+	}
+	// The engine keeps the alphanumeric characters of the title and drops the
+	// rest: a title with none of them yields an empty key.
+	return /[\p{L}\p{N}]/u.test(title);
+}
+
+/**
+ * Wait, unless the caller aborts first.
+ *
+ * The wait between two tries of a locked save is the one moment the
+ * extension is idle on purpose, and an abort in that moment means the human
+ * is done: the second try must not happen.
+ */
+function sleep(ms, signal) {
+	return new Promise((resolve) => {
+		if (signal?.aborted) {
+			resolve();
+			return;
+		}
+		const onAbort = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener?.("abort", onAbort);
+			resolve();
+		};
+		const timer = setTimeout(() => {
+			signal?.removeEventListener?.("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener?.("abort", onAbort);
+	});
 }
 
 /** The budget `MNEXIS_TIMEOUT_MS` overrides both defaults with, or null. */
@@ -252,18 +325,46 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 	const command = binary || env.MNEXIS_BIN || "mnexis";
 	const budget = overrideOf(env);
 
-	async function run(args, { json = false, cwd, signal = null } = {}) {
+	async function run(args, { json = false, cwd, signal = null, retryBusy = false } = {}) {
 		const fullArgs = json ? [...args, "--json"] : args;
 		const timeout = timeoutFor(args, budget);
-		const result = await exec(command, fullArgs, {
-			cwd,
-			env: {
-				...env,
-				...(env.MNEXIS_DATA_DIR ? { MNEXIS_DATA_DIR: env.MNEXIS_DATA_DIR } : {}),
-			},
-			signal,
-			timeout,
-		});
+		const deadline = Date.now() + timeout;
+		const call = (budgetMs) =>
+			exec(command, fullArgs, {
+				cwd,
+				env: {
+					...env,
+					...(env.MNEXIS_DATA_DIR ? { MNEXIS_DATA_DIR: env.MNEXIS_DATA_DIR } : {}),
+				},
+				signal,
+				timeout: budgetMs,
+			});
+
+		let result = await call(timeout);
+		// A locked store is worth another try: the tries share the budget, so
+		// a save that cannot land inside it still fails, and a caller that
+		// aborts gets no second try.
+		let busyRetries = 0;
+		while (
+			retryBusy &&
+			result.code === BUSY_EXIT_CODE &&
+			busyRetries < BUSY_RETRY_DELAYS_MS.length &&
+			!signal?.aborted
+		) {
+			const delay = BUSY_RETRY_DELAYS_MS[busyRetries];
+			const remaining = deadline - Date.now();
+			if (remaining <= delay) {
+				break;
+			}
+			await sleep(delay, signal);
+			const left = deadline - Date.now();
+			if (left <= 0 || signal?.aborted) {
+				break;
+			}
+			result = await call(left);
+			busyRetries += 1;
+		}
+
 		const data = json ? parseJson(result.stdout) : null;
 		return {
 			...result,
@@ -274,6 +375,9 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			timeout_ms: timeout,
 			data,
 			no_answer: noAnswerOf(json, result.stdout, data),
+			// How many times a locked store was tried again: the bench and
+			// the journal read it to tell a recovered save from a lost one.
+			busy_retries: busyRetries,
 		};
 	}
 
@@ -352,7 +456,16 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 				args.push("--idempotency-key", idempotencyKey);
 			}
 			args.push(content);
-			return this.run(args, { json: true, cwd });
+			// Only a save that names its record may be tried again: the title
+			// (or the key it was given) is the record's identity, so the
+			// second try is the same record and not a second one. A save with
+			// no title writes a new record every time, and retrying it would
+			// duplicate the fact the model meant to keep.
+			return this.run(args, {
+				json: true,
+				cwd,
+				retryBusy: namesItsRecord({ title, topicKey, idempotencyKey }),
+			});
 		},
 
 		async search({ query, namespace, limit, match, type }, cwd) {
