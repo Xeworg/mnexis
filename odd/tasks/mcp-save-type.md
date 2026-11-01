@@ -30,9 +30,9 @@ then the full `cargo test`, plus `cargo fmt --check`.
 
 | ID | Specs | Route | Branch / worktree | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S1, S2, S4 | inline (parent): the RED test in `tests/mcp_harness.rs` — the answer names the type that landed, the default when the request named none, the kind an upsert kept, and the original's on a replay | `feat/mcp-save-type` @ `tmp/wt-a1` | the work-unit commit below |
-| T2 | S1, S2, S3, S4 | inline (parent): the answer in `src/mcp/server.rs` | `feat/mcp-save-type` @ `tmp/wt-a1` | the work-unit commit below |
-| T3 | S5, S6 | inline (parent): the differential against `f93d473`, the suite, the docs | `feat/mcp-save-type` @ `tmp/wt-a1` | the work-unit commit below |
+| T1 | S1, S2, S4 | inline (parent): the RED test in `tests/mcp_harness.rs` — the answer names the type that landed, the default when the request named none, the kind an upsert kept, and the original's on a replay | `feat/mcp-save-type` @ `tmp/wt-a1` | `b7beb53` |
+| T2 | S1, S2, S3, S4 | inline (parent): the answer in `src/mcp/server.rs` | `feat/mcp-save-type` @ `tmp/wt-a1` | `b7beb53` |
+| T3 | S5, S6 | inline (parent): the differential against `f93d473`, the suite, the docs | `feat/mcp-save-type` @ `tmp/wt-a1` | `b7beb53` |
 
 ## Log
 
