@@ -471,6 +471,15 @@ export const SETTLE_NUDGE = [
 /** The tools whose successful run changed a file (capture-discipline S4). */
 const FILE_WRITING_TOOLS = new Set(["write", "edit"]);
 
+/**
+ * How long the workspace's own state may take to answer.
+ *
+ * The snapshot is a nicety, not the evidence the session is judged on: a
+ * repository whose status takes longer than this is a repository the
+ * question is asked without, never a session that hangs.
+ */
+const WORKSPACE_SNAPSHOT_TIMEOUT_MS = 2_000;
+
 // --- store recovery (odd/tasks/store-recovery.md, S1-S7) ---
 //
 // A save that lands on a second live record for one fact leaves the store
@@ -859,6 +868,53 @@ export default function mnexisMemoryExtension(pi) {
 	let sessionFilesChanged = false;
 	let sessionSaveCalls = 0;
 	let settleNudgeSent = false;
+	// The workspace's own state when the session started: the paths git sees
+	// as changed or untracked. A session that changes a file through `bash`
+	// — a `chmod`, a `sed -i`, a redirect — shows the extension no
+	// write/edit tool, and the pilot of the checklist bench measured 6 of 41
+	// sessions invisible to the tool names alone. The workspace itself is the
+	// evidence, and this is the state to compare it against. Null when the
+	// workspace is not a repository: no evidence is not a negative answer.
+	let sessionWorkspaceBaseline = null;
+
+	/**
+	 * The workspace's own state, as git sees it: the commit it is at and the
+	 * paths that are changed or untracked.
+	 *
+	 * Two questions, because they fail differently: the commit moves when
+	 * the session committed its work (the tree is clean again, and the
+	 * status alone would say nothing happened), and the paths move when the
+	 * session changed a file without committing it.
+	 *
+	 * Null when the workspace is not a repository, or git is not there, or the
+	 * call did not answer in time: no evidence is not a negative answer, and
+	 * the tool's own evidence stands on its own.
+	 *
+	 * @param {object} client the engine client
+	 * @param {string} cwd the workspace to look at
+	 * @returns {Promise<string|null>} the state, or null when there is none
+	 */
+	async function workspaceState(client, cwd) {
+		if (typeof cwd !== "string" || cwd === "") {
+			return null;
+		}
+		try {
+			const head = await client.git(["rev-parse", "HEAD"], cwd, WORKSPACE_SNAPSHOT_TIMEOUT_MS);
+			const status = await client.git(
+				["status", "--porcelain"],
+				cwd,
+				WORKSPACE_SNAPSHOT_TIMEOUT_MS,
+			);
+			const at = head?.code === 0 ? head.value : null;
+			const paths = status?.code === 0 ? status.value : null;
+			if (at === null && paths === null) {
+				return null;
+			}
+			return `${at ?? ""}\n${paths ?? ""}`;
+		} catch {
+			return null;
+		}
+	}
 
 	/**
 	 * Resolve the workspace → namespace binding once per session.
@@ -1688,6 +1744,11 @@ export default function mnexisMemoryExtension(pi) {
 		sessionFilesChanged = false;
 		sessionSaveCalls = 0;
 		settleNudgeSent = false;
+		// What the workspace looked like when this session started: the
+		// state to compare the settle boundary against, so a change the
+		// tools did not report (a file written through `bash`) is still the
+		// session's work.
+		sessionWorkspaceBaseline = await workspaceState(client, ctx?.cwd);
 		const id = sessionIdOf(ctx);
 		if (!id) {
 			return;
@@ -1853,7 +1914,18 @@ export default function mnexisMemoryExtension(pi) {
 		}
 	});
 
-	pi.on("agent_before_settle", () => {
+	pi.on("agent_before_settle", async (_event, ctx) => {
+		// The workspace's own state is the other half of the evidence: a file
+		// the model changed through `bash` is a changed file, and the tool
+		// names alone do not say so. The check is made here, where the
+		// question is asked, and only when the tools said nothing — the
+		// common case pays no git call at all.
+		if (!sessionFilesChanged && sessionWorkspaceBaseline !== null) {
+			const current = await workspaceState(client, ctx?.cwd);
+			if (current !== null && current !== sessionWorkspaceBaseline) {
+				sessionFilesChanged = true;
+			}
+		}
 		if (settleNudgeSent || !sessionFilesChanged || sessionSaveCalls > 0) {
 			return undefined;
 		}

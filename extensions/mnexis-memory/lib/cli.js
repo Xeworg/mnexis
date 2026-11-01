@@ -382,11 +382,11 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 	}
 
 	/** A git command inside the workspace: a bounded read like any other. */
-	async function runGit(args, cwd, signal) {
+	async function runGit(args, cwd, signal, timeoutMs) {
 		const result = await exec("git", args, {
 			cwd,
 			signal,
-			timeout: budget === null ? READ_TIMEOUT_MS : budget,
+			timeout: timeoutMs ?? (budget === null ? READ_TIMEOUT_MS : budget),
 		});
 		return {
 			...result,
@@ -411,7 +411,7 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			}
 			const bound = Object.create(client);
 			bound.run = (args, options = {}) => run(args, { ...options, signal });
-			bound.git = (args, cwd) => runGit(args, cwd, signal);
+			bound.git = (args, cwd, timeoutMs) => runGit(args, cwd, signal, timeoutMs);
 			return bound;
 		},
 
@@ -617,8 +617,8 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 		},
 
 		/** Git helpers: run a git command inside the workspace. */
-		async git(args, cwd) {
-			return runGit(args, cwd, null);
+		async git(args, cwd, timeoutMs) {
+			return runGit(args, cwd, null, timeoutMs);
 		},
 	};
 
