@@ -25,6 +25,12 @@ then the full `cargo test`, plus `cargo fmt --check`.
   `f93d473` (stdout, stderr and exit code); `cargo fmt --check` clean; the full suite green.
 - **S6 (the documentation follows)** — the surface that documents the MCP answers names the
   field, so a reader of the docs and a caller of the tool see the same envelope.
+- **S7 (the revision, too — the second half of the same envelope)** — the save answer names
+  the **revision** of the record that landed, read from the saved record: `revision` is `1` for
+  a create and higher for an upsert. The MCP `memory_update` answer already carries `revision`
+  and `memory_type` (`src/mcp/server.rs:596-601`), so the save answer was the only one of the
+  two that could not tell a create from an update — and the update is the path that rewrites a
+  record's type.
 
 ## Tasks
 
@@ -33,6 +39,7 @@ then the full `cargo test`, plus `cargo fmt --check`.
 | T1 | S1, S2, S4 | inline (parent): the RED test in `tests/mcp_harness.rs` — the answer names the type that landed, the default when the request named none, the kind an upsert kept, and the original's on a replay | `feat/mcp-save-type` @ `tmp/wt-a1` | `b7beb53` |
 | T2 | S1, S2, S3, S4 | inline (parent): the answer in `src/mcp/server.rs` | `feat/mcp-save-type` @ `tmp/wt-a1` | `b7beb53` |
 | T3 | S5, S6 | inline (parent): the differential against `f93d473`, the suite, the docs | `feat/mcp-save-type` @ `tmp/wt-a1` | `b7beb53` |
+| T4 | S7 | inline (parent): the RED test for the revision, the answer in `src/mcp/server.rs`, the differential, the suite | `feat/mcp-save-type` @ `tmp/wt-a1` | — |
 
 ## Log
 
@@ -77,3 +84,17 @@ then the full `cargo test`, plus `cargo fmt --check`.
 - **L6 (2026-11-02, the doc, S6)** — `docs/projects.md` now names the MCP answer's shape next
   to the CLI's: the same `memory_type`, read from the saved record, so a host whose
   transcript is its own reads the axis instead of guessing it.
+- **L7 (2026-11-02, the human, verbatim)** — "pero agrega una mejora?" and then "dale". The
+  question was whether the change is an *improvement* or only parity. The honest answer was:
+  parity and measurability — **no bench has measured any behavioural effect**, and the
+  rationale inherited from #107 (a model told "Saved" re-saves to tidy the duplicate, and the
+  same-title upsert is exactly the path that rewrites a record's type) is an argument, not a
+  measurement. The human approved measuring it (the bench is
+  `odd/tasks/opencode-type-bench.md`, branch `bench/opencode-type`) and approved closing the
+  envelope's other half: **S7**, the revision.
+- **L8 (2026-11-02, S7 — why the revision is the same unit and not a new one)** — the MCP
+  `memory_update` answer already carries `revision` and `memory_type`
+  (`src/mcp/server.rs:596-601`); the save answer was the only one of the two that could not
+  tell a create from an update. On a host that reads the answer, that is the difference between
+  "I created a record" and "I rewrote a record" — and rewriting a record is how a `decision`
+  becomes a `fact`. The same envelope, the same source (the saved `Memory`), one more key.

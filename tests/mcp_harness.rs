@@ -677,3 +677,64 @@ async fn the_save_answer_names_the_type_that_landed() {
 
     h.shutdown().await;
 }
+
+/// The save answer names the revision that landed.
+///
+/// `revision` is `1` for a create and higher for an upsert: the same title
+/// lands on the same record, so a second save of the same fact answers
+/// with revision `2` and the uuid it updated. The MCP `memory_update`
+/// answer already carries it — the save answer was the only one of the
+/// two that could not tell a create from an update, and the update is
+/// the path that rewrites a record's type.
+#[tokio::test]
+async fn the_save_answer_names_the_revision_that_landed() {
+    let dir = tempdir_in("target").expect("tempdir");
+    bootstrap(dir.path());
+
+    let mut h = Harness::spawn(dir.path()).await;
+    h.initialize().await;
+
+    // A create: revision 1.
+    let saved = h
+        .call_tool(
+            "memory_save",
+            serde_json::json!({
+                "content": "the deploy target is staging-eu",
+                "namespace": "default",
+                "title": "the deploy target",
+            }),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&unwrap_result_text(&saved)).expect("save json");
+    assert_eq!(
+        parsed["revision"],
+        Value::Number(1.into()),
+        "a create must answer with revision 1: {parsed}"
+    );
+    let uuid = parsed["uuid"].as_str().expect("uuid").to_string();
+
+    // The same title again: the same record, revision 2.
+    let upserted = h
+        .call_tool(
+            "memory_save",
+            serde_json::json!({
+                "content": "the deploy target is staging-eu (confirmed)",
+                "namespace": "default",
+                "title": "the deploy target",
+            }),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&unwrap_result_text(&upserted)).expect("upsert json");
+    assert_eq!(
+        parsed["revision"],
+        Value::Number(2.into()),
+        "an upsert must answer with the revision it wrote: {parsed}"
+    );
+    assert_eq!(
+        parsed["uuid"],
+        Value::String(uuid.clone()),
+        "the same title lands on the same record: {parsed}"
+    );
+
+    h.shutdown().await;
+}
