@@ -68,8 +68,8 @@ checklist is that rule. This bench measures it.
 
 | ID | Specs | Route | Branch / worktree | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S1–S5 | worker: the criterion doc FIRST, the fixture (with its pilot), the three arms, the runner/scorer reuse, the pre-flight | `bench/checklist-nudge` @ `tmp/wt-bench3` | — |
-| T2 | S1, S4, S5 | parent: verify the criterion preceded the runs, run the measured batch, score, report | — | — |
+| T1 | S1–S5 | worker: the criterion doc FIRST, the fixture (with its pilot), the three arms, the runner/scorer reuse, the pre-flight — **run twice**: round 7 with the two-facts fixture (Appendix A), round 8 with the procedure fixture (Appendix B: `verify-gap`, revisions R9→R10, 11 pilot sessions) | `bench/checklist-nudge` @ `tmp/wt-bench3` | — |
+| T2 | S1, S4, S5 | parent: verify the criterion preceded the runs, run the measured batch, score, report — **prepared and unspent twice**: the pilot's condition (i) failed in both rounds (2/41, then 1/10), so S3 forbids spending it. Ready for a fixture that clears (i): the runbook is Appendix B.7 | — | — |
 
 ## Log
 
@@ -102,3 +102,39 @@ checklist is that rule. This bench measures it.
   already saved (40/41) and the nudge never fires there — so the checklist's lever is the smallest
   of the three proposals and the second reader's is the largest. This reverses the earlier
   ordering, which was made before the measurement.**
+
+- **L5 (2026-11-02, T1 second attempt — the procedure fixture; the batch is NOT spent again)** —
+  The board named the one shape not yet tried: a fact that is **not a diagnosis** — a procedure the
+  session discovers with no error to explain. It was built and measured: `tmp/bench/fixtures/
+  verify-gap/` has **nothing broken** (green `make check` before and after), the prompt asks for one
+  config key (`timeout_ms = 400`) plus its bound (`timeout_max_ms = 1000` in `config/bounds.txt`),
+  and the marginal fact is a procedure: **a bound declared in `bounds.txt` is inert — the checker
+  reads a fixed list of three config keys, so a green check says nothing about the new key.** Two
+  revisions were needed: **R9** left the checker announcing the keys it reads, and the model noticed
+  its key was missing, probed with an invented key and **saved the fact** (0/1 fires); **R10**
+  removed the announcement (image `bench-mem:checklist-r10` `827e58312664`, same engine tarball, one
+  line of `ingest-check`) so the fact is discovered by reading the tool. **The pilot: 11 sessions of
+  arm `current`** (`pl81` on R9, `pl82`–`pl91` on R10), 104 model calls, 708 740 billed tokens,
+  $0.0268. **(i) the nudge fired in 1 of 10 — FAILS** (pl89). **(ii) holds structurally**: the
+  fixture states the fact nowhere (`grep` over the fixture exits 1) and probe C reads it from the
+  end state in 10/10 runs (the new key at `999999`, above the session's own `1000` bound, still
+  exits 0). **(iii) holds 10/10**: check 0, both mutation probes fail, `timeout_ms = 400` present,
+  the four bounds intact, exactly two files changed. **The gate, recorded per run because it is a
+  confound against L4's pilot:** every session used the image's gate (`write`/`edit` tool calls
+  only; main's `4865f51` workspace-state gate is not installed), and it was never the limiting
+  factor — the work is two edits, made in **10/10** sessions, and `zero_saves_no_tool_write = 0`, so
+  main's gate would have fired in the same 1/10. **The measured mechanism, and it is the
+  deliverable:** the model **audits the tool before trusting its green answer** — it read
+  `/usr/local/bin/ingest-check` in **10/10** sessions and probed it with a deliberately violating
+  value in **5/10** — and then **recorded** what it found in **10/10** (9/10 by the declared rule;
+  pl89 states it in other words). So the settle boundary opens in 1/10 and the fact survives 10/10:
+  **C-G2's baseline sits at the ceiling and the "≥ 2×" clause is unreachable**, which is a second,
+  independent reason not to spend 30 sessions — a spent batch could only return a negative C-G2 that
+  says nothing about the rule (C-G6). The criterion did not move: the seal is still
+  `8dc591a5…` (`head -c 23114 | sha256sum` re-verified after Appendix B was appended) and no new
+  sealed revision was needed; only the fixture's declared fact rule changed, and the scorer prints
+  it (`score-checklist.py --rules`). **Consequence: after two rounds and 52 sessions, the fact this
+  bench needs — worth saving, needed by a later session, and not inspected by this model — has not
+  been found; smaller work makes the tool more, not less, the subject.** Appendix B of
+  `tmp/bench/checklist-measurement.md` is the record: the two revisions, the gate per run, the
+  per-run table, and T2's runbook (prepared, deliberately unspent).
