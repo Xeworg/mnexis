@@ -1428,3 +1428,63 @@ sees. **Test design:** nudge-plain vs nudge-with-examples, on a **de-saturated f
 obviously memorable than a timeout decision + ADR — the current fixture gives the nudge no headroom,
 9/10 baseline saves), gates pre-registered the trim-nudge way. Bench verdicts that frame this:
 `tmp/bench/trim-nudge-report.md` (H1 fails on G3; H2 at its ceiling).
+
+**Three explorations of the settle nudge — the diagnosis they share, and the order to work in
+(2026-11-02).** Three parallel read-only explorations (axes: CONTEXT, HARNESSES, AI TECHNIQUE)
+were asked for one improvement each to the nudge. Their three proposals, and the finding that
+matters more than any of them:
+
+- **CONTEXT — the nudge names the files the session wrote** ("This session wrote X, Y and saved no
+  memory", +12..+70 B, ≤1 200 B budget). Cheap; the extension knows the paths and the model may not
+  (after a compaction the model's view is a summary with `<modified-files>` flattened). The
+  explorer's own risk list predicts a **null result** and a change-log failure mode (paths invite
+  `episode` saves). Gate G2: the fired save names an artifact the session touched, B − A ≥ 2/10.
+- **HARNESSES — the second reader**: a settle-time **reviewer model call** (pi's own
+  `custom-compaction.ts` shows a plugin can call a model inside a lifecycle hook) over a digest of
+  `event.context.llmMessages`, writing 0–2 typed facts itself, with an `idempotency_key` and a
+  bounded BUSY retry, replacing the nudge's continuation (the session model gets no extra turn).
+  **The sharpest finding of the three:** the nudge's own gate is its blind spot — it never fires in
+  the "saved once, should have saved two" case, which is exactly the trim bench's H1-G3 marginal-fact
+  gap, and **no wording can fix that**. Also the only proposal that recovers the writes lost to
+  `busy: sql: database is locked` (8 measured losses).
+- **AI TECHNIQUE — a two-test checklist** replacing the nudge's opening sentence: *"(1) would a later
+  session's answer or action change because of it? (2) will it still be true when that session
+  starts?"* + a rejection clause limited to transcript residue (the diff, a green test, a restatement
+  of the prompt). 409 B for that sentence, total ≈1 057 B of the 1 200 B budget. Backed by the only
+  controlled A/B on the substitution (holistic verdict → atomic YES/NO questions: +5.8 abs agreement
+  with human preference) and by production memory prompts (Bedrock's skip criteria are rejections, not
+  acceptances; contrastive demos beat valid-only).
+
+**The shared diagnosis, which is the real prize:** the nudge fires **after** the model has already
+concluded its judgment of the session, so it is not eliciting a judgment — it asks the model to
+re-open one. That explains the measured null result: adding description of the same session (the
+enriched text) changed nothing, because "LLMs struggle to self-correct without external feedback,
+and performance even degrades" — **more description cannot help; a decision rule the model did not
+already have can.** The checklist is that rule; naming files is (at best) more description.
+
+**The order that follows from it:**
+1. **The BUSY retry, alone** — a small, independent product fix: the model decided to save and the
+   engine lost it (8 measured losses, `busy: sql: database is locked`, engine `busy_timeout` 2 s vs
+   the extension's 30 s write budget). It needs no reviewer, no credential, no new machinery, and it
+   is a measured loss being recovered. Not the reviewer — just the retry.
+2. **The checklist as a bench arm, measured before adopted** — it is the only proposal with a
+   theoretical reason to move what the enriched text could not, and it is ~200 B.
+3. **The second reader, as its own feature with its own spec** — biggest lever (it is the only one
+   that reaches the "saved once, missed the second" case) and the biggest shift (the extension, not
+   the model, decides what to survive). It needs its own investigation: credentials (the 401 class
+   is measured), cost per session (it would fire on every session that changed files, not only the
+   unsaved ones), and the slop risk (gated: ≤ A+2 records, zero change-log records).
+4. **Naming the files** rides the same bench as the checklist, as one more arm — it is predicted-null
+   and its cost is 70 B, so it is cheap to test and cheap to drop.
+
+**The fixture the next bench needs** (stated before the numbers): the two benches between them
+already bracket the gap and neither could measure it — the trim fixture HAD the marginal fact (A
+5/10 vs B 1/10) but saturated the nudge (0/10 fired); the sh-check fixture fired the nudge (3–5/10)
+but its only fact was the one the model already saved. The next fixture must make the marginal fact
+both **reachable** (the model reliably saves one thing and misses the other) and **measurable** (the
+second fact is distinct, and its absence is a judgment failure, not a fixture artifact).
+
+**Correction to two of the explorations:** both reported that the bench reports were missing from
+disk. They are not: `tmp/bench/trim-nudge-report.md` and `tmp/bench-enriched/enriched-report.md`
+(+ the 26 KB enriched criterion). Their numbers were right (taken from this board's logs); the
+"evidence does not exist" claim was a search-path error.
