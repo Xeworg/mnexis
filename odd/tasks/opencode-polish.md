@@ -41,7 +41,7 @@ model-facing, and an uncaught throw inside the transform BREAKS the turn.
 
 | ID | Specs | Route | Branch / worktree | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S1–S6 | worker: the transform seat, curated map + glosses, codemode both sides, tests | `ext/opencode-polish` @ `tmp/wt-ocpolish` | — |
+| T1 | S1–S6 | worker: the transform seat, curated map + glosses, codemode both sides, tests | `ext/opencode-polish` @ `tmp/wt-ocpolish` | `f7c1ff6`, `1b758f0`, `48862b2` |
 | T2 | all | parent: verify (incl. a live-host smoke if cheap), commit, report | — | — |
 
 ## Log
@@ -54,3 +54,18 @@ model-facing, and an uncaught throw inside the transform BREAKS the turn.
   TYPE_GLOSSES shared once (nudge + opencode description; NEVER pi's tools block — the 5490 B
   pin), one-file inline copy + drift pin, `memory_type` missing from the MCP save answer is a
   separate engine follow-up (board), NOT this branch.
+- **L3 (2026-11-02, T1 result, parent-verified)** — Shipped in three reviewable units, each one
+  green on its own (the parent re-ran each commit's suite: engine cargo RC=0, plugin JS RC=0,
+  pins JS RC=0 — the discipline from 2026-10-30, where two branches compiled alone and broke
+  together): (1) `f7c1ff6` the engine's MCP entry writes `"codemode": false` — opencode 2 hides an
+  MCP server's tools behind Code Mode by default, which puts the memory door out of the model's
+  direct reach (the probe measured the mnexis tools reaching the model NOWHERE under Code Mode);
+  (2) `1b758f0` the catalog seat — `ctx.tool.transform` inside `setup(ctx)`, the patch applied
+  INSIDE the callback the host re-runs on every refresh (a stored update resets; before the first
+  `tools/list` it is a no-op), the whole body wrapped because an uncaught throw there breaks the
+  turn, the seven type glosses copied inline (the plugin is one flat file) and skipped ids are
+  skipped; (3) `48862b2` the drift pins — the plugin's glosses ARE pi's glosses (parent verified
+  the seven one by one), one curated entry per MCP tool id, and pi's tools block re-measured at
+  5 490 B (the pin). Suite: 48 JS tests, 47 pass, 1 smoke skip; cargo 25/6/12. The `memory_type`
+  gap in the MCP save answer stays OUT of this branch (board). Awaiting the human's merge
+  decision.
