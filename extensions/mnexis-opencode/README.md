@@ -3,8 +3,8 @@
 The host-side half of the mnexis integration for [opencode](https://opencode.ai).
 
 opencode gets the **memory tools** from the engine's MCP server — seventeen tools, one
-shape, shared with every other host. This plugin adds the four things MCP and the CLI
-cannot do, because they belong to the host:
+shape, shared with every other host. This plugin adds the things MCP and the CLI cannot
+do, because they belong to the host:
 
 - **it stores what you type, verbatim**, without the model being asked to;
 - **it registers the session** with the engine, where the project's memories live;
@@ -12,7 +12,9 @@ cannot do, because they belong to the host:
   with the previous session's summary in one line;
 - **it keeps the project state alive through a compaction**;
 - **it guards the human's permissions**: a model-issued `mnexis config allow-namespace`
-  or an edit of the mnexis profile is refused, with the command the human must run.
+  or an edit of the mnexis profile is refused, with the command the human must run;
+- **it curates the definitions the model reads** (opencode 2 only): the seventeen tools
+  carry the same vocabulary a pi model meets, and `codemode` is off.
 
 It registers no tools and draws nothing: the tools are the MCP server's, and opencode's
 TUI does not let a plugin restyle an MCP tool (RESEARCH.md §1).
@@ -43,6 +45,7 @@ entry by hand:
       "type": "local",
       "command": ["mnexis", "mcp", "serve"],
       "enabled": true,
+      "codemode": false,
       "environment": { "MNEXIS_DATA_DIR": "/path/to/profile" }
     }
   }
@@ -51,15 +54,47 @@ entry by hand:
 
 ### opencode 2 and Code Mode
 
-opencode 2 hides MCP tools behind Code Mode unless the server says otherwise, and the
-engine writes the opencode 1 entry. To keep the memory tools as direct tools (the door as
-one cheap call), add `"codemode": false` to the `mnexis` entry:
+opencode 2 hides the tools of an MCP server behind Code Mode
+(`tools.mnexis.memory_context(...)`) unless the server says otherwise — `codemode` defaults
+to true there. The door is meant to be one cheap direct call, so both halves write it:
+
+- the entry **the engine writes** (`mnexis agent install --env opencode`) carries
+  `"codemode": false`;
+- the plugin's catalog transform sets it on **every `mnexis_*` tool it lists**, at each
+  refresh, so an entry written by an older mnexis is repaired at runtime too.
 
 ```json
 { "mcp": { "mnexis": { "type": "local", "command": ["mnexis", "mcp", "serve"], "enabled": true, "codemode": false } } }
 ```
 
-The engine writing that field itself is engine work (RESEARCH.md §6).
+`mnexis agent install` never overwrites an entry that already exists, so a configuration
+written before this field existed keeps its bytes: the plugin's transform is what keeps those
+tools direct. If you edit the entry by hand, keep `"codemode": false` in it —
+`mnexis agent uninstall` removes only the exact entry the current mnexis writes.
+
+### The curated definitions (opencode 2 only)
+
+The engine's MCP descriptions say what a tool does. In `ctx.tool.transform` — the one seat
+that can rewrite a model-facing definition — the plugin replaces them with the curated ones,
+so a model on opencode meets the vocabulary a model on pi meets:
+
+- `mnexis_memory_save` carries the **seven kinds, verbatim**, the same lines pi's settle
+  nudge states: one definition of the vocabulary, two consumers;
+- the other sixteen carry one curated description each, pi's wording where pi has the same
+  tool, adapted to what the MCP surface answers (previews, ids, the fields each tool takes).
+
+Two rules hold the copy honest. An id the plugin does not know (the engine renamed a tool)
+is skipped, never guessed at; and a catalog with no `mnexis_*` tools — MCP down, or the
+refresh before the first `tools/list` — is a no-op. The whole transform body is wrapped:
+an uncaught throw inside this callback corrupts the turn, so a plugin must never let one out.
+
+The copy is drift-pinned by `test/core.test.js`: the seven glosses are compared to pi's
+`SETTLE_NUDGE` as it is on disk, the map to the engine's tool inventory in
+`src/mcp/server.rs`, and pi's tools block to its 5500 B budget (the glosses must never be
+added there).
+
+**opencode 1 has no equivalent seat.** It keeps the engine's own descriptions, as it always
+did — the transform is registered only where the host offers it.
 
 ### One file, both opencode generations
 
@@ -82,6 +117,7 @@ The plugin is a single file with a default export both plugin models read:
 | pointer | one system-prompt line per session: the namespace, the memory count, the door, the previous session's summary | `experimental.chat.system.transform` | `session.hook("context")` |
 | compaction | the live `project_state` and `decision` records, from `mnexis list --type … --full`, bounded and counted | `experimental.session.compacting` | `session.hook("compaction")` |
 | gate | refuses a model-issued namespace grant and any edit of `mnexis.toml`/`projects.toml` | `tool.execute.before` | `tool.hook("execute.before")` |
+| definitions | the curated description of every `mnexis_*` tool, and `codemode: false` | — (no seat) | `tool.transform` |
 
 Everything is best effort: a memory engine that cannot answer never fails a turn. A
 capture the store refuses keeps its size and exit code in the host's log (opencode 1) and
