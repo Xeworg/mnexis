@@ -253,10 +253,17 @@ impl McpServer {
         // The words the record keeps after the save, so the agent sees what
         // it wrote: a save adds to the vocabulary, it does not replace it.
         let stored_keywords = stored.keywords.clone();
+        // What the record ended up as: the type the engine resolved, read
+        // from the saved record and never from the request, which may have
+        // named no type at all. The CLI's save answer has said this since
+        // #107; here the host's transcript is the host's, so the answer is
+        // all the model sees.
+        let stored_memory_type = stored.memory_type.clone();
         let json = serde_json::json!({
             "uuid": returned_uuid,
             "row_id": returned_row_id,
             "keywords": stored_keywords,
+            "memory_type": stored_memory_type,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
