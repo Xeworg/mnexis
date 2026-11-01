@@ -50,3 +50,16 @@ immediate comment only) and `extensions/mnexis-memory/test/settle-nudge.test.js`
   pass, 3 parity skips, 0 fail. The text is now 12 lines as one `custom_message` — repo-wide grep
   found no other consumer. RED was observed before the edit (3 failing assertions). Awaiting the
   human's merge decision; the proving bench (de-saturated fixture) is the follow-up.
+- **L4 (2026-11-02, the gate widened — `4865f51`)** — S3 said the gating must not move; this entry
+  records the one deliberate change to it, and its measurement. The checklist bench's pilot
+  (`bench/checklist-nudge`, `tmp/bench/checklist-measurement.md` Appendix A) measured that **6 of
+  41 sessions** changed files through `bash` (`chmod`, `sed -i`) and were **invisible** to the
+  gate, which only counted the `write` and `edit` tool names — including the pilot's only session
+  that saved nothing. The gate now also asks the **workspace**: the state git sees when the
+  session starts (`rev-parse HEAD` + `status --porcelain`, bounded by a 2 s timeout of its own)
+  against the state it sees at the settle boundary. A tree that was already dirty before the
+  session is not the session's work (the baseline is the comparison); a workspace that is not a
+  repository keeps the tool's own evidence; a session that already saved is still never asked.
+  The suite is 243 tests, 240 pass, 0 fail, and the differential against `main` shows one changed
+  case only: a file changed through `bash` is now asked about. The tools block stays at 5 490 B
+  and the opencode drift pin stays green.
