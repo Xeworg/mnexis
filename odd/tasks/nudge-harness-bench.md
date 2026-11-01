@@ -90,7 +90,7 @@ against no nudge at all. Branch `bench/nudge-harness` (worktree `tmp/wt-bench5`)
 
 | ID | Specs | Route | Branch / worktree | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S1–S7 | worker: the criterion sealed FIRST, the assembly (the standalone extension), the three arms, the runner and the scorer reuse, the pilot | `bench/nudge-harness` @ `tmp/wt-bench5` | — |
+| T1 | S1–S7 | worker: the criterion sealed FIRST, the assembly (the standalone extension), the three arms, the runner and the scorer reuse, the pilot | `bench/nudge-harness` @ `tmp/wt-bench5` | — (T1 done: L4 — criterion sealed, pilot's four conditions hold, batch unspent) |
 | T2 | S4 | parent: verify the criterion preceded the runs, run the measured batch, score, report | `bench/nudge-harness` @ `tmp/wt-bench5` | — |
 
 ## Log
@@ -110,3 +110,31 @@ against no nudge at all. Branch `bench/nudge-harness` (worktree `tmp/wt-bench5`)
   **rule** — or none of the three. A null N-G2 kills the assembly as it stands and says the
   diagnosis is wrong; a positive N-G2 is the first measured evidence that anything the
   extension says at the right moment, with the right state, changes what survives.
+- **L4 (2026-11-02, T1 complete — the criterion sealed, the pilot's four conditions hold, the batch
+  is NOT spent)** — the criterion is `tmp/bench/nudge-measurement.md`, **sealed before the first
+  session of any kind**: sha256 `68bea3d7e990924a5e1ebe50f228271d053f9724602d5a81ad4db1e774cbbbc6`
+  over its first **22 052 bytes** (re-verified after the appendix; no gate moved). The arms are
+  `nudge` (the shipped file, 101 776 B, `f292e425…`), `control` (the same file with three inserted
+  lines that neuter the settle seat, 101 958 B, `22662d40…`) and `assembly` (control plus the
+  standalone `mnexis-assembly` extension, 17 228 B, `1ac30356…`), pinned in
+  `tmp/bench/arms/MANIFEST-nudge.txt` and verified by `run/build-arms.mjs --check`. The assembly is
+  a **standalone extension** loaded next to the shipped one (S3's preferred shape): the seat is
+  `turn_end` gated on the workspace's git state against a session snapshot, one-shot; the payload is
+  up to three `old → new` pairs uncovered by the session's saves or the store's records plus up to
+  two output lines, 568 B at this fixture; the rule is the output pointer, and the extension audits
+  every save after the seat and logs `verified`/`rejected`/`no_quote`.
+  **The pilot (10 sessions of arm B, `pl1..pl10`, after a 3-session pre-flight) holds all four S5
+  conditions:** fires **10/10** (needs ≥ 4/10); the marginal fact is in the store at close
+  **10/10** by the declared strings; the end state is **10/10** (`check` 0, probes 2/2/2, timeout
+  1500, ADR 817–1 988 B, `scripts/check.sh` intact); the pointer check ran **12 times (9 verified,
+  1 rejected, 2 no_quote)** and its verdicts are in `out/pl<i>-assembly-assembly.jsonl`. 0 NO ANSWER,
+  0 refusals, 1 record/run (close excluded), `estado al cierre` 10/10, 8.2 calls/run, $0.002214/run;
+  the pilot cost $0.0221 ($0.0289 with the pre-flight).
+  **The risk, declared for T2:** the single pre-flight control session recorded the marginal fact on
+  its own (1/1), and the trim bench's 1/10 for the same fact under the same tools block does not
+  reproduce today — **N-G1's headroom (control ≤ 5/10) is in doubt**, and its pre-registered answer
+  is "report, no verdict: the fixture cannot show the gap". The parent may read the control first
+  with `bash tmp/bench/run/nudge-bench.sh pilot 10 control` (pilot tags, never gates) before
+  spending the 30 measured sessions; the batch command is
+  `bash tmp/bench/run/nudge-bench.sh batch 10`, and the scorer is
+  `python3 tmp/bench/run/score-nudge.py tmp/bench/out`.
