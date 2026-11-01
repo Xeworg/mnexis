@@ -259,11 +259,18 @@ impl McpServer {
         // #107; here the host's transcript is the host's, so the answer is
         // all the model sees.
         let stored_memory_type = stored.memory_type.clone();
+        // The revision tells a create from an update — the same title lands
+        // on the same record, so the second save of a fact answers with the
+        // revision it wrote and the uuid it updated. The `memory_update`
+        // answer already carries it; the save answer was the only one of the
+        // two that could not tell them apart.
+        let stored_revision = stored.revision;
         let json = serde_json::json!({
             "uuid": returned_uuid,
             "row_id": returned_row_id,
             "keywords": stored_keywords,
             "memory_type": stored_memory_type,
+            "revision": stored_revision,
         });
         Ok(serde_json::to_string_pretty(&json).unwrap_or_default())
     }
