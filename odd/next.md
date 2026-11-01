@@ -1488,3 +1488,43 @@ second fact is distinct, and its absence is a judgment failure, not a fixture ar
 disk. They are not: `tmp/bench/trim-nudge-report.md` and `tmp/bench-enriched/enriched-report.md`
 (+ the 26 KB enriched criterion). Their numbers were right (taken from this board's logs); the
 "evidence does not exist" claim was a search-path error.
+
+**The checklist bench did not run — and what it proved instead (2026-11-02).** The bench
+(`odd/tasks/checklist-bench.md`, branch `bench/checklist-nudge`) spent **41 pilot sessions across
+seven fixture revisions** and **the measured batch was not spent**: the pilot's load-bearing
+condition (the nudge fires in ≥4/10 sessions) failed at **2 of 41** (4.9 %). The criterion was
+sealed before the pilot and the gates did not move (`tmp/bench/checklist-measurement.md`, sha256
+`8dc591a5…`; Appendix A is the pilot record).
+
+**The mechanism, measured rather than hypothesized — two facts, both independent of the fixture:**
+1. **The model saves the session's salient fact in 40/41 sessions, before the settle boundary.** The
+   nudge's gate is `sessionSaveCalls > 0`: any `mnexis_save` call silences it. The model always
+   found something to write down while still working. A richer session is *more* likely to save, so
+   every fixture revision that added a task-shaped fact raised the save share. Across the seven
+   revisions the pattern is one sentence: **every revision that leaves a fact in the session ends
+   with the model saving it; the one that leaves no fact produces no `write`/`edit` call at all.**
+2. **The nudge's other gate is a `write`/`edit` TOOL call, not a changed file.** `sessionFilesChanged`
+   is set only by those two tools; the model habitually makes small fixes with `bash` (`chmod`,
+   `sed -i`). In **6/41** pilot sessions the repo was fixed with no `write`/`edit` at all — including
+   the pilot's only zero-save session, which fixed a permission bit with `chmod` and therefore could
+   not fire the nudge even though the work was real. **This is a defect, not a design choice.**
+
+**What this re-ranks (the measured gap lives in the population the nudge cannot reach):** the
+memory-quality gap the trim bench measured (H1-G3 — the fat block recorded the marginal fact in
+5/10 runs, the trim in 1/10) is a gap in sessions where the model **already saved something** — the
+40/41 population. The nudge as designed is silent in every one of them. So the **checklist's lever
+(the fired population, 2/41) is the smallest of the three proposals**, and the **second reader's
+lever (the saved-something population) is the largest** — the earlier ordering (checklist first)
+was made before this was measured, and this measurement reverses it. The file-change gate's defect
+is worth fixing on its own account: it widens the nudge's population from 2/41 to the ~6 sessions
+that wrote files through `bash` — still a small band, but a real one, and the fix is a workspace
+check instead of a tool-name guess.
+
+**What the checklist bench would need to be runnable, stated plainly:** a session with **no salient
+diagnosis** (so the model saves nothing and the nudge fires) that still leaves **a durable,
+discoverable fact** (so the checklist has something to catch). That band is narrow — the pilot
+searched it in seven revisions and did not find it. The one shape not yet tried is a fact that is
+not a diagnosis at all: a *procedure* the session discovers without an error to explain (e.g. the
+check only passes from the repository root because the script resolves paths against the working
+directory). That is the human's call: another pilot round, or moving to the mechanism that reaches
+the population where the measured gap actually lives.
