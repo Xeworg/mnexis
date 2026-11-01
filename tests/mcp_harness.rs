@@ -558,3 +558,122 @@ async fn memory_list_by_value_answers_only_the_records_that_carry_it() {
 
     h.shutdown().await;
 }
+
+/// The save answer names the type that landed.
+///
+/// The CLI's `mnexis save --json` has said so since #107: the answer
+/// carries the type the engine resolved, read from the saved record and
+/// never from the request, which may have named none. The MCP answer
+/// did not, so on a host whose transcript is the host's — opencode —
+/// nothing said what kind of record landed.
+#[tokio::test]
+async fn the_save_answer_names_the_type_that_landed() {
+    let dir = tempdir_in("target").expect("tempdir");
+    bootstrap(dir.path());
+
+    let mut h = Harness::spawn(dir.path()).await;
+    h.initialize().await;
+
+    // A save that names no type: the answer names the kind the engine
+    // resolved for the record it wrote.
+    let saved = h
+        .call_tool(
+            "memory_save",
+            serde_json::json!({
+                "content": "the ingest worker listens on 8081",
+                "namespace": "default",
+            }),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&unwrap_result_text(&saved)).expect("save json");
+    assert_eq!(
+        parsed["memory_type"],
+        Value::String("fact".into()),
+        "the answer must name the type that landed: {parsed}"
+    );
+
+    // A save that names a type: the answer names it.
+    let saved = h
+        .call_tool(
+            "memory_save",
+            serde_json::json!({
+                "content": "we deploy to staging-eu, never to production",
+                "namespace": "default",
+                "title": "the deploy target",
+                "memory_type": "decision",
+            }),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&unwrap_result_text(&saved)).expect("save json");
+    assert_eq!(
+        parsed["memory_type"],
+        Value::String("decision".into()),
+        "the answer must name the type that landed: {parsed}"
+    );
+    let decision_uuid = parsed["uuid"].as_str().expect("uuid").to_string();
+
+    // An upsert that names NO type keeps the kind the record already
+    // has, and the answer names the kind the record ended up as — the
+    // type is read from the saved record, never from the request.
+    let upserted = h
+        .call_tool(
+            "memory_save",
+            serde_json::json!({
+                "content": "we deploy to staging-eu, never to production (confirmed)",
+                "namespace": "default",
+                "title": "the deploy target",
+            }),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&unwrap_result_text(&upserted)).expect("upsert json");
+    assert_eq!(
+        parsed["memory_type"],
+        Value::String("decision".into()),
+        "a save that names no type must not demote the record's kind: {parsed}"
+    );
+    assert_eq!(
+        parsed["uuid"],
+        Value::String(decision_uuid.clone()),
+        "the same title lands on the same record: {parsed}"
+    );
+
+    // A replay of an idempotency key answers with the ORIGINAL record,
+    // so the type it names is the original's.
+    let saved = h
+        .call_tool(
+            "memory_save",
+            serde_json::json!({
+                "content": "the batch size is 500 records",
+                "namespace": "default",
+                "memory_type": "knowledge",
+                "idempotency_key": "type-answer-replay-1",
+            }),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&unwrap_result_text(&saved)).expect("save json");
+    assert_eq!(
+        parsed["memory_type"],
+        Value::String("knowledge".into()),
+        "the answer must name the type that landed: {parsed}"
+    );
+
+    let replay = h
+        .call_tool(
+            "memory_save",
+            serde_json::json!({
+                "content": "the batch size is 500 records",
+                "namespace": "default",
+                "memory_type": "knowledge",
+                "idempotency_key": "type-answer-replay-1",
+            }),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&unwrap_result_text(&replay)).expect("replay json");
+    assert_eq!(
+        parsed["memory_type"],
+        Value::String("knowledge".into()),
+        "the replay must name the original record's type: {parsed}"
+    );
+
+    h.shutdown().await;
+}

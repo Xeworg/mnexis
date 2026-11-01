@@ -193,3 +193,10 @@ on the same record, so a second save of the same fact answers with revision
 the engine resolved for the record — which may differ from the one the call
 asked for, because a save that names no type keeps the type the record already
 has instead of demoting it to `fact`.
+
+The MCP server (`mnexis mcp serve`, the same binary) answers the same way:
+`memory_save` answers with the `uuid`, the `row_id`, the `keywords` the record
+keeps and the `memory_type` it ended up as. The type is read from the saved
+record, so an upsert that names no type answers with the kind the record
+already has. A host whose transcript is its own — opencode, which draws no
+chrome of ours — reads the axis from that answer instead of guessing it.
