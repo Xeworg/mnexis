@@ -132,18 +132,141 @@ test("the show summary names the type, the revision and the namespace", () => {
 	const line = summaryLine("mnexis_show", {
 		details: { memory: { memory_type: "decision", revision: 3, namespace: "mnexis" } },
 	});
-	assert.equal(line, "↳ ✓ decision · rev 3 · mnexis");
+	assert.equal(line, "↳ ✓ 🎯 decision · rev 3 · mnexis");
 });
 
 test("the list summary counts the memories", () => {
 	const line = summaryLine("mnexis_list", { details: { count: 3, memories: [{}, {}, {}] } });
-	assert.equal(line, "↳ ✓ 3 memories");
+	assert.equal(line, "↳ ✓ 3 memories · 🧠×3");
 	assert.equal(summaryLine("mnexis_list", { details: { count: 0, memories: [] } }), "↳ ✓ 0 memories");
 });
 
 test("the search summary counts the results", () => {
 	const line = summaryLine("mnexis_search", { details: { count: 2, hits: [{}, {}] } });
-	assert.equal(line, "↳ ✓ 2 results");
+	assert.equal(line, "↳ ✓ 2 results · 🧠×2");
+});
+
+// --- the kinds on the collapsed line ---
+
+test("the save summary carries the kind the record landed with", () => {
+	// The engine resolves the kind when the caller names none, and the answer
+	// is the only place the record's kind is read: it goes on the line the
+	// human actually sees, collapsed.
+	for (const type of TYPES) {
+		const line = summaryLine("mnexis_save", { details: { memory_type: type, title: "el puerto" } });
+		assert.equal(line, `↳ ✓ saved · ${typeIcon(type)} ${type} · el puerto`, type);
+	}
+	assert.equal(
+		summaryLine("mnexis_save", {
+			details: { memory_type: "decision", title: "el puerto del servicio" },
+		}),
+		"↳ ✓ saved · 🎯 decision · el puerto del servicio",
+	);
+});
+
+test("a save that landed untyped says so with the fact fallback", () => {
+	// A null `memory_type` is the honest signal that the record arrived
+	// untyped: the line says `fact`, not a kind nobody declared.
+	assert.equal(
+		summaryLine("mnexis_save", { details: { memory_type: null, title: "el puerto" } }),
+		"↳ ✓ saved · 🧠 fact · el puerto",
+	);
+	assert.equal(summaryLine("mnexis_save", { details: {} }), "↳ ✓ saved · 🧠 fact");
+});
+
+test("the list and the search census the kinds they found", () => {
+	assert.equal(
+		summaryLine("mnexis_list", {
+			details: {
+				count: 3,
+				memories: [
+					{ memory_type: "decision" },
+					{ memory_type: "decision" },
+					{ memory_type: "knowledge" },
+				],
+			},
+		}),
+		"↳ ✓ 3 memories · 🎯×2 📘×1",
+	);
+	assert.equal(
+		summaryLine("mnexis_search", {
+			details: { count: 2, hits: [{ memory_type: "preference" }, { memory_type: "fact" }] },
+		}),
+		"↳ ✓ 2 results · ⭐×1 🧠×1",
+	);
+});
+
+test("the history names the kind of the memory it walks, once", () => {
+	// A history is the revisions of one memory: the count of revisions is
+	// already on the line, so the kind is named and not counted again.
+	const items = [
+		{ memory_type: "decision" },
+		{ memory_type: "decision" },
+		{ memory_type: "decision" },
+	];
+	assert.equal(summaryLine("mnexis_history", { details: { count: 3, items } }), "↳ ✓ 3 revisions · 🎯");
+	// A record whose kind changed over its life shows both kinds.
+	assert.equal(
+		summaryLine("mnexis_history", {
+			details: { count: 2, items: [{ memory_type: "fact" }, { memory_type: "decision" }] },
+		}),
+		"↳ ✓ 2 revisions · 🧠 🎯",
+	);
+});
+
+test("the workspace censuses the kinds of the memories it shows", () => {
+	assert.equal(
+		summaryLine("mnexis_workspace", {
+			details: {
+				workspace: { namespace: "mnexis" },
+				status: {
+					memory_count: 39,
+					recent: [{ memory_type: "project_state" }, { memory_type: "decision" }],
+				},
+			},
+		}),
+		"↳ ✓ mnexis · 39 memories · 📍×1 🎯×1",
+	);
+});
+
+test("the door censuses the kinds of the memories it answered with", () => {
+	assert.equal(
+		summaryLine("mnexis_context", {
+			details: {
+				count: 2,
+				tokens_used: 147,
+				memories: [{ memory_type: "fact" }, { memory_type: "fact" }],
+			},
+		}),
+		"↳ ✓ 2 memories · 147 tokens · 🧠×2",
+	);
+});
+
+test("an empty result keeps the summary it always had", () => {
+	// There is no kind to name, so the line is exactly the one it was.
+	assert.equal(summaryLine("mnexis_list", { details: { count: 0, memories: [] } }), "↳ ✓ 0 memories");
+	assert.equal(summaryLine("mnexis_search", { details: { count: 0, hits: [] } }), "↳ ✓ 0 results");
+	assert.equal(summaryLine("mnexis_history", { details: { count: 0, items: [] } }), "↳ ✓ 0 revisions");
+	assert.equal(
+		summaryLine("mnexis_context", { details: { count: 0, memories: [], tokens_used: 12 } }),
+		"↳ ✓ 0 memories · 12 tokens",
+	);
+	assert.equal(
+		summaryLine("mnexis_workspace", {
+			details: { workspace: { namespace: "mnexis" }, status: { memory_count: 0, recent: [] } },
+		}),
+		"↳ ✓ mnexis · 0 memories",
+	);
+});
+
+test("the census agrees with the panel it collapses", () => {
+	// The census counts what expanding shows, so a record the panel draws as
+	// a fact is counted as a fact — including one that carries no kind.
+	const details = { count: 2, memories: [{ uuid: "0123456789abcdef" }, { type: "decision" }] };
+	assert.equal(summaryLine("mnexis_list", { details }), "↳ ✓ 2 memories · 🧠×1 🎯×1");
+	const drawn = resultLines("mnexis_list", { details }, { expanded: true });
+	assert.ok(drawn[0].startsWith("🧠 fact"), `the panel draws it as a fact: ${drawn[0]}`);
+	assert.ok(drawn[1].startsWith("🎯 decision"), `the panel draws its kind: ${drawn[1]}`);
 });
 
 test("the context summary carries the count and the tokens", () => {
@@ -863,6 +986,45 @@ test("a joined emoji is one glyph, and a wide letter is two columns", () => {
 	assert.equal(displayWidth("漢"), 2, "a wide letter takes two columns");
 	assert.equal(displayWidth("🧠"), 2, "an emoji takes two columns");
 	assert.equal(displayWidth("a"), 1, "a letter takes one column");
+});
+
+test("every kind on a collapsed line is measured as two columns", () => {
+	// The panel measures visible columns, not string length: the census
+	// glyphs go through the same measurement, so the line the human reads is
+	// the width the terminal draws.
+	for (const type of TYPES) {
+		const icon = typeIcon(type);
+		assert.equal(displayWidth(icon), 2, `a kind glyph takes two columns: ${icon}`);
+		assert.equal(
+			displayWidth(`${icon}×2`),
+			4,
+			`a counted glyph takes two columns and its count: ${icon}×2`,
+		);
+	}
+
+	const line = summaryLine("mnexis_list", {
+		details: {
+			count: 3,
+			memories: [
+				{ memory_type: "decision" },
+				{ memory_type: "decision" },
+				{ memory_type: "knowledge" },
+			],
+		},
+	});
+	assert.equal(displayWidth(line), 27, `the census is measured, not counted as characters: ${line}`);
+	const drawn = new Panel([line]).render(16);
+	assert.ok(drawn.length > 1, `a census wider than the panel wraps: ${JSON.stringify(drawn)}`);
+	assert.deepEqual(
+		drawn.filter((part) => displayWidth(part) > 16),
+		[],
+		`every part fits the panel: ${JSON.stringify(drawn)}`,
+	);
+	assert.equal(
+		drawn.join("").replace(/\s+/g, ""),
+		line.replace(/\s+/g, ""),
+		"no glyph was cut in two",
+	);
 });
 
 test("a count speaks in the singular when it is one", () => {

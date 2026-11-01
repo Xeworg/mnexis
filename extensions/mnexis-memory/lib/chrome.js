@@ -93,6 +93,58 @@ export function typeIcon(type) {
 	return Object.hasOwn(TYPE_ICONS, type) ? TYPE_ICONS[type] : TYPE_ICONS.fact;
 }
 
+/**
+ * The kind of one record, the way the panel draws it: what the engine calls
+ * it, else the fact it is. A record that carries no kind is drawn as a fact
+ * everywhere — the expanded panel and the collapsed line agree.
+ */
+function kindOf(record) {
+	const type = record?.memory_type ?? record?.type;
+	return typeof type === "string" && type !== "" ? type : "fact";
+}
+
+/** The records a result carries, when it carries them. */
+function recordsOf(items) {
+	return Array.isArray(items) ? items : [];
+}
+
+/** The kinds of a set of records, and how many carry each, in first-seen order. */
+function kindsIn(items) {
+	const counts = new Map();
+	for (const record of items) {
+		const type = kindOf(record);
+		counts.set(type, (counts.get(type) ?? 0) + 1);
+	}
+	return counts;
+}
+
+/**
+ * The kinds of a result with the records that carry each: `🎯×2 📘×1`.
+ *
+ * The order is the order the result first shows the kind, so the census of a
+ * ranked answer leads with the kind that ranked first.
+ */
+function kindCensus(items) {
+	return [...kindsIn(recordsOf(items))]
+		.map(([type, count]) => `${typeIcon(type)}×${count}`)
+		.join(" ");
+}
+
+/**
+ * The kinds of a result, each one named once: `🎯`, or `🧠 🎯`.
+ *
+ * A history is the revisions of one memory, so its count is already the count
+ * of revisions: naming the kind is all the line needs to say.
+ */
+function kindsPresent(items) {
+	return [...kindsIn(recordsOf(items)).keys()].map((type) => typeIcon(type)).join(" ");
+}
+
+/** A summary line with the kinds of its records on it, when it has any. */
+function withKinds(line, kinds) {
+	return kinds === "" ? line : `${line} · ${kinds}`;
+}
+
 /** The first eight characters of a uuid, the way a person says it. */
 export function shortUuid(uuid) {
 	const text = String(uuid ?? "").trim();
@@ -138,35 +190,54 @@ export function summaryLine(toolName, result) {
 	switch (toolName) {
 		case "mnexis_show": {
 			const memory = details.memory ?? {};
-			const type = memory.memory_type ?? "fact";
-			return `↳ ✓ ${type} · rev ${memory.revision ?? "?"} · ${memory.namespace ?? "?"}`;
+			const type = kindOf(memory);
+			return `↳ ✓ ${typeIcon(type)} ${type} · rev ${memory.revision ?? "?"} · ${memory.namespace ?? "?"}`;
 		}
 		case "mnexis_list":
-			return `↳ ✓ ${counted(details.count ?? 0, "memory", "memories")}`;
+			return withKinds(
+				`↳ ✓ ${counted(details.count ?? 0, "memory", "memories")}`,
+				kindCensus(details.memories ?? details.hits),
+			);
 		case "mnexis_search":
-			return `↳ ✓ ${counted(details.count ?? 0, "result")}`;
+			return withKinds(
+				`↳ ✓ ${counted(details.count ?? 0, "result")}`,
+				kindCensus(details.memories ?? details.hits),
+			);
 		case "mnexis_recall":
 			return `↳ ✓ ${counted(details.memories ?? 0, "memory", "memories")}`;
 		case "mnexis_history":
-			return `↳ ✓ ${counted(details.count ?? 0, "revision")}`;
+			return withKinds(
+				`↳ ✓ ${counted(details.count ?? 0, "revision")}`,
+				kindsPresent(details.items),
+			);
 		case "mnexis_search_prompts":
 			return `↳ ✓ ${counted(details.count ?? 0, "prompt")}`;
 		case "mnexis_context": {
 			const tokens = details.tokens_used;
 			const count = details.count ?? 0;
-			return tokens === null || tokens === undefined
-				? `↳ ✓ ${counted(count, "memory", "memories")}`
-				: `↳ ✓ ${counted(count, "memory", "memories")} · ${tokens} tokens`;
+			const line =
+				tokens === null || tokens === undefined
+					? `↳ ✓ ${counted(count, "memory", "memories")}`
+					: `↳ ✓ ${counted(count, "memory", "memories")} · ${tokens} tokens`;
+			return withKinds(line, kindCensus(details.memories ?? details.hits));
 		}
 		case "mnexis_workspace": {
 			const workspace = details.workspace ?? {};
 			const count = details.status?.memory_count;
-			return typeof count === "number"
-				? `↳ ✓ ${workspace.namespace ?? "workspace"} · ${count} memories`
-				: `↳ ✓ ${workspace.namespace ?? "workspace"}`;
+			const line =
+				typeof count === "number"
+					? `↳ ✓ ${workspace.namespace ?? "workspace"} · ${count} memories`
+					: `↳ ✓ ${workspace.namespace ?? "workspace"}`;
+			return withKinds(line, kindCensus(details.status?.recent));
 		}
-		case "mnexis_save":
-			return `↳ ✓ saved${details.title ? ` · ${truncate(details.title, 40)}` : ""}`;
+		case "mnexis_save": {
+			// The kind the record landed with, as the answer names it: the
+			// engine resolves the type when the caller names none, so a save
+			// that arrived untyped reads as the fact it was stored as.
+			const type = kindOf(details);
+			const saved = `↳ ✓ saved · ${typeIcon(type)} ${type}`;
+			return details.title ? `${saved} · ${truncate(details.title, 40)}` : saved;
+		}
 		case "mnexis_supersede":
 			return "↳ ✓ superseded";
 		case "mnexis_suggest_topic_key":
