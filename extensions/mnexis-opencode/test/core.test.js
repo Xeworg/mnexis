@@ -2,17 +2,27 @@
  * The decisions, without a host and without the binary.
  *
  * Every one of these is a rule the plugin applies on both plugin models, so
- * a mistake here is a mistake in two hosts at once.
+ * a mistake here is a mistake in two hosts at once. The drift pins at the end
+ * read the repository's own files: the plugin is one flat file, so its curated
+ * copy of pi's vocabulary and the engine's tool ids has to be checked against
+ * the files it was copied from.
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import mnexisMemory from "../../mnexis-memory/index.js";
 
 import {
+	CURATED_DESCRIPTIONS,
 	GRANT_REFUSAL,
 	PROFILE_REFUSAL,
 	STATE_CHARS,
 	SUMMARY_CHARS,
+	TYPE_GLOSSES,
 	gateViolation,
 	isHumanMessage,
 	parseJson,
@@ -211,4 +221,97 @@ test("the CLI's JSON is read even when something else wrote around it", () => {
 	assert.deepEqual(parseJson('\nwarning: x\n{"a":1}\n'), { a: 1 });
 	assert.equal(parseJson(""), null);
 	assert.equal(parseJson("not json"), null);
+});
+
+// --- the drift pins (odd/tasks/opencode-polish.md, S5) --------------------
+//
+// The curated definitions and the seven glosses are an inline copy in the one
+// flat file the plugin must stay, because the plugin cannot import from the
+// engine or from pi. A copy that may drift is a copy nobody can trust, so each
+// pin reads the file the copy came from, from the repository root.
+
+const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
+
+/** A repository file, read from disk — the copy is pinned to the file. */
+function repoFile(relative) {
+	return readFileSync(join(REPO_ROOT, relative), "utf8");
+}
+
+/**
+ * The seven type glosses a source file states, as `kind — gloss` lines.
+ *
+ * Both sides state them as string literals on their own line, so the pin is
+ * textual: a reworded gloss on either side is a different line here, and the
+ * test fails even when both sides would still be exported and imported.
+ */
+function glossLines(source) {
+	const lines = [];
+	for (const line of source.split("\n")) {
+		const match = line.match(
+			/^\s*"(knowledge|decision|preference|procedure|project_state|episode|fact) — (.+)",$/,
+		);
+		if (match) {
+			lines.push(`${match[1]} — ${match[2]}`);
+		}
+	}
+	return lines;
+}
+
+test("the seven type glosses in the plugin are exactly the ones pi's settle nudge carries", () => {
+	const plugin = glossLines(repoFile("extensions/mnexis-opencode/index.js"));
+	const nudge = glossLines(repoFile("extensions/mnexis-memory/index.js"));
+
+	assert.equal(nudge.length, 7, `the nudge states the seven kinds once: ${nudge.join(" | ")}`);
+	assert.deepEqual(
+		plugin,
+		nudge,
+		"the plugin's glosses are pi's, verbatim: one definition of the vocabulary, two consumers",
+	);
+	assert.deepEqual(plugin, TYPE_GLOSSES, "and the exported list is the one the save description carries");
+});
+
+test("the curated map carries exactly one non-empty description per MCP tool id", () => {
+	// The engine's tool inventory is the id list (src/mcp/server.rs). The host
+	// namespaces an MCP tool `<server>_<tool>`, so `memory_save` is listed as
+	// `mnexis_memory_save`.
+	const ids = [...repoFile("src/mcp/server.rs").matchAll(/\[tool\(\s*name = "([a-z_]+)"/g)].map(
+		(match) => `mnexis_${match[1]}`,
+	);
+	assert.equal(ids.length, 17, `the engine publishes its tool inventory: ${ids}`);
+
+	assert.deepEqual(
+		Object.keys(CURATED_DESCRIPTIONS).sort(),
+		[...ids].sort(),
+		"one curated entry per engine tool, and no id the engine does not publish",
+	);
+	for (const [id, text] of Object.entries(CURATED_DESCRIPTIONS)) {
+		assert.equal(typeof text, "string", id);
+		assert.notEqual(text.trim(), "", `the description of ${id} is not empty`);
+	}
+});
+
+/** pi's registered tools, prose only: the repo's own measurement. */
+function piToolsProse() {
+	const tools = new Map();
+	mnexisMemory({
+		registerTool: (tool) => tools.set(tool.name, tool),
+		on() {},
+		appendEntry() {},
+	});
+	const parts = [];
+	for (const tool of tools.values()) {
+		parts.push(tool.description);
+		for (const property of Object.values(tool.parameters?.properties ?? {})) {
+			parts.push(property?.description ?? "");
+		}
+	}
+	return Buffer.byteLength(parts.join(""), "utf8");
+}
+
+test("pi's tools block still fits the 5500 B pin the curated map was not allowed to grow", () => {
+	// The vocabulary has two consumers (S1-L2): pi's settle nudge and this
+	// plugin's save description. pi's tools block is not one of them — it has
+	// 10 B of headroom, so the glosses must never be added there.
+	const bytes = piToolsProse();
+	assert.ok(bytes <= 5500, `pi's tools block is ${bytes} B (budget 5500 B)`);
 });
