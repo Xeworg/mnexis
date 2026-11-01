@@ -441,17 +441,32 @@ export function sessionCloseContent(session) {
 }
 
 /**
- * The one-line question the settle nudge asks (capture-discipline S4).
+ * The question the settle nudge asks (capture-discipline S4, nudge-enriched S4).
  *
  * The hooks capture the mechanical floor; whether a session deserved a
- * memory is judgment. This is the one sentence the model reads when the
- * session's own events show unsaved work, and it is spent once per session:
- * it asks for the judgment, not for a quota.
+ * memory is judgment. This is the text the model reads when the session's
+ * own events show unsaved work, and it is spent once per session: it asks
+ * for the judgment, not for a quota.
+ *
+ * It carries the doctrine for that one moment rather than for every call: the
+ * examples of what deserves to survive, and the seven record types one line
+ * each so the save arrives typed. The budget is per fire (S5) — a call that
+ * never needs the question never pays for it.
  */
-export const SETTLE_NUDGE =
-	"This session changed files but saved no memory. If a decision, preference, " +
-	"discovery or project-state change deserves to survive the session, save it " +
-	"now with one mnexis_save; otherwise reply that nothing deserves memory.";
+export const SETTLE_NUDGE = [
+	"This session changed files but saved no memory. If a decision, preference, discovery or project-state change deserves to survive the session, save it now with one mnexis_save; otherwise reply that nothing deserves memory.",
+	"",
+	"What deserves to survive, for example: a decision an external change forced (a version pin, a constraint that moved); a discovery about how this repo actually works; a preference the user stated about how they want things done.",
+	"",
+	"Save it typed — pass the one that fits:",
+	"knowledge — a durable fact about the domain, the tools or the data.",
+	"decision — a choice made, and what it beat.",
+	"preference — how the user wants things done.",
+	"procedure — the steps that reliably achieve something.",
+	"project_state — where the work stands now.",
+	"episode — something that happened in a session.",
+	"fact — the neutral default when none of the others fit.",
+].join("\n");
 
 /** The tools whose successful run changed a file (capture-discipline S4). */
 const FILE_WRITING_TOOLS = new Set(["write", "edit"]);
