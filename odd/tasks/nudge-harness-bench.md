@@ -90,8 +90,8 @@ against no nudge at all. Branch `bench/nudge-harness` (worktree `tmp/wt-bench5`)
 
 | ID | Specs | Route | Branch / worktree | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S1–S7 | worker: the criterion sealed FIRST, the assembly (the standalone extension), the three arms, the runner and the scorer reuse, the pilot | `bench/nudge-harness` @ `tmp/wt-bench5` | — (T1 done: L4 — criterion sealed, pilot's four conditions hold, batch unspent) |
-| T2 | S4 | parent: verify the criterion preceded the runs, run the measured batch, score, report | `bench/nudge-harness` @ `tmp/wt-bench5` | — |
+| T1 | S1–S7 | worker: the criterion sealed FIRST, the assembly (the standalone extension), the three arms, the runner and the scorer reuse, the pilot — **done** (L4) | `bench/nudge-harness` @ `tmp/wt-bench5` | `54de3be` |
+| T2 | S4 | parent: verify the criterion preceded the runs, read the control, run the measured batch, score, report — **the control was read and N-G1 failed, so the batch was NOT spent** (L5) | `bench/nudge-harness` @ `tmp/wt-bench5` | — |
 
 ## Log
 
@@ -138,3 +138,38 @@ against no nudge at all. Branch `bench/nudge-harness` (worktree `tmp/wt-bench5`)
   spending the 30 measured sessions; the batch command is
   `bash tmp/bench/run/nudge-bench.sh batch 10`, and the scorer is
   `python3 tmp/bench/run/score-nudge.py tmp/bench/out`.
+- **L5 (2026-11-02, T2 — the control was read, N-G1 failed, and the batch was NOT spent)** — T1's
+  pilot could not read the control (one pre-flight session, and the marginal fact landed in it,
+  1/1), so the parent ran the **control pilot** before the measured batch: ten sessions of arm A′
+  under the pilot tags, which are pilot records and never gates. **The control records the
+  marginal fact in 9 of 10 sessions** — against the ≤ 5/10 that N-G1 requires. The verdict logic
+  sealed in the criterion says: *N-G1 fails → report, no verdict, the fixture cannot show the
+  gap*. **The 30 measured sessions were not spent.**
+  **What the number means, and what it does not.** It is **not** a refutation of the assembly:
+  the fixture cannot show the gap, so there is no verdict either way. What it says is that **the
+  premise the analysis rested on no longer holds on this fixture** — the affordance class was
+  chosen because it had a sub-ceiling baseline, and today the model records it by itself 9/10.
+  The reason is visible in the control's own saves: *"scripts/check.sh (make check) valida que
+  quede entre p99 y cap"*, with the bounds, and one save quoting the checker's own output line —
+  the checklist bench's measured mechanism (the model audits the tool it is asked to trust:
+  read 10/10, probed 5/10, recorded 10/10) running on this fixture too. The trim bench measured
+  **1/10** for the same fact under the same tools text, so the baseline moved; two differences
+  must not be folded together (the trim's 1/10 was a **human read**, this is a **declared
+  string** with the near-miss class printed and never counted; and the fixture here is
+  `ingest-api`, the trim bench's own, not the checklist worktree's different `ingest-contract`).
+  **The class that remains at risk** is the facts the model **cannot audit by reading a tool** —
+  what the environment does, what a neighbour expects, a constraint stated in another session —
+  which the pointer rule cannot cite and the coverage rule cannot see. A next bench would have
+  to change the class **and** the instrument: that is a program decision, not another fixture
+  revision.
+  **What the pilot did measure about the mechanism** (reported, not gated): it fires **10/10**,
+  the payload computes, the pointer check ran **12 times (9 verified, 1 rejected, 2 no_quote)**,
+  the end state holds **10/10** in both arms, the tools block stays **5490 B**, zero refusals,
+  zero `busy`, zero change-log records, and the cost is **indistinguishable** ($0.002214 vs
+  $0.002232 per run; 8.2 vs 8.1 calls per run) — the extra request did not bill as an extra
+  call. **The mechanism works mechanically; this fixture cannot tell whether it changes what
+  survives.** The parent's independent checks: the seal recomputes to `68bea3d7…` over its first
+  22 052 bytes (re-verified after the appendix was appended), the arms' manifest verifies
+  (`nudge` byte-identical to the shipped file, `control` three inserted lines, `assembly` the
+  standalone extension), and the scorer's numbers are the ones above.
+
