@@ -11,10 +11,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import plugin, {
+	CURATED_DESCRIPTIONS,
 	GRANT_REFUSAL,
 	PLUGIN_ID,
 	POINTER_ENV,
 	PROFILE_REFUSAL,
+	TYPE_GLOSSES,
 	createPlugin,
 } from "../index.js";
 
@@ -280,11 +282,34 @@ test("v1: unloading ends every session the plugin opened, once", async () => {
 // --- opencode 2.x ---------------------------------------------------------
 
 /**
- * A V2 host: the domains record the hooks the plugin registers, and the event
- * stream is a queue the test can push into.
+ * The host's ToolEditor, as V2 exposes it (`@opencode/plugin`'s ToolEditor):
+ * `update` mutates the listed tool, and an id the catalog does not carry is
+ * ignored — never an exception.
+ */
+function fakeEditor(tools) {
+	const catalog = new Map();
+	for (const tool of tools) {
+		catalog.set(tool.id, { description: "", ...tool });
+	}
+	return {
+		list: () => [...catalog.values()],
+		get: (id) => catalog.get(id),
+		update(id, update) {
+			const tool = catalog.get(id);
+			if (!tool) return;
+			update(tool);
+		},
+	};
+}
+
+/**
+ * A V2 host: the domains record the hooks the plugin registers, the catalog
+ * transforms it registers, and the event stream is a queue the test can push
+ * into.
  */
 function fakeHost({ directory = "/repo" } = {}) {
 	const hooks = new Map();
+	const transforms = [];
 	const queue = [];
 	let wake = null;
 	let closed = false;
@@ -302,6 +327,10 @@ function fakeHost({ directory = "/repo" } = {}) {
 			hook: async (name, callback) => {
 				hooks.set(`tool:${name}`, callback);
 				return { dispose: async () => hooks.delete(`tool:${name}`) };
+			},
+			transform: async (callback) => {
+				transforms.push(callback);
+				return { dispose: async () => transforms.splice(transforms.indexOf(callback), 1) };
 			},
 		},
 		event: {
@@ -326,6 +355,22 @@ function fakeHost({ directory = "/repo" } = {}) {
 	return {
 		ctx,
 		hooks,
+		transforms,
+		/** Run every registered transform over a fresh catalog of `tools`. */
+		transform(tools) {
+			const editor = fakeEditor(tools);
+			for (const callback of transforms) {
+				callback(editor);
+			}
+			return editor;
+		},
+		/** Run every registered transform over an editor the test supplies. */
+		runTransform(editor) {
+			for (const callback of transforms) {
+				callback(editor);
+			}
+			return editor;
+		},
 		push(event) {
 			queue.push(event);
 			if (wake) {
@@ -475,6 +520,10 @@ test("v2: a host missing one seat still gets the other rules", async () => {
 	host.ctx.tool.hook = async () => {
 		throw new Error("no tool hooks");
 	};
+	// ... and a host whose catalog the plugin may not rewrite at all.
+	host.ctx.tool.transform = async () => {
+		throw new Error("no catalog");
+	};
 
 	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
 
@@ -483,6 +532,7 @@ test("v2: a host missing one seat still gets the other rules", async () => {
 	assert.ok(host.hooks.has("session:context"));
 	assert.equal(host.hooks.has("session:compaction"), false);
 	assert.equal(host.hooks.has("tool:execute.before"), false);
+	assert.equal(host.transforms.length, 0);
 
 	host.close();
 	await cleanup();
@@ -513,6 +563,138 @@ test("v2: a workspace with no namespace is pointed at nothing, and the read is n
 
 	assert.deepEqual(event.system, []);
 	assert.equal(callsWith(calls, "status").length, 1);
+
+	host.close();
+	await cleanup();
+});
+
+// --- the model-facing catalog (V2 only) -----------------------------------
+
+test("v2: the catalog seat sits beside the tool gate", async () => {
+	const { exec } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	assert.equal(host.transforms.length, 1);
+	assert.ok(host.hooks.has("tool:execute.before"));
+
+	host.close();
+	await cleanup();
+});
+
+test("v2: a catalog the transform cannot read never breaks the turn", async () => {
+	const { exec } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	// A measured edge: an uncaught throw inside this callback corrupts the
+	// turn, so every shape of a catalog this plugin cannot read is swallowed
+	// and the host keeps the definitions it built.
+	for (const editor of [
+		{ list() { throw new Error("no catalog"); } },
+		{ list: () => null },
+		{ list: () => [{ id: "mnexis_memory_save", description: "", options: {} }] },
+		null,
+	]) {
+		assert.doesNotThrow(() => host.runTransform(editor));
+	}
+
+	host.close();
+	await cleanup();
+});
+
+test("v2: the transform rewrites the description of every mnexis tool the map knows", async () => {
+	const { exec } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	const editor = host.transform([
+		{
+			id: "mnexis_memory_save",
+			description: "Save a memory that must survive the session.",
+			options: { namespace: "mnexis", codemode: true },
+		},
+		{
+			id: "mnexis_memory_context",
+			description: "Call this FIRST when you are about to work.",
+			options: { namespace: "mnexis", codemode: true },
+		},
+		{ id: "mnexis_retired_tool", description: "The engine renamed this one.", options: {} },
+		{ id: "bash", description: "Run a shell command." },
+	]);
+
+	assert.equal(
+		editor.get("mnexis_memory_save").description,
+		CURATED_DESCRIPTIONS.mnexis_memory_save,
+	);
+	assert.equal(
+		editor.get("mnexis_memory_context").description,
+		CURATED_DESCRIPTIONS.mnexis_memory_context,
+	);
+
+	// The seven kinds ride the save, one per line, exactly as pi states them.
+	const save = editor.get("mnexis_memory_save").description.split("\n");
+	assert.equal(TYPE_GLOSSES.length, 7);
+	for (const gloss of TYPE_GLOSSES) {
+		assert.ok(save.includes(gloss), `the save carries the gloss: ${gloss}`);
+	}
+
+	// An id the map does not know is skipped; a tool that is not mnexis's is
+	// never touched.
+	assert.equal(editor.get("mnexis_retired_tool").description, "The engine renamed this one.");
+	assert.equal(editor.get("bash").description, "Run a shell command.");
+
+	host.close();
+	await cleanup();
+});
+
+test("v2: the transform turns Code Mode off for every mnexis tool, and nothing else", async () => {
+	const { exec } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	const editor = host.transform([
+		{
+			id: "mnexis_memory_save",
+			description: "",
+			options: { namespace: "mnexis", codemode: true },
+		},
+		{ id: "mnexis_memory_workspace", description: "" },
+		{ id: "mnexis_retired_tool", description: "", options: { namespace: "mnexis" } },
+		{ id: "bash", description: "Run a shell command.", options: { codemode: true } },
+	]);
+
+	// The host's own keys survive; only codemode moves.
+	assert.deepEqual(editor.get("mnexis_memory_save").options, {
+		namespace: "mnexis",
+		codemode: false,
+	});
+	// A tool the host gave no options keeps working, with the one field.
+	assert.deepEqual(editor.get("mnexis_memory_workspace").options, { codemode: false });
+	// An id the map does not know is still mnexis's: it stays reachable.
+	assert.deepEqual(editor.get("mnexis_retired_tool").options, {
+		namespace: "mnexis",
+		codemode: false,
+	});
+	// A tool that is not mnexis's gets no options invented for it.
+	assert.deepEqual(editor.get("bash").options, { codemode: true });
+
+	host.close();
+	await cleanup();
+});
+
+test("v2: a catalog with no mnexis tools is left exactly as it is", async () => {
+	const { exec } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	const tools = [
+		{ id: "bash", description: "Run a shell command.", options: { codemode: true } },
+		{ id: "read", description: "Read a file." },
+	];
+	const editor = host.transform(tools);
+
+	assert.deepEqual(editor.list(), tools);
 
 	host.close();
 	await cleanup();
