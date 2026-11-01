@@ -147,6 +147,11 @@ impl OpencodeConfig {
         server.insert("type".to_string(), Value::String("local".to_string()));
         server.insert("command".to_string(), Value::Array(self.server_command()));
         server.insert("enabled".to_string(), Value::Bool(true));
+        // opencode 2 hides the tools of an MCP server behind Code Mode unless
+        // the entry says otherwise (`codemode` defaults to true there), which
+        // puts the memory door out of the model's direct reach. The door is
+        // one cheap call, so the entry mnexis writes keeps it a direct tool.
+        server.insert("codemode".to_string(), Value::Bool(false));
         Value::Object(server)
     }
 
@@ -178,7 +183,7 @@ impl OpencodeConfig {
     pub fn manual_snippet(&self) -> String {
         let command = self.command_literal();
         format!(
-            "  \"mcp\": {{\n    \"{MCP_SERVER_NAME}\": {{\n      \"type\": \"local\",\n      \"command\": [{command}],\n      \"enabled\": true\n    }}\n  }}"
+            "  \"mcp\": {{\n    \"{MCP_SERVER_NAME}\": {{\n      \"type\": \"local\",\n      \"command\": [{command}],\n      \"enabled\": true,\n      \"codemode\": false\n    }}\n  }}"
         )
     }
 
@@ -187,7 +192,7 @@ impl OpencodeConfig {
     fn manual_server_snippet(&self) -> String {
         let command = self.command_literal();
         format!(
-            "    \"{MCP_SERVER_NAME}\": {{\n      \"type\": \"local\",\n      \"command\": [{command}],\n      \"enabled\": true\n    }}"
+            "    \"{MCP_SERVER_NAME}\": {{\n      \"type\": \"local\",\n      \"command\": [{command}],\n      \"enabled\": true,\n      \"codemode\": false\n    }}"
         )
     }
 
@@ -894,6 +899,13 @@ mod tests {
             value["mcp"][MCP_SERVER_NAME]["enabled"].as_bool(),
             Some(true)
         );
+        // opencode 2 hides MCP tools behind Code Mode unless the server says
+        // otherwise (codemode defaults to true there): the memory door is one
+        // cheap direct call, so the engine writes the field itself.
+        assert_eq!(
+            value["mcp"][MCP_SERVER_NAME]["codemode"].as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
@@ -929,6 +941,13 @@ mod tests {
         let outcome = config.install().expect("install");
         assert_eq!(outcome.action, ConfigAction::Refused);
         assert!(outcome.detail.contains("mcp"));
+        // The snippet a human has to add by hand is the entry mnexis writes,
+        // Code Mode off included: a hand-installed door must stay reachable.
+        assert!(
+            outcome.detail.contains("\"codemode\": false"),
+            "{}",
+            outcome.detail
+        );
         // The JSONC file is untouched.
         assert!(
             std::fs::read_to_string(config.jsonc_path())
