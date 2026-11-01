@@ -17,7 +17,8 @@
 //!   "fact"), assertion_basis (default "user_stated"), topic_key (default "",
 //!   allowed characters: lowercase letters, digits, '.', '-' and '/'),
 //!   idempotency_key, valid_from, valid_until, tags (array, max 32), state
-//!   (default "active"), keywords (comma-separated, max 32) and
+//!   (default "active"), keywords (comma-separated; they accumulate and the
+//!   32 cap counts the union with the words the record already carries) and
 //!   replace_keywords (default false)
 //! - memory_list: optional namespace, state, value, limit (default 20, clamp
 //!   to 100), offset (default 0)
@@ -83,11 +84,15 @@ pub struct SaveArgs {
     pub tags: Option<String>,
     /// Comma-separated words the fact is called by in another language or
     /// another team's jargon, max 32 (default: empty). They are the topic's
-    /// vocabulary, never a value, and they accumulate across saves.
+    /// vocabulary, never a value. They accumulate across saves, and the cap
+    /// counts the record's whole list (the words asked for plus the ones it
+    /// already carries), so a save that would cross the cap is rejected
+    /// whole; near the cap, send fewer new words or set replace_keywords.
     #[serde(default)]
     pub keywords: Option<String>,
     /// Replace the words the record already carries instead of adding to
-    /// them (default: false). Use it when a word is wrong.
+    /// them (default: false). Use it when a word is wrong, or to prune a
+    /// record whose word list is near the 32 cap.
     #[serde(default)]
     pub replace_keywords: bool,
     /// Initial state: "active" (default) or "proposed"

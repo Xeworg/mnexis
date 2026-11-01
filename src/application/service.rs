@@ -1148,7 +1148,7 @@ impl<R: MemoryRepository> MemoryService<R> {
     /// the words of the old one, so the requested words are added to the ones
     /// the record already carries (the requested first, the old ones after,
     /// no case-insensitive duplicates). `replace_keywords` replaces them
-    /// instead, for a word that is wrong.
+    /// instead, for a word that is wrong or a list near the cap.
     fn update_occupied(
         &mut self,
         current: &Memory,

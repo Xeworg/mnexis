@@ -5540,6 +5540,77 @@ fn replace_keywords_replaces_the_accumulated_words() {
 }
 
 #[test]
+fn a_save_whose_union_would_cross_the_cap_is_rejected_whole() {
+    let p = Profile::new();
+    let first = save(
+        &p,
+        "El servicio escucha en el puerto 8081",
+        &[
+            "--title",
+            "puerto del servicio",
+            "--keywords",
+            "puerto, port",
+        ],
+    );
+    // The record carries 2 words; 31 more push the union to 33, past the
+    // cap that the help says counts the record's whole list, not the
+    // request's.
+    let extra: Vec<String> = (0..31).map(|i| format!("extra{i}")).collect();
+    let words = extra.join(",");
+    let out = p.run_silent(&[
+        "save",
+        "--title",
+        "puerto del servicio",
+        "--keywords",
+        words.as_str(),
+        "El servicio escucha en el puerto 9091",
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a union past the cap is an invalid argument: stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("keywords: exceeds max count: 33 > 32"),
+        "the error names the union's count, not the request's: {stderr}"
+    );
+    // The rejection is whole: the record keeps its words and its content.
+    let out = p
+        .run_silent(&["show", first.as_str()])
+        .unwrap_status("show");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["keywords"],
+        serde_json::json!(["puerto", "port"]),
+        "the record keeps its words: {json}"
+    );
+    assert!(
+        json["content"].as_str().unwrap().contains("8081"),
+        "the record keeps its content: {json}"
+    );
+    // And the escape the help names works: replacing crosses no cap.
+    let out = p
+        .run_silent(&[
+            "save",
+            "--title",
+            "puerto del servicio",
+            "--keywords",
+            "una sola palabra",
+            "--replace-keywords",
+            "El servicio escucha en el puerto 9091",
+        ])
+        .unwrap_status("save --replace-keywords after the cap");
+    let json = stdout_json(&out);
+    assert_eq!(
+        json["keywords"],
+        serde_json::json!(["una sola palabra"]),
+        "replace_keywords is the way out of the cap: {json}"
+    );
+}
+
+#[test]
 fn a_save_without_words_answers_with_the_empty_list() {
     let p = Profile::new();
     let out = p
