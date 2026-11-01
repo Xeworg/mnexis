@@ -1741,3 +1741,48 @@ tool** — what the environment does, what a neighbour expects, a constraint sta
 session — which the pointer rule cannot cite (nothing in the transcript) and the coverage rule
 cannot see (not in the diff). A next bench would have to change **the class and the instrument**:
 that is a program decision, not another fixture revision.
+
+### 27. The opencode host, benched at last — and the answer bought nothing
+
+**The host had never been benched.** Now it is (`bench/opencode-type`, `8aa79ac` + the bench
+commit; feature doc `odd/tasks/opencode-type-bench.md`; criterion
+`tmp/bench/opencode-type-measurement.md`, sealed **before the first bench run** at `44322ffb…`
+and revised **once, before the batch**, as `76052e83…` — the gates did not move). The pilot
+settled the feasibility: **opencode 2.2.5 runs headless in the container**
+(`opencode run --standalone --model opencode-go/deepseek-v4.1-flash --format json --auto`), the
+bench's own key authenticates `opencode-go` **from `OPENCODE_API_KEY` alone** — no credential
+store read, nothing written into the repo — the transcript carries the tool calls with their
+arguments **and** their answers (both metrics scoreable), and **the plugin's curated description
+fires headless in both arms**, so metric (i) starts at the ceiling on this host.
+
+**What the batch measured** (N = 10 per arm, 20 sessions):
+
+| gate | base (the answer says nothing) | names (the answer names what landed) | verdict |
+| --- | --- | --- | --- |
+| T-G2 the axis | typed share **1.000** (20/20) | **1.000** (19/19) | holds **trivially** — the axis cannot move |
+| T-G3 the churn | **0.250** (5/20) | **0.421** (8/19) | **fails** — the direction is against the claim; the counts cannot separate it from noise at N = 10 (Fisher p = 0.32) |
+| T-G4 honesty | 0 contradicting | **1** contradicting | **fails** |
+| T-G5 the cost | 190 522 tokens/run | 203 720 = **1.069×** (median 1.004×) | **fails** (bar 1.05×) |
+
+**The reading this bench supports:** on a host that carries the plugin, naming the type and the
+revision in the save answer is **confirmation of a vocabulary the model already has, not
+instruction**. It does not move the axis, it does not lower the churn, and it can coincide with a
+worse record — the one contradicting record is in the treatment arm, and it is the failure of the
+very thing the answer is supposed to make visible (a revision-2 record that would have shown the
+model its own stale save did not stop it from writing one). That is a statement about *that* model
+on *that* fixture with *that* plugin (T-G6), and it is the **null S4 pre-registered as
+publishable**. The provider bills **$0.00** per session for this model, measured from the
+transcript — never transferred from pi.
+
+**So the A1/A1b change is what it was said to be, now measured: parity and visibility, not an
+improvement.** The answer's content does not change what the model does on the host that reads
+it. Its value is that the axis becomes **legible** — the type and the revision are in the answer
+instead of in a guess — and that is worth keeping for the hosts that have no chrome. What it is
+not worth is a claim of behavioural change: three benches in this cycle (the checklist, the
+assembly, and this one) each found the **baseline at the ceiling**, and the honest conclusion is
+that the memory-quality gap the programme has been chasing is not in what the model writes.
+
+**The parent's checks:** both seals recompute to the sha256s recorded, and the parent's
+independent score of the twenty sessions agrees with the worker's gate by gate. A scorer bug
+found while scoring is disclosed in the measurement file's appendix B.3 with **both** readings
+(contradicting 0 vs 1 under the sealed sentence, 0 vs 3 under the literal bug).
