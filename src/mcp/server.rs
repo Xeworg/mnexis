@@ -771,7 +771,7 @@ impl McpServer {
 impl McpServer {
     #[tool(
         name = "memory_save",
-        description = "Save a memory that must survive the session: a decision, a discovery, a convention, a user preference. Call it right after such a milestone, and store what the user asked to remember, in the namespace of this workspace."
+        description = "Save a memory that must survive the session: a decision, a preference, a procedure, a piece of knowledge, a project_state milestone, an episode or a plain fact. Call it right after such a milestone, and store what the user asked to remember, in the namespace of this workspace."
     )]
     fn memory_save(&self, Parameters(args): Parameters<SaveArgs>) -> Result<String, McpError> {
         self.do_save(args)
@@ -1021,5 +1021,22 @@ mod tests {
         assert!(ts.ends_with('Z'));
         assert!(ts.len() == 20);
         assert!(ts.contains('T'));
+    }
+
+    #[test]
+    fn memory_save_description_names_only_canonical_memory_types() {
+        let router = McpServer::tool_router();
+        let (_, tool) = router
+            .map
+            .iter()
+            .find(|(name, _)| *name == "memory_save")
+            .expect("the memory_save tool is routed");
+        let description = tool.attr.description.as_deref().expect("a description");
+        for invalid in ["discovery", "convention"] {
+            assert!(
+                !description.contains(invalid),
+                "the memory_save description names a kind that is not a memory_type value: {invalid}"
+            );
+        }
     }
 }
