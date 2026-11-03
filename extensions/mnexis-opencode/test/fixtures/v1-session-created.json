@@ -1,0 +1,16 @@
+{
+	"$source": "RESEARCH.md §4 (V1 session start: the event names the session at `properties.info.id`; §1 lists `session.created` among the V1 events)",
+	"type": "session.created",
+	"properties": {
+		"info": {
+			"id": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB",
+			"slug": "quiet-otter",
+			"projectID": "prj_01J8Z3K9QX4YV7N2M5P6R8T1WC",
+			"directory": "/home/u/acme",
+			"parentID": null,
+			"title": "the parity work",
+			"version": "1.19.5",
+			"time": { "created": 1762254000000, "updated": 1762254000000 }
+		}
+	}
+}

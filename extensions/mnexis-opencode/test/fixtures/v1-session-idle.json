@@ -1,0 +1,7 @@
+{
+	"$source": "RESEARCH.md §1 (V1 names a session by id at `{ properties: { sessionID } }`; `session.idle` is listed among the V1 events)",
+	"type": "session.idle",
+	"properties": {
+		"sessionID": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB"
+	}
+}

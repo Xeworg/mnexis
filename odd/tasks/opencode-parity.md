@@ -170,3 +170,51 @@ as the source.
   differential run of the base plugin against this one, over capture, pointer,
   compaction, gate, close and unload, differs only where fixes 2 and 3 intend it
   to (the close's record, and the unload's end).
+- L8: Reorganization (the scalability audit's migration order, `explore`
+  mw032tbi-d-aorx). The one-file constraint stands, so `index.js` is now a
+  GENERATED artifact: `src/*.js` are plain sections (no section imports another)
+  and `node src/build.js` (`package.json` `scripts.build`) concatenates them in
+  one declared order — `header`, `constants`, `budget`, `cli`, `gate`,
+  `adapters`, `render`, `catalog`, `settle`, `session`, `pointer`, `core`,
+  `entry-v2`, `entry-v1`, `plugin`. install.sh, `package.json` `main`/`files`
+  and both loaders are untouched: `plugins/mnexis-memory.js` is still the single
+  file installed, and `test/install.test.js`'s "one file" test is unmodified.
+  The build is also the reorganization's guard, and it is what makes "a move,
+  not a rewrite" checkable instead of asserted: `src/baseline.canonical.txt` is
+  the pre-reorganization plugin with comments stripped, blank lines dropped and
+  the remaining lines collapsed and sorted (plus every quoted payload verbatim),
+  and the build refuses to write `index.js` if one frozen code line or payload
+  is missing — reworded, deleted or renamed — while tolerating any reordering.
+  Observed at the first slice (budget/cli out of the file): 1060 of 1060 code
+  lines preserved, 0 added, 364 quoted payloads verbatim — "identical modulo
+  comments and order"; after the createCore and entry splits, 20 added lines,
+  all of them the glue that hands one instance's state (`sessions`, `evidence`,
+  `pointed`) to the three sections that read it. Negative check: changing one
+  word of `GRANT_REFUSAL` in `src/` fails the build with the line and the payload
+  it lost, and the fix is to restore the wording, never to re-freeze the
+  baseline. Tests moved, never deleted: `test/{v1,v2,catalog,budget,cli,gate,
+  render,engine-pins,adapters}.test.js` plus the shared harness in
+  `test/helpers/host.js`; the count is 73 pass + 1 opt-in skip + 0 fail, the 3
+  new ones being the recorded-payload fixtures (below). Every step ended with the
+  suite green from the worktree root, and a differential run of the
+  pre-reorganization plugin against the generated one (V1 and V2, three engine
+  scenarios, capture/pointer/settle/compaction/gate/create/close/unload) is
+  identical, as are the 39 exported names.
+  One recorded payload per host event the plugin reads now lives in
+  `test/fixtures/`, driven through the readers in `test/adapters.test.js`:
+  V1 `chat.message`, `session.created`, `session.idle`, `session.deleted`, and
+  V2 `session.created`, `session.deleted`, each cited to the line of RESEARCH.md
+  that records its shape (§1's hook list and `properties.sessionID`, §4's event
+  table for `properties.info.id` and `data.sessionID`). They pin that the
+  readers ACCEPT those shapes; they add no strictness, because a stricter reader
+  is a behavior change and this slice is a move.
+  Deferred, deliberately: (a) one unified event table over the two models'
+  payloads — the adapters stay two tolerant readers, because merging them would
+  decide a shape question the hosts have not settled; (b) reader strictness —
+  an unreadable payload still answers `null`/""; (c) the audit's `resolveConfig(env)`
+  helper — it would rewrite the four `budgetOf(env[…], …)` reads, and the build's
+  invariant says no frozen line may change, so the constants and the three env
+  overrides stay exactly as they were and the helper is a follow-up that
+  re-freezes the baseline in the same commit; (d) the per-request wall-clock
+  budgets stay computed where they were (the differential normalizes them, since
+  a leftover budget varies run to run).

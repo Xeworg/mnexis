@@ -1,0 +1,7 @@
+{
+	"$source": "RESEARCH.md §4 (V2 names a session at `data.sessionID`; §1 lists `session.deleted` as the end signal the close runs on)",
+	"type": "session.deleted",
+	"data": {
+		"sessionID": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB"
+	}
+}

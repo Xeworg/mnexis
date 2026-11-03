@@ -84,7 +84,7 @@ types are the **engine's closed set** — the `MEMORY_TYPES` the CLI, the MCP sc
 host share — and its gloss (`knowledge — a durable fact about the domain, the tools or the
 data.`) is this host's own wording. The engine is the only contract the two surfaces share:
 the plugin imports nothing from another extension and no test reads another extension's
-tree. `test/core.test.js` extracts the seven names from the engine's own `memory_type` docs
+tree. `test/engine-pins.test.js` extracts the seven names from the engine's own `memory_type` docs
 (`src/mcp/tools.rs`) and fails when the plugin drifts from them.
 
 ### The curated definitions (opencode 2 today)
@@ -104,7 +104,7 @@ refresh before the first `tools/list` — is a no-op. The whole transform body i
 an uncaught throw inside this callback corrupts the turn, so a plugin must never let one out.
 
 Two pins keep the copy honest, and both read the engine — never another host's extension.
-`test/core.test.js` extracts the seven type names from the engine's own `memory_type` docs
+`test/engine-pins.test.js` extracts the seven type names from the engine's own `memory_type` docs
 (`src/mcp/tools.rs`) and compares them to the glosses' names, and it compares the curated
 map's keys to the engine's tool inventory (`src/mcp/server.rs`). The gloss wording itself is
 this plugin's, and it may change without touching another surface.
