@@ -167,10 +167,12 @@ test("a session that already saved is not asked, however the workspace looks", a
 	const cwd = repository(t);
 	await emit(handlers, "session_start", {}, context("01JX", cwd));
 	writeFileSync(join(cwd, "script.sh"), "#!/bin/sh\necho two\n");
+	// The evidence is the outcome (AB6): the save that landed is what settles
+	// the question, not the call that was attempted.
 	await emit(
 		handlers,
-		"tool_call",
-		{ toolCallId: "s-1", toolName: "mnexis_save", input: {} },
+		"tool_execution_end",
+		{ toolCallId: "s-1", toolName: "mnexis_save", isError: false, result: { content: [], details: {} } },
 		context("01JX", cwd),
 	);
 

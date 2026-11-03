@@ -1,18 +1,22 @@
 /**
- * The settle nudge (odd/tasks/capture-discipline.md, S4).
+ * The settle nudge (odd/tasks/capture-discipline.md, S4; odd/tasks/ext-ts-rewrite.md,
+ * AB5 and AB6).
  *
  * The hooks capture the mechanical floor; whether a session deserved a
  * memory is judgment. The extension asks the model once, at the final
  * actionable boundary, and only when the session's own events show unsaved
- * work: a successful write/edit happened and no `mnexis_save` was called.
+ * work: a successful write/edit happened and no memory was saved.
  * A read-only session and a session that already saved pay nothing, and the
  * question is never asked twice in one session.
  *
- * The question carries the doctrine, because the question is priced per fire
- * and not per call (odd/tasks/nudge-enriched.md, S4): the examples of what
- * deserves to survive, then the seven record types one line each so the save
- * arrives typed. The gating is the one from capture-discipline S4 and does not
- * move with the text (S3), and the text stays inside its per-fire budget (S5).
+ * The evidence is the outcome, not the attempt (AB6): a save that failed, or
+ * one the write gate denied, changed no store, so the question stays open —
+ * and a denied save reaches it with the gate's own reason, which is the one
+ * thing the model could not read for itself. The doctrine the question used to
+ * carry (the examples and the seven types) lives in `mnexis_save`'s own
+ * description now (AB5), where the model reads it at the moment of the write.
+ * The gating is the one from capture-discipline S4, and the text stays inside
+ * its per-fire budget (S5).
  *
  * Each test drives the hooks pi hands the extension and asserts the public
  * boundary result (the entry it would append and whether it requests a
@@ -27,23 +31,20 @@ import { join } from "node:path";
 
 import mnexisMemory from "../index.ts";
 
-/** The question the model reads when the evidence says it owes one (S4). */
+/**
+ * The question the model reads when the evidence says it owes one (S4).
+ *
+ * One judgment line, and a pointer to the tool that states what deserves to
+ * survive and how to type it (AB5): the doctrine is read when the save is
+ * written, not once at the end.
+ */
 const NUDGE = [
 	"This session changed files but saved no memory. If a decision, preference, discovery or project-state change deserves to survive the session, save it now with one mnexis_save; otherwise reply that nothing deserves memory.",
 	"",
-	"What deserves to survive, for example: a decision an external change forced (a version pin, a constraint that moved); a discovery about how this repo actually works; a preference the user stated about how they want things done.",
-	"",
-	"Save it typed — pass the one that fits:",
-	"knowledge — a durable fact about the domain, the tools or the data.",
-	"decision — a choice made, and what it beat.",
-	"preference — how the user wants things done.",
-	"procedure — the steps that reliably achieve something.",
-	"project_state — where the work stands now.",
-	"episode — something that happened in a session.",
-	"fact — the neutral default when none of the others fit.",
+	"`mnexis_save` states what deserves to survive and the seven record types, one line each, so the save arrives typed.",
 ].join("\n");
 
-/** The record types the save must name, in the order the nudge lists them. */
+/** The record types the save states, in the order the save states them. */
 const MEMORY_TYPES = [
 	"knowledge",
 	"decision",
@@ -108,8 +109,41 @@ function wroteFile(toolName = "write") {
 	return { toolCallId: "w-1", toolName, isError: false, result: {} };
 }
 
-/** One model-issued `mnexis_save` call. */
-const savedMemory = { toolCallId: "s-1", toolName: "mnexis_save", input: {} };
+/** A save that landed: the engine answered and nothing was refused (AB6). */
+const savedMemory = {
+	toolCallId: "s-1",
+	toolName: "mnexis_save",
+	isError: false,
+	result: { content: [], details: {} },
+};
+
+/** A save the engine refused: a failed call, not a store this session updated. */
+const failedSave = {
+	toolCallId: "s-2",
+	toolName: "mnexis_save",
+	isError: true,
+	result: {
+		content: [{ type: "text", text: "The engine refused the save: the store is locked." }],
+		details: {},
+	},
+};
+
+/** The reason the write gate gave when it denied the save. */
+const GATE_REFUSAL = "Authorization for namespace 'acme' was declined. No memory was written.";
+
+/**
+ * A save the write gate denied: its result carries the refusal text and the
+ * `authorized: false` the gate writes into the details.
+ */
+const deniedSave = {
+	toolCallId: "s-3",
+	toolName: "mnexis_save",
+	isError: true,
+	result: {
+		content: [{ type: "text", text: GATE_REFUSAL }],
+		details: { namespace: "acme", authorized: false },
+	},
+};
 
 test("a session that changed files and saved nothing is asked once", async (t) => {
 	const { handlers } = fakeHost(t);
@@ -174,7 +208,7 @@ test("a read-only session pays nothing, and a failed write is not evidence", asy
 
 test("a session that already saved a memory is not asked", async (t) => {
 	const { handlers } = fakeHost(t);
-	await emit(handlers, "tool_call", savedMemory, context("01JX"));
+	await emit(handlers, "tool_execution_end", savedMemory, context("01JX"));
 	await emit(handlers, "tool_execution_end", wroteFile(), context("01JX"));
 	assert.deepEqual(await emit(handlers, "agent_before_settle", {}, context("01JX")), [undefined]);
 
@@ -221,43 +255,81 @@ async function askedText(t) {
 	return results[0]?.entries?.[0]?.content ?? "";
 }
 
-test("the nudge names what deserves to survive, with three concrete examples", async (t) => {
+test("the nudge points at mnexis_save for the doctrine it no longer carries (AB5)", async (t) => {
 	const text = await askedText(t);
 
-	// S4a: the moment names the judgment instead of asking for it in the
-	// abstract — an external change, a discovery, a stated preference.
-	assert.match(text, /What deserves to survive, for example:/, `the examples are labelled: ${text}`);
-	for (const example of [
-		"a decision an external change forced",
-		"a discovery about how this repo actually works",
-		"a preference the user stated",
-	]) {
-		assert.ok(text.includes(example), `the nudge names the example "${example}": ${text}`);
-	}
-});
-
-test("the nudge names all seven record types, one line each, so the save arrives typed", async (t) => {
-	const text = await askedText(t);
+	// S4a: the moment still names the judgment — an external change, a
+	// discovery, a stated preference — because that is what makes the model
+	// consider it now. The taxonomy itself moved to the tool the model writes
+	// with, where it is read at the write and not once at the end.
+	assert.match(text, /This session changed files but saved no memory/, `the judgment is stated: ${text}`);
+	assert.match(text, /`mnexis_save` states what deserves to survive/, `the pointer names the tool: ${text}`);
+	assert.doesNotMatch(
+		text,
+		/What deserves to survive, for example:/,
+		`the examples are not carried twice: ${text}`,
+	);
 	const lines = text.split("\n");
-
-	// S4b: the type is a parameter of the save, and the model writes it only
-	// when the moment names it.
 	for (const type of MEMORY_TYPES) {
 		assert.equal(
 			lines.filter((line) => line.startsWith(`${type} — `)).length,
-			1,
-			`exactly one line defines ${type}: ${text}`,
+			0,
+			`the nudge no longer defines ${type}: ${text}`,
 		);
 	}
 });
 
-test("the enriched nudge stays inside its per-fire budget", async (t) => {
+test("the focused nudge stays inside its per-fire budget", async (t) => {
 	const text = await askedText(t);
 	const bytes = Buffer.byteLength(text, "utf8");
 
-	// S5: the text is paid as one model request the moment it fires, so
-	// doctrine past this belongs to the skill, not to the nudge.
+	// S5: the text is paid as one model request the moment it fires, so the
+	// doctrine it points at stays in the tool description, not here.
 	assert.ok(bytes <= 1200, `the nudge fits the 1200 B budget: ${bytes} B`);
+});
+
+test("a save that failed does not settle the question (AB6)", async (t) => {
+	const { handlers } = fakeHost(t);
+	await emit(handlers, "tool_execution_end", wroteFile(), context("01JX"));
+
+	// The outcome is what counts: a refused save changed no store, so the
+	// session still owes the judgment and the question is still open.
+	await emit(handlers, "tool_execution_end", failedSave, context("01JX"));
+	const results = await emit(handlers, "agent_before_settle", {}, context("01JX"));
+	assert.equal(
+		results[0]?.continue,
+		true,
+		`a failed save is unsaved work: ${JSON.stringify(results)}`,
+	);
+});
+
+test("a save the gate denied keeps the question open, and the nudge carries the reason (AB6)", async (t) => {
+	const { handlers } = fakeHost(t);
+	await emit(handlers, "tool_execution_end", wroteFile(), context("01JX"));
+	await emit(handlers, "tool_execution_end", deniedSave, context("01JX"));
+
+	const results = await emit(handlers, "agent_before_settle", {}, context("01JX"));
+	const text = results[0]?.entries?.[0]?.content ?? "";
+	assert.equal(results[0]?.continue, true, `a denied save is unsaved work: ${JSON.stringify(results)}`);
+	assert.ok(text.startsWith(NUDGE), `the question is still asked first: ${text}`);
+	assert.ok(
+		text.includes(GATE_REFUSAL),
+		`the reason the save did not land reaches the model: ${text}`,
+	);
+	assert.match(text, /was refused/, `and the nudge says the save was refused: ${text}`);
+});
+
+test("a save that lands after a denial closes the question (AB6)", async (t) => {
+	const { handlers } = fakeHost(t);
+	await emit(handlers, "tool_execution_end", wroteFile(), context("01JX"));
+	await emit(handlers, "tool_execution_end", deniedSave, context("01JX"));
+	await emit(handlers, "tool_execution_end", savedMemory, context("01JX"));
+
+	assert.deepEqual(
+		await emit(handlers, "agent_before_settle", {}, context("01JX")),
+		[undefined],
+		"the session did the judgment in the end",
+	);
 });
 
 test("the richer text did not change when the question fires", async (t) => {
@@ -270,9 +342,9 @@ test("the richer text did not change when the question fires", async (t) => {
 		"read-only: no question",
 	);
 
-	// A session that already attempted a save pays nothing.
+	// A session whose save landed pays nothing.
 	const saved = fakeHost(t);
-	await emit(saved.handlers, "tool_call", savedMemory, context("01JX"));
+	await emit(saved.handlers, "tool_execution_end", savedMemory, context("01JX"));
 	await emit(saved.handlers, "tool_execution_end", wroteFile(), context("01JX"));
 	assert.deepEqual(
 		await emit(saved.handlers, "agent_before_settle", {}, context("01JX")),

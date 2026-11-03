@@ -238,17 +238,20 @@ function repoFile(relative) {
 }
 
 /**
- * The seven type glosses a source file states, as `kind — gloss` lines.
+ * The seven type glosses a text states, as `kind — gloss` lines.
  *
- * Both sides state them as string literals on their own line, so the pin is
- * textual: a reworded gloss on either side is a different line here, and the
- * test fails even when both sides would still be exported and imported.
+ * The plugin states them as string literals in one flat file; pi states them
+ * as the lines of `mnexis_save`'s description (they moved there in T3, AB5).
+ * Both write one kind per line, so the pin is textual and carrier-agnostic:
+ * the same gloss in another carrier is the same line here, and a reworded one
+ * is a different line even when both sides would still be exported and
+ * imported.
  */
-function glossLines(source) {
+function glossLines(text) {
 	const lines = [];
-	for (const line of source.split("\n")) {
+	for (const line of String(text ?? "").split("\n")) {
 		const match = line.match(
-			/^\s*"(knowledge|decision|preference|procedure|project_state|episode|fact) — (.+)",$/,
+			/^\s*"?(knowledge|decision|preference|procedure|project_state|episode|fact) — (.+?)"?,?$/,
 		);
 		if (match) {
 			lines.push(`${match[1]} — ${match[2]}`);
@@ -257,14 +260,28 @@ function glossLines(source) {
 	return lines;
 }
 
-test("the seven type glosses in the plugin are exactly the ones pi's settle nudge carries", () => {
+test("the seven type glosses in the plugin are exactly the ones pi's save description carries", () => {
 	const plugin = glossLines(repoFile("extensions/mnexis-opencode/index.js"));
-	const nudge = glossLines(repoFile("extensions/mnexis-memory/index.ts"));
+	// The carrier changed in T3 (AB5): the taxonomy moved out of the settle
+	// nudge and into the save description, where the model reads it at the
+	// moment of the write. The parity intent does not: one vocabulary, two
+	// hosts, and neither may reword a kind on its own.
+	const tools = new Map();
+	mnexisMemory({
+		registerTool: (tool) => tools.set(tool.name, tool),
+		on() {},
+		appendEntry() {},
+	});
+	const save = glossLines(tools.get("mnexis_save").description);
 
-	assert.equal(nudge.length, 7, `the nudge states the seven kinds once: ${nudge.join(" | ")}`);
+	assert.equal(
+		save.length,
+		7,
+		`the save description states the seven kinds once: ${save.join(" | ")}`,
+	);
 	assert.deepEqual(
 		plugin,
-		nudge,
+		save,
 		"the plugin's glosses are pi's, verbatim: one definition of the vocabulary, two consumers",
 	);
 	assert.deepEqual(plugin, TYPE_GLOSSES, "and the exported list is the one the save description carries");
@@ -290,7 +307,12 @@ test("the curated map carries exactly one non-empty description per MCP tool id"
 	}
 });
 
-/** pi's registered tools, prose only: the repo's own measurement. */
+/** pi's declared tools, prose only: the repo's own measurement.
+ *
+ * The loadout T3 decides is what the model is declared on every request: the
+ * `direct`, active tools. A `deferred` or `hidden` tool's description is
+ * registered but never declared (odd/tasks/ext-ts-rewrite.md, rules 3 and 7),
+ * so it is not part of this bill. */
 function piToolsProse() {
 	const tools = new Map();
 	mnexisMemory({
@@ -300,6 +322,9 @@ function piToolsProse() {
 	});
 	const parts = [];
 	for (const tool of tools.values()) {
+		if ((tool.exposure ?? "direct") !== "direct" || tool.defaultActive === false) {
+			continue;
+		}
 		parts.push(tool.description);
 		for (const property of Object.values(tool.parameters?.properties ?? {})) {
 			parts.push(property?.description ?? "");
@@ -308,10 +333,11 @@ function piToolsProse() {
 	return Buffer.byteLength(parts.join(""), "utf8");
 }
 
-test("pi's tools block still fits the 5500 B pin the curated map was not allowed to grow", () => {
-	// The vocabulary has two consumers (S1-L2): pi's settle nudge and this
-	// plugin's save description. pi's tools block is not one of them — it has
-	// 10 B of headroom, so the glosses must never be added there.
+test("pi's declared tools block still fits the 5500 B pin the curated map was not allowed to grow", () => {
+	// The vocabulary has two consumers (S1-L2): pi's save description and this
+	// plugin's save description. T3 moved the glosses into pi's save (AB5),
+	// so this pin now measures the block they ride in — the tools pi declares
+	// on every request, with the same 5 500 B budget.
 	const bytes = piToolsProse();
-	assert.ok(bytes <= 5500, `pi's tools block is ${bytes} B (budget 5500 B)`);
+	assert.ok(bytes <= 5500, `pi's declared tools block is ${bytes} B (budget 5500 B)`);
 });
