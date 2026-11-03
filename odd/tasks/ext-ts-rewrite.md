@@ -141,7 +141,8 @@ installed pi dist. Verdicts:
 - T2 (S3): TypeScript scaffold — rename modules to .ts, type-only imports,
   suite runs under the loader, installer ships .ts (test-first: loader runs RED
   on .ts imports, then GREEN; installer .ts test RED → GREEN). Route: parent
-  inline. Risk: none.
+  inline (worker-executed under the context backstop; parent closed two
+  out-of-surface references). Risk: none. Commit: 8ae9fbb.
 - T3 (S2/S3): the agent-behavior set — AB1 guarded `tool_search` activation +
   reachability test, AB2 evidence-driven activation, AB4 bullet rewrite, AB5
   taxonomy into save, AB6 outcome-based nudge, AB7 save_prompt hidden, amended
@@ -189,3 +190,14 @@ installed pi dist. Verdicts:
   UX3 grant path — permission surface; UX6 select shape). B is amended by AB1:
   without guarded `tool_search` activation the deferred tail is unreachable
   and the misses invisible.
+- L7: T2 evidence (8ae9fbb): node v22.22.2 strips types unflagged — plain
+  `node --test` loads the .ts modules, no loader flag and no new dependency;
+  the extension suite is invocation-cwd-sensitive (running it from the
+  extension dir produces a FALSE failure in tools.test.js: the bind question
+  names the repo root while the fake ctx names the invocation dir) — canonical
+  invocation is from the repo root with MNEXIS_PARITY_BIN set; record it in
+  T6's docs. The rename broke two references outside T2's planned surface,
+  both fixed by the parent: src/tui/app.rs:1356 (an install assertion on
+  index.js) and extensions/mnexis-opencode/test/core.test.js:17,262 (the
+  sibling suite imports the pi extension). Suites: extension 243/243,
+  opencode 0 fail (1 pre-existing skip), cargo all green (0 failed).
