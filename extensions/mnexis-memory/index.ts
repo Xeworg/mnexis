@@ -13,11 +13,21 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { createClient, defaultExec } from "./lib/cli.ts";
+import { createChildRegistry, createClient, defaultExec } from "./lib/cli.ts";
 import {
+	PROMPT_CAPTURE_BUDGET_MS,
+	SHUTDOWN_BUDGET_MS,
+	budgetOf,
+	createDeadline,
+} from "./lib/budget.ts";
+import {
+	DIALOG_TIMEOUT_REASON,
+	askConfirm,
+	authorizationPendingMessage,
 	decideAuthorization,
 	decideBinding,
 	describeFailure,
+	dialogTimeoutMs,
 	engineSilence,
 	allowNamespaceCommand,
 	bindCommand,
@@ -750,6 +760,29 @@ export function sharesKeyword(left, right) {
 }
 
 /**
+ * The canonical title of a session's compaction record (R4).
+ *
+ * The title is the engine's identity: `key_from_title` makes the same title
+ * the same record, so an untitled save wrote one row per compaction and never
+ * revised one. The session is what the record is about, so the session names
+ * it, and a second compaction of the same session revises the first one.
+ */
+export function compactionTitle(sessionId) {
+	return `session ${sessionId ?? "unknown"} compaction`;
+}
+
+/**
+ * The topic key the same record is filed under: the session's, explicitly.
+ *
+ * The title already derives one, and the pair says the same thing twice on
+ * purpose: the key is what a caller reads to prove the identity is the
+ * session, and it stays inside the engine's 128-byte cap for any session id.
+ */
+export function compactionTopicKey(sessionId) {
+	return `session.${sessionId ?? "unknown"}.compaction`;
+}
+
+/**
  * The compaction summary the shipped `session_compact` hook stores is not a
  * project fact (S2.4).
  *
@@ -1004,11 +1037,15 @@ function typeArticle(type) {
 }
 
 export default function mnexisMemoryExtension(pi: ExtensionAPI) {
-	// One client and one resolution cache per extension instance (per session).
+	// One client, one child registry and one resolution cache per extension
+	// instance (per session). The registry holds the children the hooks start,
+	// so a shutdown can end what it left behind (R8).
+	const children = createChildRegistry();
 	const client = createClient({
 		exec: defaultExec,
 		binary: process.env.MNEXIS_BIN,
 		env: process.env,
+		registry: children,
 	});
 	let resolution = null;
 	let writeNamespaces = null;
@@ -1031,6 +1068,38 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 	// evidence, and this is the state to compare it against. Null when the
 	// workspace is not a repository: no evidence is not a negative answer.
 	let sessionWorkspaceBaseline = null;
+
+	/**
+	 * The client a hook call uses (R8).
+	 *
+	 * Hook calls carry no signal from pi, so they carry the session's: a
+	 * shutdown kills what a hook started, and the await that was still in
+	 * flight ends as cancelled instead of hanging on a dead session. The
+	 * registry is read at call time, because a shutdown spends its signal and
+	 * the next session of the same runtime gets a live one.
+	 */
+	const hookClient = () => client.withSignal(children.signal);
+
+	/**
+	 * What a branch owns: the evidence, the spent question and the state the
+	 * workspace was in when the branch began (R6).
+	 *
+	 * A session starts on a branch, and `/tree` moves it to another one of the
+	 * same session. The latch of a question spent on the branch we left must
+	 * not silence the one the new branch owes, and the writes of the old branch
+	 * are not the work of the new one — so the trio and the baseline are reset
+	 * together, by both boundaries.
+	 */
+	async function resetEvidence(ctx) {
+		sessionFilesChanged = false;
+		sessionSaved = false;
+		sessionSaveRefusal = "";
+		settleNudgeSent = false;
+		// What the workspace looked like when this branch began: the state to
+		// compare the settle boundary against, so a change the tools did not
+		// report (a file written through `bash`) is still the branch's work.
+		sessionWorkspaceBaseline = await workspaceState(hookClient(), ctx?.cwd);
+	}
 
 	/**
 	 * The workspace's own state, as git sees it: the commit it is at and the
@@ -1251,7 +1320,6 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 			namespace,
 			writeNamespaces: allowed,
 			hasUI: Boolean(ctx.hasUI),
-			mode: ctx.mode,
 		});
 		if (decision.action === "allow") {
 			return { authorized: true, asked: false };
@@ -1260,20 +1328,29 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 			return {
 				authorized: false,
 				asked: false,
-				message:
-					`Writing to namespace '${namespace}' needs your authorization first. ` +
-					`Run \`${allowNamespaceCommand(namespace)}\` once, then retry. ` +
-					`Reason: ${decision.reason}.`,
+				message: authorizationPendingMessage(namespace, decision.reason),
 			};
 		}
-		const confirmed = await ctx.ui.confirm(
+		// R5: the dialog carries a timeout, and its three answers are told
+		// apart — a session without a UI, a no, and nobody answering are three
+		// different things and the model reads which one it met.
+		const answer = await askConfirm(
+			ctx.ui,
 			`Allow the mnexis agent to write memories in namespace '${namespace}'?\n\n` +
 				"This grants write permission (save, update, supersede) for that namespace only, " +
 				"in the current mnexis profile. Other namespaces and global access stay untouched, " +
 				"and you can revoke it later by editing the profile allowlist.",
 			"mnexis: authorize namespace",
+			dialogTimeoutMs(),
 		);
-		if (!confirmed) {
+		if (answer === "timed_out") {
+			return {
+				authorized: false,
+				asked: true,
+				message: authorizationPendingMessage(namespace, DIALOG_TIMEOUT_REASON),
+			};
+		}
+		if (answer !== "confirmed") {
 			return {
 				authorized: false,
 				asked: true,
@@ -1359,7 +1436,6 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 			candidate: workspace.candidate,
 			refusal: workspace.refusal,
 			hasUI: Boolean(ctx.hasUI),
-			mode: ctx.mode,
 		});
 		if (decision.action === "refuse") {
 			return {
@@ -1383,11 +1459,25 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 				},
 			};
 		}
-		const confirmed = await ctx.ui.confirm(
+		const answer = await askConfirm(
+			ctx.ui,
 			bindingPrompt(workspace),
 			"mnexis: name this workspace",
+			dialogTimeoutMs(),
 		);
-		if (!confirmed) {
+		if (answer === "timed_out") {
+			// The session had a UI and nobody answered it: the answer is the
+			// pending one, with the reason the question went unanswered (R5).
+			return {
+				workspace,
+				gate: {
+					authorized: false,
+					asked: true,
+					message: pendingBindingMessage(workspace, DIALOG_TIMEOUT_REASON),
+				},
+			};
+		}
+		if (answer !== "confirmed") {
 			return {
 				workspace,
 				gate: {
@@ -1541,6 +1631,10 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 	 * refusal that only lived in a swallowed exit code would be invisible, so
 	 * the code and the engine's own message reach the host's entry journal —
 	 * and never the summary's text, which stays the human's conversation.
+	 *
+	 * The entry type stays one of the four the extension declares: `action`
+	 * says whether the store refused the summary (`skipped`) or the host could
+	 * not compact at all (`failed`, R4).
 	 */
 	function journalCompactionSkip(ctx, data) {
 		if (typeof pi.appendEntry !== "function") {
@@ -1896,30 +1990,80 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		// A new session (new, resume, fork, reload) carries no evidence and
 		// no spent question from the previous one. Reset before the engine
 		// call so a session the engine does not know yet still starts clean.
-		sessionFilesChanged = false;
-		sessionSaved = false;
-		sessionSaveRefusal = "";
-		settleNudgeSent = false;
+		// A registry killed by the previous shutdown is spent, too: /new fires
+		// the close and then the start in the same process (R8).
+		children.rearm();
 		// The deferred tail is only reachable while `tool_search` is active,
 		// and pi registers it inactive (AB1). The loadout is declared here,
 		// at the boundary the session starts on, and left alone on a host
 		// that cannot change it.
 		activateToolSearch(pi);
-		// What the workspace looked like when this session started: the
-		// state to compare the settle boundary against, so a change the
-		// tools did not report (a file written through `bash`) is still the
-		// session's work.
-		sessionWorkspaceBaseline = await workspaceState(client, ctx?.cwd);
+		// The evidence trio and the workspace baseline: the same reset a branch
+		// switch makes (R6).
+		await resetEvidence(ctx);
 		const id = sessionIdOf(ctx);
 		if (!id) {
 			return;
 		}
+		// The engine is told about the session, and its answer is read (R3).
+		// A start the engine refused — the profile is not initialised, the
+		// namespace is not writable — used to be swallowed whole, and a
+		// resumed id used to look started while the engine still held it as
+		// closed.
+		//
+		// The engine's state machine, verified against the binary
+		// (`test/parity.session-state.test.js`): a second start of the same id
+		// is a no-op that answers the row it already has, and a start after an
+		// end answers that same ended row — the engine never reopens a
+		// session and never errors on either. So a taken start is not an
+		// error, an ended id is not an error either, and neither is hidden.
 		try {
-			await client.sessionStart({ sessionId: id, directory: ctx.cwd }, ctx.cwd);
-		} catch {
-			// The profile may not be initialised yet, or the namespace may
-			// not be allowed for writes. The session still works.
+			const started = await hookClient().sessionStart(
+				{ sessionId: id, directory: ctx.cwd },
+				ctx.cwd,
+			);
+			if (started.code !== 0) {
+				journalSessionClose(ctx, {
+					step: "start",
+					exit_code: started.code,
+					error: describeFailure({ ...started }),
+				});
+				return;
+			}
+			const session = started.data && typeof started.data === "object" ? started.data : null;
+			if (session && typeof session.ended_at === "string" && session.ended_at !== "") {
+				// The human is in a session the engine has already closed: a
+				// resume of a quit-closed id, or a start on one. No engine call
+				// reopens it, so the honest thing is to say so — the memories
+				// still land, and the close still revises the estado al cierre.
+				journalSessionClose(ctx, {
+					action: "noted",
+					step: "start",
+					already_ended: true,
+					ended_at: session.ended_at,
+					reason:
+						`the engine holds session '${id}' as ended (${session.ended_at}) and a start ` +
+						"never reopens it: this session's memories are written and its close revises " +
+						"the estado al cierre, but the engine's session window keeps the earlier end",
+				});
+			}
+		} catch (error) {
+			journalSessionClose(ctx, {
+				step: "start",
+				error: error instanceof Error ? error.message : String(error),
+			});
 		}
+	});
+
+	// A branch switch inside the session (R6).
+	//
+	// `/tree` moves the session to another leaf: what was true of the branch
+	// we left is not true of the one we are on. So the evidence trio, the spent
+	// question and the workspace baseline are reset exactly as a new session
+	// resets them — the journal entries stay, because they are the branch's own
+	// data and pi keeps them with the leaf that wrote them.
+	pi.on("session_tree", async (_event, ctx) => {
+		await resetEvidence(ctx);
 	});
 
 	// The other end of that session: the engine learns it is over, and the
@@ -1938,6 +2082,12 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 	// the entry journal carries the step and the engine's code, never the
 	// state the store could not take.
 	pi.on("session_shutdown", async (event, ctx) => {
+		// R8: the children this session started are the budget's first
+		// casualty. Killing them here, before a single step of the close is
+		// paid for, ends a capture or a compaction that was still in flight
+		// and would otherwise finish a write into the session that is closing
+		// — and it is idempotent, so a shutdown that runs twice is safe.
+		children.killAll();
 		if (event?.reason === "reload") {
 			return;
 		}
@@ -1945,12 +2095,36 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		if (!id) {
 			return;
 		}
+		// R1: pi awaits this hook with no timeout, so the close gets one of its
+		// own and shares it between its steps. An engine that does not answer
+		// inside what is left is abandoned and journaled; the next session may
+		// retry, because the end is idempotent and the estado al cierre is one
+		// record under one title.
+		const deadline = createDeadline(
+			budgetOf(process.env.MNEXIS_SHUTDOWN_BUDGET_MS, SHUTDOWN_BUDGET_MS),
+			"shutdown",
+		);
+		const abandon = (step, reason, extra = {}) =>
+			journalSessionClose(ctx, { action: "abandoned", step, reason, ...extra });
 		try {
-			const ended = await client.sessionEnd({ sessionId: id }, ctx.cwd);
+			const endStep = await deadline.step("end", (left) =>
+				client.withBudget(left).sessionEnd({ sessionId: id }, ctx.cwd),
+			);
+			if (endStep.abandoned) {
+				abandon("end", endStep.abandoned);
+				return;
+			}
+			const ended = endStep.value;
 			if (ended.code !== 0) {
+				// Exit 3 is the engine saying it never heard of this session:
+				// nothing to end, and nothing to write its state into. The
+				// refusal is journaled with that name, because a close that
+				// silently skipped one is indistinguishable from a lost close
+				// (R3).
 				journalSessionClose(ctx, {
 					step: "end",
 					exit_code: ended.code,
+					...(ended.code === 3 ? { not_registered: true } : {}),
 					error: describeFailure({ code: ended.code, stderr: ended.stderr, command: "end" }),
 				});
 				return;
@@ -1967,23 +2141,29 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 				});
 				return;
 			}
-			const saved = await client.save(
-				{
-					namespace,
-					title: SESSION_CLOSE_TITLE,
-					type: "project_state",
-					content: sessionCloseContent({ id, ...(session ?? {}) }),
-				},
-				ctx.cwd,
+			const saved = await deadline.step("save", (left) =>
+				client.withBudget(left).save(
+					{
+						namespace,
+						title: SESSION_CLOSE_TITLE,
+						type: "project_state",
+						content: sessionCloseContent({ id, ...(session ?? {}) }),
+					},
+					ctx.cwd,
+				),
 			);
-			if (saved.code !== 0) {
+			if (saved.abandoned) {
+				abandon("save", saved.abandoned, { namespace });
+				return;
+			}
+			if (saved.value.code !== 0) {
 				journalSessionClose(ctx, {
 					step: "save",
 					namespace,
-					exit_code: saved.code,
+					exit_code: saved.value.code,
 					error: describeFailure({
-						code: saved.code,
-						stderr: saved.stderr,
+						code: saved.value.code,
+						stderr: saved.value.stderr,
 						namespace,
 						command: "save",
 					}),
@@ -2016,28 +2196,55 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 	// is refused, never truncated) must not swallow the message silently
 	// either — the size and the exit code go to the entry journal, the text
 	// never does.
+	//
+	// It is also bounded (R7): the capture runs on every message, so it gets a
+	// budget of its own instead of the write one, and a store that cannot take
+	// the message inside it loses the message, not the turn. The abandonment
+	// is journaled like every other refusal, and the turn proceeds.
 	pi.on("input", async (event, ctx) => {
 		const text = typeof event?.text === "string" ? event.text : "";
 		// A message another extension sent is not something the human said.
 		if (text === "" || event?.source === "extension") {
 			return;
 		}
-		let result;
+		const bytes = Buffer.byteLength(text, "utf8");
+		const capture = createDeadline(
+			budgetOf(process.env.MNEXIS_PROMPT_CAPTURE_BUDGET_MS, PROMPT_CAPTURE_BUDGET_MS),
+			"prompt capture",
+		);
+		let captured;
 		try {
-			result = await client.savePrompt(
-				{ content: text, sessionId: sessionIdOf(ctx) },
-				ctx.cwd,
+			captured = await capture.step("capture", (left) =>
+				hookClient().withBudget(left).savePrompt(
+					{ content: text, sessionId: sessionIdOf(ctx) },
+					ctx.cwd,
+				),
 			);
 		} catch (error) {
 			journalPromptSkip(ctx, {
-				bytes: Buffer.byteLength(text, "utf8"),
+				bytes,
 				error: error instanceof Error ? error.message : String(error),
 			});
 			return;
 		}
+		if (captured.abandoned) {
+			journalPromptSkip(ctx, {
+				action: "abandoned",
+				bytes,
+				reason: captured.abandoned,
+			});
+			return;
+		}
+		const result = captured.value;
+		if (result.cancelled && children.signal.aborted) {
+			// The session is closing and the registry killed this child on
+			// purpose (R8): the turn it belonged to is over, and journaling
+			// every quit would bury the losses that matter.
+			return;
+		}
 		if (result.code !== 0) {
 			journalPromptSkip(ctx, {
-				bytes: Buffer.byteLength(text, "utf8"),
+				bytes,
 				exit_code: result.code,
 			});
 		}
@@ -2130,7 +2337,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		}
 		let namespace = null;
 		try {
-			const workspace = await resolveWorkspace(client, ctx.cwd);
+			const workspace = await resolveWorkspace(hookClient(), ctx.cwd);
 			// Only a bound workspace has a namespace that is a permission: a
 			// marker names a candidate, and a file inside the workspace must
 			// not become the target of a write on its own (auto-namespace S6).
@@ -2138,7 +2345,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 				return;
 			}
 			namespace = workspace.namespace;
-			const read = await getWriteNamespaces(client, ctx.cwd);
+			const read = await getWriteNamespaces(hookClient(), ctx.cwd);
 			if (read.message || !read.namespaces.includes(namespace)) {
 				return;
 			}
@@ -2148,6 +2355,13 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 					namespace,
 					content:
 						`Session ${id ?? "unknown"} was compacted. What was happening:\n\n${summary}`,
+					// The record is "what this session was doing", so its identity is
+					// the session (R4): one title and one topic key per session, which
+					// revises the row the previous compaction left instead of adding
+					// another one — and, naming its record, this save also retries a
+					// locked store (R2).
+					title: compactionTitle(id),
+					topicKey: compactionTopicKey(id),
 					// The type is the engine's to resolve and the caller's to name:
 					// a summary is what happened in this session, so it is an
 					// episode. The tag is the one comma string the engine reads.
@@ -2176,6 +2390,35 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 				error: error instanceof Error ? error.message : String(error),
 			});
 		}
+	});
+
+	// The other half of the compaction: the host compacted and failed (R4).
+	//
+	// It used to have no handler at all, so a compaction that never happened —
+	// an overflow the provider refused, a threshold compaction that errored —
+	// left no trace anywhere the human could read. It goes to the same
+	// `mnexis-compaction` entry as the `failed` variant: there is nothing to
+	// store (the summary does not exist), so what is journaled is the reason
+	// the host gave and whether it will retry the turn. An `aborted` compaction
+	// is the human's own cancel and stays quiet: nothing was lost that they do
+	// not already know, and the journal is for what would otherwise vanish.
+	//
+	// Branch summaries stay REJECTED (the design's decision, recorded again
+	// here): a branch's narrative belongs to the branch, not to this session's
+	// state, and no handler asks the host for one.
+	pi.on("session_compact_failed", (event, ctx) => {
+		if (event?.aborted === true) {
+			return;
+		}
+		const message = typeof event?.errorMessage === "string" ? event.errorMessage.trim() : "";
+		journalCompactionSkip(ctx, {
+			action: "failed",
+			step: "compact",
+			reason: typeof event?.reason === "string" ? event.reason : "unknown",
+			will_retry: event?.willRetry === true,
+			from_extension: event?.fromExtension === true,
+			error: message === "" ? "the host reported a failed compaction and no message" : message,
+		});
 	});
 
 	// The gate lives in this extension, so a model-issued call must not

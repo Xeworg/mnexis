@@ -2684,3 +2684,86 @@ test("the save answer names the type with the article it reads with", async () =
 		delete process.env.MNEXIS_FAKE_SAVE_JSON;
 	}
 });
+
+// --- R5: the ask is hasUI's, and a timeout is not a decline --------------
+
+/** An interactive session whose dialog never answers until it is aborted. */
+function dialogsForever(mode = "tui", cwd = process.cwd()) {
+	const prompts = [];
+	return {
+		prompts,
+		ctx: {
+			cwd,
+			hasUI: true,
+			mode,
+			ui: {
+				confirm: (message, _label, opts) => {
+					prompts.push(message);
+					return new Promise((resolve) => {
+						opts.signal.addEventListener("abort", () => resolve(false), { once: true });
+					});
+				},
+			},
+		},
+	};
+}
+
+test("an rpc session can authorize a namespace: the ask keys on the dialog, not the mode", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_NO_BINDING = "1";
+	process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE = "nodexar";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+		// RPC draws dialogs (ctx.hasUI is true there) and the gate used to
+		// refuse to ask, so an IDE client could never grant a namespace.
+		const ui = interactive(true);
+		ui.ctx.mode = "rpc";
+
+		const result = await save.execute("rpc-1", { content: "a fact" }, undefined, undefined, ui.ctx);
+
+		assert.equal(ui.prompts.length, 1, "the RPC client is asked once");
+		const bindCall = calls(log).find((args) => args[0] === "project" && args[1] === "bind");
+		assert.ok(bindCall, "the confirmed grant binds the workspace");
+		assert.notEqual(result.isError, true, "and the write goes through");
+	} finally {
+		delete process.env.MNEXIS_FAKE_NO_BINDING;
+		delete process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE;
+	}
+});
+
+test("a dialog nobody answers is a timeout, not a decline, and the answer says so", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_NO_BINDING = "1";
+	process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE = "nodexar";
+	process.env.MNEXIS_DIALOG_TIMEOUT_MS = "40";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+		const ui = dialogsForever("rpc");
+
+		const result = await save.execute("timeout-1", { content: "a fact" }, undefined, undefined, ui.ctx);
+
+		assert.equal(ui.prompts.length, 1, "the human was asked");
+		assert.equal(result.isError, true, "an unanswered question writes nothing");
+		const text = result.content.map((block) => block.text).join(" ");
+		assert.match(text, /not answered in time/i, `the answer names the timeout: ${text}`);
+		assert.doesNotMatch(text, /declined/i, `a timeout is not a decline: ${text}`);
+		assert.doesNotMatch(
+			text,
+			/no interactive UI/i,
+			`the session does have a UI: it went unanswered: ${text}`,
+		);
+		const bindCall = calls(log).find((args) => args[0] === "project" && args[1] === "bind");
+		assert.equal(bindCall, undefined, "nothing was bound");
+		assert.equal(calls(log).find((args) => args[0] === "save"), undefined, "and nothing was written");
+	} finally {
+		delete process.env.MNEXIS_FAKE_NO_BINDING;
+		delete process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE;
+		delete process.env.MNEXIS_DIALOG_TIMEOUT_MS;
+	}
+});

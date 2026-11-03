@@ -140,3 +140,60 @@ test("a call that was aborted is not tried again", async () => {
 
 	assert.equal(calls.length, 1, `an aborted call is not retried: ${JSON.stringify(calls)}`);
 });
+
+// --- R2: the retry is a property of the command -------------------------
+//
+// The busy exit means the store was locked and nothing was written, and some
+// commands are idempotent by construction: a second try of the same call is
+// the same effect, never a second record. Those always retry. A `save` is the
+// one command whose repeat can create something new, so it retries only when it
+// names the record it writes (`namesItsRecord` above). Everything else — a
+// read, an init — has no reason to try again and pays one call.
+
+test("the commands that are idempotent by construction are tried again on a locked store", async () => {
+	const commands = [
+		["sessionStart", (client) => client.sessionStart({ sessionId: "01JX-1", directory: "/work" }, "/work")],
+		["sessionEnd", (client) => client.sessionEnd({ sessionId: "01JX-1" }, "/work")],
+		["savePrompt", (client) => client.savePrompt({ content: "hola", sessionId: "01JX-1" }, "/work")],
+		["bind", (client) => client.bind("payments", "git:key", "/work", "/work")],
+		["allowNamespace", (client) => client.allowNamespace("payments", "/work")],
+	];
+	for (const [name, call] of commands) {
+		const { exec, calls } = fakeExec([BUSY, { code: 0, stdout: "{}", stderr: "" }]);
+		const client = createClient({ exec });
+
+		const result = await call(client);
+
+		assert.equal(calls.length, 2, `${name}: a locked call is tried again: ${JSON.stringify(calls)}`);
+		assert.equal(result.code, 0, `${name}: the second answer is the one that is kept`);
+		assert.equal(result.busy_retries, 1, `${name}: the answer says how many tries it took`);
+	}
+});
+
+test("a locked session end reports the lock once the tries are spent", async () => {
+	const { exec, calls } = fakeExec([BUSY, BUSY, BUSY]);
+	const client = createClient({ exec });
+
+	const result = await client.sessionEnd({ sessionId: "01JX-1" }, "/work");
+
+	assert.equal(calls.length, 1 + BUSY_RETRY_DELAYS_MS.length, "the tries are still bounded");
+	assert.equal(result.code, BUSY_EXIT_CODE, "a store that stays locked is still a failure");
+	assert.equal(result.busy_retries, BUSY_RETRY_DELAYS_MS.length);
+});
+
+test("an untitled save still does not retry, and a titled one still does", async () => {
+	// The two halves of the save rule, side by side: the command's own policy
+	// did not take the identity test away with it.
+	const untitled = fakeExec([BUSY]);
+	const untitledResult = await createClient({ exec: untitled.exec }).save(
+		{ namespace: "payments", content: "a fact" },
+		"/work",
+	);
+	assert.equal(untitled.calls.length, 1, "a save with no title would be a second record");
+	assert.equal(untitledResult.code, BUSY_EXIT_CODE);
+
+	const titled = fakeExec([BUSY, { code: 0, stdout: "{}", stderr: "" }]);
+	const titledResult = await createClient({ exec: titled.exec }).save(NAMED, "/work");
+	assert.equal(titled.calls.length, 2, "a save that names its record is the same record again");
+	assert.equal(titledResult.code, 0);
+});

@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decideAuthorization, describeFailure, allowNamespaceCommand } from "../lib/gate.ts";
+import {
+	DIALOG_TIMEOUT_REASON,
+	askConfirm,
+	decideAuthorization,
+	decideBinding,
+	describeFailure,
+	allowNamespaceCommand,
+} from "../lib/gate.ts";
 
 test("an already authorized namespace is allowed without asking", () => {
 	const decision = decideAuthorization({
@@ -33,14 +40,77 @@ test("a headless session never authorizes: it reports the pending state", () => 
 	assert.match(decision.reason, /no interactive UI/i);
 });
 
-test("a session with UI but a non-tui mode still does not authorize", () => {
-	const decision = decideAuthorization({
+// R5: the ask keys on `hasUI`, which pi sets in the two dialog-capable modes
+// (tui and rpc), and `mode` is not part of the decision any more. The gate
+// used to require `mode === "tui"`, so an RPC or IDE client that can draw a
+// dialog could never authorize a namespace, and the refusal it got was false.
+test("an rpc session with a dialog-capable UI asks, and a headless one does not", () => {
+	const rpc = decideAuthorization({
 		namespace: "aegispi",
 		writeNamespaces: [],
 		hasUI: true,
-		mode: "json",
+		mode: "rpc",
 	});
-	assert.equal(decision.action, "pending");
+	assert.deepEqual(rpc, { action: "confirm" }, "a dialog-capable mode asks, whatever its name");
+
+	for (const mode of ["json", "print"]) {
+		const headless = decideAuthorization({
+			namespace: "aegispi",
+			writeNamespaces: [],
+			hasUI: false,
+			mode,
+		});
+		assert.equal(headless.action, "pending", `${mode}: no UI, no ask`);
+		assert.match(headless.reason, /no interactive UI/i);
+	}
+});
+
+test("the workspace question follows the same rule: a dialog-capable session asks", () => {
+	const asked = decideBinding({ candidate: "aegispi", hasUI: true, mode: "rpc" });
+	assert.deepEqual(asked, { action: "confirm" });
+
+	const pending = decideBinding({ candidate: "aegispi", hasUI: false, mode: "print" });
+	assert.equal(pending.action, "pending");
+	assert.match(pending.reason, /no interactive UI/i);
+});
+
+test("the three dialog answers are told apart: confirmed, declined, timed out", async () => {
+	const accepting = { confirm: async () => true };
+	assert.equal(await askConfirm(accepting, "q", "m", 50), "confirmed");
+
+	const declining = { confirm: async () => false };
+	assert.equal(await askConfirm(declining, "q", "m", 50), "declined");
+
+	// pi resolves `false` on a timeout as well, so the dialog that is aborted
+	// by the extension's own timer must be read as the timeout it was.
+	const silent = {
+		confirm: (_title, _message, opts) =>
+			new Promise((resolve) => {
+				opts.signal.addEventListener("abort", () => resolve(false), { once: true });
+			}),
+	};
+	const started = Date.now();
+	assert.equal(await askConfirm(silent, "q", "m", 40), "timed_out");
+	assert.ok(Date.now() - started < 2000, "the ask gives up on its own budget");
+});
+
+test("the dialog carries its timeout and its abort signal to the host", async () => {
+	let seen = null;
+	const ui = {
+		confirm: async (_title, _message, opts) => {
+			seen = opts;
+			return true;
+		},
+	};
+	await askConfirm(ui, "q", "m", 4321);
+	assert.equal(seen.timeout, 4321, "the dialog auto-dismisses on the budget");
+	assert.ok(seen.signal instanceof AbortSignal, "and it carries the signal the timer aborts");
+});
+
+test("a timeout is not a decline, in words either", () => {
+	assert.match(DIALOG_TIMEOUT_REASON, /not answered in time/i);
+	assert.doesNotMatch(DIALOG_TIMEOUT_REASON, /no interactive UI/i);
+	assert.doesNotMatch(DIALOG_TIMEOUT_REASON, /declined/i);
 });
 
 test("allowNamespaceCommand names the exact command a human must run", () => {
