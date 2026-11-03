@@ -242,6 +242,24 @@ impl AgentInstaller {
             }
             let asset = asset_for(target.kind).expect("target kind has an asset");
             let was_installed = self.is_installed(&target);
+            let shipped: Vec<String> = asset.files.iter().map(|f| f.path.to_string()).collect();
+            // Files the previous install wrote that this manifest no longer
+            // carries are stale: the rename to `.ts` left dead `.js` files
+            // behind until they were removed by hand. The receipt names what
+            // the last install wrote, so only those are deleted — never a
+            // foreign file, never a file the manifest still ships.
+            for stale in stale_installed_files(&target.directory, &shipped) {
+                let path = target.directory.join(&stale);
+                if let Err(error) = fs::remove_file(&path) {
+                    if error.kind() != io::ErrorKind::NotFound {
+                        return Err(error);
+                    }
+                }
+                report.files.push(InstalledFile {
+                    path,
+                    action: FileAction::Removed,
+                });
+            }
             for file in asset.files {
                 let path = target.directory.join(file.path);
                 write_file_atomically(&path, file.contents)?;
@@ -250,6 +268,7 @@ impl AgentInstaller {
                     action: FileAction::Written,
                 });
             }
+            write_install_receipt(&target.directory, &shipped)?;
             report.assets.push(InstalledAsset {
                 kind: target.kind,
                 name: target.name,
@@ -330,6 +349,43 @@ impl AgentInstaller {
 /// The temporary name is unique and created with `create_new`, so it can
 /// never be a pre-existing symlink either, and the permissions of the file
 /// being replaced are preserved (a rename creates a new inode).
+/// The receipt file an install leaves in the target directory, naming every
+/// file it shipped there.
+const INSTALL_MANIFEST_FILENAME: &str = ".mnexis-manifest.json";
+
+/// Read the install receipt in `directory` and return the files it recorded
+/// that `shipped` no longer carries. The receipt itself never counts as
+/// stale. An unreadable or absent receipt yields nothing: a receipt the
+/// installer cannot trust must never cause a deletion.
+fn stale_installed_files(directory: &Path, shipped: &[String]) -> Vec<String> {
+    let receipt = directory.join(INSTALL_MANIFEST_FILENAME);
+    let contents = match fs::read_to_string(&receipt) {
+        Ok(contents) => contents,
+        Err(_) => return Vec::new(),
+    };
+    let previous: Vec<String> = serde_json::from_str::<serde_json::Value>(&contents)
+        .ok()
+        .and_then(|value| {
+            serde_json::from_value::<Vec<String>>(value.get("files").cloned()?).ok()
+        })
+        .unwrap_or_default();
+    previous
+        .into_iter()
+        .filter(|path| {
+            path != INSTALL_MANIFEST_FILENAME && !shipped.iter().any(|kept| kept == path)
+        })
+        .collect()
+}
+
+/// Write the receipt naming every file this install shipped to `directory`.
+fn write_install_receipt(directory: &Path, shipped: &[String]) -> io::Result<()> {
+    let receipt = serde_json::json!({ "files": shipped });
+    write_file_atomically(
+        &directory.join(INSTALL_MANIFEST_FILENAME),
+        &serde_json::to_string_pretty(&receipt).unwrap_or_default(),
+    )
+}
+
 fn write_file_atomically(path: &Path, contents: &str) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -661,6 +717,83 @@ mod tests {
         let extension = installer.targets(AgentEnvironment::Pi)[1].directory.clone();
         assert!(extension.join("index.ts").is_file());
         assert!(!extension.join("test").exists());
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// A file the previous install shipped but the current manifest no
+    /// longer carries must be deleted from the host: the stale `.js` files
+    /// left behind by the extension's rename to `.ts` had to be removed by
+    /// hand. The install receipt (`.mnexis-manifest.json`) records what the
+    /// last install wrote, so the cleanup deletes exactly those, and only
+    /// those.
+    #[test]
+    fn install_deletes_a_previously_shipped_file_the_manifest_no_longer_carries() {
+        let home = temp_home();
+        let installer = AgentInstaller::new(&home);
+        installer
+            .install(AgentEnvironment::Pi, AssetFilter::Extension)
+            .expect("install");
+        let extension = installer.targets(AgentEnvironment::Pi)[1].directory.clone();
+
+        // Simulate the pre-rename era: the receipt recorded `index.js` and
+        // the host still carries it, but today's manifest does not.
+        let receipt = extension.join(".mnexis-manifest.json");
+        fs::write(&receipt, r#"{"files":["index.js"]}"#).expect("write receipt");
+        fs::write(extension.join("index.js"), "stale").expect("write stale file");
+
+        let report = installer
+            .install(AgentEnvironment::Pi, AssetFilter::Extension)
+            .expect("reinstall");
+
+        assert!(!extension.join("index.js").exists(), "the stale file survived");
+        assert!(report.files.iter().any(
+            |f| f.action == FileAction::Removed && f.path == extension.join("index.js")
+        ));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// A foreign file the installer never shipped must never be deleted:
+    /// the receipt lists what mnexis wrote, and nothing else.
+    #[test]
+    fn install_never_deletes_a_file_it_did_not_ship() {
+        let home = temp_home();
+        let installer = AgentInstaller::new(&home);
+        installer
+            .install(AgentEnvironment::Pi, AssetFilter::Extension)
+            .expect("install");
+        let extension = installer.targets(AgentEnvironment::Pi)[1].directory.clone();
+        fs::write(extension.join("user-notes.md"), "mine").expect("write foreign file");
+
+        installer
+            .install(AgentEnvironment::Pi, AssetFilter::Extension)
+            .expect("reinstall");
+
+        let contents =
+            fs::read_to_string(extension.join("user-notes.md")).expect("read foreign file");
+        assert_eq!(contents, "mine");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// A file the current manifest still carries is rewritten, not deleted,
+    /// even when the stale-cleanup pass runs.
+    #[test]
+    fn install_keeps_every_file_the_manifest_still_carries() {
+        let home = temp_home();
+        let installer = AgentInstaller::new(&home);
+        installer
+            .install(AgentEnvironment::Pi, AssetFilter::Extension)
+            .expect("install");
+        let extension = installer.targets(AgentEnvironment::Pi)[1].directory.clone();
+
+        installer
+            .install(AgentEnvironment::Pi, AssetFilter::Extension)
+            .expect("reinstall");
+
+        let asset = asset_for(AssetKind::Extension).expect("the extension asset");
+        for file in asset.files {
+            let path = extension.join(file.path);
+            assert!(path.is_file(), "shipped file missing after cleanup: {path:?}");
+        }
         fs::remove_dir_all(&home).ok();
     }
 
