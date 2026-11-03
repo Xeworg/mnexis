@@ -1819,3 +1819,66 @@ evidence, which is what the records are for.**
 The four superseded branches (`bench/chrome-shape`, `bench/prefix-cost`, `bench/steering-arms`,
 `docs/board-value-filter`) and the merged `integrate/post-audit` are gone. The three PRs are
 **open and waiting for the human**: the push was authorised, the merge is not.
+
+### 29. The release candidate: the installer's three gaps, the host's lifecycle, and the caps that finally speak
+
+Item 28 closed the PR queue of 2026-11-02. Everything below landed after it, and
+the line this board has to carry into the release is *what changed for a user
+who installs 0.6.0*.
+
+**The installer stopped lying (#119, #120, #121, #124).** The `memory_save`
+description named kinds that do not exist (`discovery`, `convention`) while the
+seven canonical names lived only in the argument schema; the install now deletes
+the files a previous receipt shipped and the manifest no longer carries (the
+stale `.js` tree of the TypeScript rename had been cleaned by hand); the opencode
+plugin became a **third asset target**, so `install.sh` ships it instead of the
+user writing the file; the uninstall drops its receipt; and `cargo fmt --check`,
+red on `main` since those three PRs, is green again.
+
+**The host's lifecycle (#122).** The opencode plugin listened to
+`session.created` / `session.deleted` — the V1 names — and 2.2.5 publishes
+neither in a run (25 measured types, both absent). The real seats are
+`ctx.session.hook("experimental.idle")` plus `session.execution.{started,
+succeeded,failed,interrupted}`: the pause refreshes the closing state, the end is
+real where the host gives one. The bug that hid it was the **harness**: the fake
+host ignored `subscribe`'s `types` filter, so the suite was green over a dead
+seat. Verified live in `podman` on 2.2.5, both headless and server mode.
+
+**The caps speak (#123).** The answer to a cap was a count and a number
+(`exceeds max count: 40 > 32`) and nothing else, so an agent that hit one
+retried the same way — measured twice in one session. The words' cap counts the
+union, so the error now says which count is over and how it is made ("the record
+already carried 2, and you are adding 31") and names the escape
+(`replace_keywords`); the content cap, the topic key and the query name the
+limit in effect, whose limit it is, and what to do. The schema declares what it
+enforces — and **not more**: the first draft documented an 8 KiB cap on the
+door's `task` that the door does not impose (it reads the index directly), and
+the differential against the previous binary is what caught it. The pi
+extension, where the escape did not exist at all, now carries it.
+
+**The V1 population, measured at last (#125, #126).** The plugin still ships the
+1.x entry and every verdict had been taken on 2.x. On `opencode-ai@1.19.5` the
+seats are **alive**: `session.created`, `chat.message`, `tool.execute.before/
+after` (`write`, `read`, `bash`, `mnexis_memory_*`), `experimental.chat.system.
+transform` and `dispose` all fire, every one with `sessionID`; a push into
+`output.system` reaches the model; and one headless run registers the session,
+captures the prompt verbatim and writes the memory through MCP into the bound
+namespace. **One real defect came out of it:** nothing ended a V1 session —
+`session.deleted` never fires in a run, and the unload took the "reload" path
+that ends nothing, so `ended_at` stayed `null` forever and the closing record
+was never written. The unload closes now, verified live. The same fix found a
+second one: the close sweep read `action` off the budget's wrapper instead of
+its value, so it reported every session as failed while closing it correctly.
+
+**And the suite stopped reading the developer's machine.** Three pi-extension
+tests asked the directory they ran in which workspace it was, taking the key
+from this checkout's git remote and the path from `process.cwd()`: green here,
+red anywhere else. They carry their own fixture now, and the suite is green run
+from outside the repository (322 pass / 7 skip / 0 fail).
+
+**Where the release stands.** `0.6.0-dev` on `main`, last tag `v0.5.0`
+(2026-10-29). Open and waiting for the human: **#125** (this board and the V1
+measurement) and **#126** (the V1 close and the hermetic tests). After those two,
+what is left before the tag is the bump, the notes — this item is their source —
+and `docs/release.md`'s own sequence. The file-anchored-memory queue is still
+parked by the human's decision, with its analysis and its P0 intact.
