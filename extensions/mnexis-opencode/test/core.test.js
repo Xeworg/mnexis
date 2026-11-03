@@ -34,6 +34,7 @@ import {
 	parseJson,
 	pointerText,
 	promptTextFromParts,
+	sessionCloseContent,
 	sessionIDOfEvent,
 	stateBlockText,
 } from "../index.js";
@@ -349,6 +350,69 @@ test("a call bound to a smaller budget passes exactly that to the child", async 
 	await client.withBudget(700).savePrompt({ content: "hola" }, "/repo");
 
 	assert.equal(calls[0].options.timeout, 700);
+});
+
+// --- the closing state of a session (fix 2) --------------------------------
+//
+// pi writes one "estado al cierre" `project_state` at close and states only what
+// the engine answered (index.ts:2489-2520, `sessionCloseContent`). This plugin
+// writes the same shape through the same `run()` path, so the write budget and
+// the busy retry apply to it like every other write.
+
+test("the estado al cierre states only what the engine answered", () => {
+	const content = sessionCloseContent({
+		id: "s1",
+		namespace: "acme",
+		directory: "/repo",
+		started_at: "2026-11-03T10:00:00Z",
+		ended_at: "2026-11-03T10:30:00Z",
+		branch: "feat/opencode-parity",
+		branch_sha: "abc123",
+		branch_remote: "git:example.com-acme",
+	});
+
+	assert.equal(
+		content,
+		[
+			"Session s1 ended at 2026-11-03T10:30:00Z.",
+			"It started at 2026-11-03T10:00:00Z.",
+			"Directory: /repo.",
+			"Branch: feat/opencode-parity at abc123 (git:example.com-acme).",
+		].join("\n"),
+	);
+	// A fact the engine did not answer is omitted, never written as `undefined`.
+	assert.equal(sessionCloseContent({ id: "s2" }), "Session s2 ended.");
+	assert.equal(sessionCloseContent(null), "Session unknown ended.");
+});
+
+test("the closing record is a write that retries a locked store", async () => {
+	const { exec, calls } = scriptedExec([BUSY, { code: 0, stdout: "{}", stderr: "" }]);
+	const client = createClient({ exec });
+
+	const result = await client.saveMemory(
+		{
+			namespace: "acme",
+			title: "estado al cierre",
+			type: "project_state",
+			content: "Session s1 ended.",
+		},
+		"/repo",
+	);
+
+	assert.deepEqual(calls[0].args, [
+		"save",
+		"--namespace",
+		"acme",
+		"--type",
+		"project_state",
+		"--title",
+		"estado al cierre",
+		"Session s1 ended.",
+		"--json",
+	]);
+	assert.equal(calls[0].options.timeout, WRITE_TIMEOUT_MS, "a write gets the write budget");
+	assert.equal(calls.length, 2, "the title is the record's identity: the retry is the same record");
+	assert.equal(result.code, 0);
 });
 
 test("a locked store is tried again on a call that is idempotent by construction", async () => {

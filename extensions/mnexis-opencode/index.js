@@ -106,16 +106,65 @@ export const CAPTURE_BUDGET_ENV = "MNEXIS_OPENCODE_CAPTURE_BUDGET_MS";
 /** The environment override for the pointer budget. */
 export const POINTER_BUDGET_ENV = "MNEXIS_OPENCODE_POINTER_BUDGET_MS";
 
+/**
+ * How long every step of one session close may take together.
+ *
+ * pi awaits its shutdown with no timeout and gives the close a deadline of its
+ * own (R1, `extensions/mnexis-memory/lib/budget.ts`). Here the close is the work
+ * a host hook awaits: the end, its busy retries and the estado al cierre. Five
+ * seconds is already pathological for two local writes; past it the state is
+ * worth less than the human's turn. An abandoned close is journaled and
+ * re-runnable — the end is idempotent and the record is one title — so the next
+ * close signal revises both.
+ */
+export const SHUTDOWN_BUDGET_MS = 5_000;
+
+/** The environment override for the close's budget. */
+export const SHUTDOWN_BUDGET_ENV = "MNEXIS_OPENCODE_SHUTDOWN_BUDGET_MS";
+
+/**
+ * Why the unload path closes nothing.
+ *
+ * Neither model's unload carries a reason: V2's `setup` returns a cleanup typed
+ * `Cleanup = () => Promise<void> | void` (`@opencode/plugin`'s `plugin.d.ts`),
+ * and V1's `dispose()` takes no argument (RESEARCH §1). V2 hot-reloads a watched
+ * plugin directory and runs that cleanup on the way out (RESEARCH §3), so at the
+ * unload a reload and a quit are the same event — and the engine's verified state
+ * machine never reopens an ended session, so an end there would kill a session
+ * the human is still working in. The close therefore runs on the host's own end
+ * signal (`session.deleted`), and the unload only kills what is in flight.
+ *
+ * The cost, written down in the README: a quit that never deletes its session
+ * leaves the engine's row live. The engine makes that harmless — a second start
+ * of the same id is a no-op and a start after an end never reopens — and the
+ * next session's own close is the record that survives.
+ */
+export const RELOAD_SKIP_REASON =
+	"the unload carries no reason on this host: a reload and a quit look the same, " +
+	"so no session is ended here";
+
+/**
+ * The canonical title of the state a closing session leaves behind.
+ *
+ * The title is the engine's identity (`key_from_title`), so every close lands on
+ * the record the previous close left and bumps its revision instead of adding a
+ * second answer to "where did the last session leave the project". The wording
+ * and the shape are pi's (`SESSION_CLOSE_TITLE`, `sessionCloseContent`), because
+ * the record is the engine's, not a host's.
+ */
+export const SESSION_CLOSE_TITLE = "estado al cierre";
+
 /** The commands that change the store: the longer budget. */
-const WRITE_COMMANDS = new Set(["session", "end", "prompt"]);
+const WRITE_COMMANDS = new Set(["session", "end", "prompt", "save"]);
 
 /**
  * The commands a locked store is worth trying again, because a second try is
  * the same effect and never a second row: a session row is keyed by its id, an
- * end stamps that row, and a prompt is one row of the session. A read is left
+ * end stamps that row, a prompt is one row of the session, and the plugin's one
+ * `save` names its title (the engine's identity for the record). A read is left
  * out on purpose: an answer that never came is worth one report, not three.
  */
-const RETRY_COMMANDS = new Set(["session", "end", "prompt"]);
+const RETRY_COMMANDS = new Set(["session", "end", "prompt", "save"]);
 
 /** The save tool's id on this host: the engine's `memory_save`, namespaced. */
 const SAVE_TOOL_ID = "mnexis_memory_save";
@@ -374,6 +423,25 @@ export function createClient({ exec = defaultExec, binary, env = process.env, re
 				}
 				return call(args, { json: true, cwd });
 			},
+
+			/**
+			 * One typed record, in the namespace the engine named.
+			 *
+			 * The title is the record's identity, so the second try of a locked
+			 * store is the same record and never a second one — the reason `save`
+			 * carries the busy retry and the write budget.
+			 */
+			async saveMemory({ namespace, title, type, content }, cwd) {
+				const args = ["save", "--namespace", namespace];
+				if (typeof type === "string" && type !== "") {
+					args.push("--type", type);
+				}
+				if (typeof title === "string" && title !== "") {
+					args.push("--title", title);
+				}
+				args.push(content);
+				return call(args, { json: true, cwd });
+			},
 		};
 	}
 
@@ -621,6 +689,45 @@ export function pointerText({ status, previous } = {}) {
 	return lines.join("\n");
 }
 
+/**
+ * The mechanical state a closed session leaves in the engine.
+ *
+ * Code can only state what the engine answered: the session id, its boundaries,
+ * the directory it ran in and the branch it started from. The summary is the
+ * narrative and the engine's session row already carries it, so the record does
+ * not duplicate it. Nothing is invented, and a fact the engine did not answer is
+ * omitted instead of written as `undefined`. The shape is pi's
+ * (`extensions/mnexis-memory/index.ts`), because the record is the engine's.
+ *
+ * @param {unknown} session the `end --json` payload
+ * @returns {string}
+ */
+export function sessionCloseContent(session) {
+	const data = session && typeof session === "object" ? session : {};
+	const text = (value) => (typeof value === "string" ? value.trim() : "");
+	const id = text(data.id) || "unknown";
+	const startedAt = text(data.started_at);
+	const endedAt = text(data.ended_at);
+	const directory = text(data.directory);
+	const branch = text(data.branch);
+	const branchSha = text(data.branch_sha);
+	const branchRemote = text(data.branch_remote);
+
+	const lines = [`Session ${id} ended${endedAt ? ` at ${endedAt}` : ""}.`];
+	if (startedAt) {
+		lines.push(`It started at ${startedAt}.`);
+	}
+	if (directory) {
+		lines.push(`Directory: ${directory}.`);
+	}
+	if (branch) {
+		const at = branchSha ? ` at ${branchSha}` : "";
+		const remote = branchRemote ? ` (${branchRemote})` : "";
+		lines.push(`Branch: ${branch}${at}${remote}.`);
+	}
+	return lines.join("\n");
+}
+
 /** The previous session's summary, as one bounded line. */
 function previousSummary(previous) {
 	const session = previous && typeof previous === "object" ? previous.session : null;
@@ -834,9 +941,10 @@ function curateCatalog(editor) {
  * The plugin's engine-facing behaviour, shared by both plugin models.
  *
  * Every method is best effort: a host hook must never fail a turn because the
- * memory engine could not be reached, and it must never fail silently either
- * — a refusal reaches `logger`, which each adapter wires to whatever the host
- * offers (V1 has `client.app.log`; V2 has no logger in the plugin context).
+ * memory engine could not be reached, and it must never fail silently either —
+ * a refusal reaches `logger`, which each adapter wires to whatever the host
+ * offers (V1 has `client.app.log`; V2 has no logger, so its `ctx.storage` is
+ * the journal — see `storageLogger`).
  */
 function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 	const children = registry ?? createChildRegistry();
@@ -979,35 +1087,129 @@ function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 		}
 	}
 
-	/** End one session the plugin opened, best effort. */
-	async function endSession(sessionID) {
+	/**
+	 * Close one session the plugin opened: end it, then leave the workspace's one
+	 * "estado al cierre" record for the next session to resume from.
+	 *
+	 * Both steps share one budget (R1): a host awaits this, so a store that does
+	 * not answer is abandoned instead of holding the turn. The record goes through
+	 * the same `run()` path as every other write, so the write budget and the busy
+	 * retry apply. An abandoned or refused close keeps the session tracked, so the
+	 * next close signal retries it — the end is idempotent and the record's title
+	 * is its identity, so the retry revises both instead of adding a second answer.
+	 */
+	async function closeSession(sessionID) {
+		const close = {
+			session: sessionID,
+			action: "skipped",
+			steps: [],
+			abandoned: [],
+			namespace: null,
+		};
 		if (typeof sessionID !== "string" || sessionID === "") {
-			return;
+			close.reason = "the host named no session";
+			return close;
+		}
+		if (!sessions.has(sessionID)) {
+			// Only what the plugin opened is its to close.
+			close.reason = "not opened by this plugin";
+			return close;
 		}
 		const where = sessions.get(sessionID) ?? cwd;
-		sessions.delete(sessionID);
-		// The outcomes of a closed session are not the next session's evidence.
-		evidence.delete(sessionID);
+		const budget = createDeadline(
+			budgetOf(env[SHUTDOWN_BUDGET_ENV], SHUTDOWN_BUDGET_MS),
+			"shutdown",
+		);
+		const journal = (data) =>
+			report("session-end", {
+				session: sessionID,
+				action: close.action,
+				steps: [...close.steps],
+				namespace: close.namespace,
+				ended_at: close.ended_at,
+				...data,
+			});
+		const abandon = (step, reason) => {
+			close.action = "abandoned";
+			close.abandoned.push(reason);
+			journal({ step, reason });
+			return close;
+		};
 		try {
-			const result = await cli.sessionEnd({ sessionId: sessionID }, where);
-			if (result.code === 3) {
+			const endStep = await budget.step("end", (left) =>
+				cli.withBudget(left).sessionEnd({ sessionId: sessionID }, where),
+			);
+			if (endStep.abandoned) {
+				return abandon("end", endStep.abandoned);
+			}
+			const ended = endStep.value;
+			close.steps.push("end");
+			close.exit_code = ended.code;
+			if (ended.code === 3) {
 				// The engine never heard of this session: nothing to end, and
 				// nothing to write its state into. The refusal gets its name.
-				report("session-end", { session: sessionID, exit_code: 3, not_registered: true });
-				return;
+				close.action = "failed";
+				close.not_registered = true;
+				sessions.delete(sessionID);
+				evidence.delete(sessionID);
+				journal({ step: "end", exit_code: 3, not_registered: true });
+				return close;
 			}
-			if (result.code !== 0) {
-				report("session-end", { session: sessionID, exit_code: result.code });
+			if (ended.code !== 0) {
+				close.action = "failed";
+				journal({ step: "end", exit_code: ended.code });
+				return close;
 			}
+			const session = ended.data && typeof ended.data === "object" ? ended.data : null;
+			const namespace =
+				session && typeof session.namespace === "string" ? session.namespace : "";
+			close.ended_at =
+				session && typeof session.ended_at === "string" && session.ended_at !== ""
+					? session.ended_at
+					: null;
+			if (namespace === "") {
+				// The engine owns the workspace's namespace; a close that would have
+				// to guess it is not a close, and says so.
+				close.action = "failed";
+				close.error = "the engine ended the session but answered no namespace";
+				journal({ step: "end" });
+				return close;
+			}
+			close.namespace = namespace;
+			const saved = await budget.step("save", (left) =>
+				cli.withBudget(left).saveMemory(
+					{
+						namespace,
+						title: SESSION_CLOSE_TITLE,
+						type: "project_state",
+						content: sessionCloseContent({ id: sessionID, ...(session ?? {}) }),
+					},
+					where,
+				),
+			);
+			if (saved.abandoned) {
+				return abandon("save", saved.abandoned);
+			}
+			close.steps.push("save");
+			close.exit_code = saved.value.code;
+			if (saved.value.code !== 0) {
+				// The session is over either way; the record is the part the next
+				// close signal can still revise.
+				close.action = "partial";
+				journal({ step: "save", exit_code: saved.value.code });
+				return close;
+			}
+			close.action = "closed";
+			sessions.delete(sessionID);
+			evidence.delete(sessionID);
+			return close;
 		} catch (error) {
-			report("session-end", { session: sessionID, error: String(error) });
-		}
-	}
-
-	/** End every session this plugin opened, once. */
-	async function endSessions() {
-		for (const sessionID of [...sessions.keys()]) {
-			await endSession(sessionID);
+			// The session is going away either way; a close that cannot reach the
+			// engine is a report, never an exception in a host hook.
+			close.action = "failed";
+			close.error = String(error);
+			journal({ step: "hook" });
+			return close;
 		}
 	}
 
@@ -1123,21 +1325,28 @@ function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 	}
 
 	/**
-	 * The end of this plugin instance: the calls still in flight die first, so
-	 * a capture cannot finish into a session that is closing, and then every
-	 * session the plugin opened is ended. Both halves are idempotent.
+	 * The end of this plugin instance: the calls still in flight die first, so a
+	 * capture cannot finish into a session that is going away. Nothing else runs
+	 * here, and `RELOAD_SKIP_REASON` says why — a reload is not an end, and this
+	 * host gives the unload no way to tell one from the other. The answer names
+	 * what was skipped, so the decision is observable instead of implied.
 	 */
 	async function shutdown() {
 		children.killAll();
-		await endSessions();
+		return {
+			action: "skipped",
+			reason: RELOAD_SKIP_REASON,
+			steps: [],
+			abandoned: [],
+			sessions: [...sessions.keys()],
+		};
 	}
 
 	return {
 		cli,
 		capture,
 		startSession,
-		endSession,
-		endSessions,
+		closeSession,
 		pointer,
 		settle,
 		observeTool,
@@ -1147,6 +1356,36 @@ function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 }
 
 // --- the plugin, in both shapes -------------------------------------------
+
+/**
+ * The journal this host has.
+ *
+ * V1 hands a plugin `client.app.log`; V2's plugin context has no logger at all
+ * (RESEARCH §1), and its `ctx.storage` is a key/value store — `StorageDomain`:
+ * `get`/`set`/`remove`/`scan` (`@opencode/plugin`'s `storage.d.ts`). A report
+ * written there is one key per kind, so a refusal is observable instead of
+ * swallowed — which is what the audit found: `report()` had no sink on V2.
+ *
+ * @param {unknown} storage the host's `ctx.storage`, or nothing
+ * @returns {((record: object) => void) | undefined}
+ */
+export function storageLogger(storage) {
+	if (!storage || typeof storage.set !== "function") {
+		return undefined;
+	}
+	return (record) => {
+		const kind = typeof record?.kind === "string" && record.kind !== "" ? record.kind : "report";
+		try {
+			void Promise.resolve(
+				storage.set(`mnexis.report.${kind}`, { at: new Date().toISOString(), ...record }),
+			).catch(() => {
+				// The journal is a report, never a precondition.
+			});
+		} catch {
+			// Same: a store that refuses the report never fails the turn.
+		}
+	};
+}
 
 /**
  * Build the plugin.
@@ -1170,7 +1409,8 @@ export function createPlugin({ exec, binary, env = process.env, logger, registry
 	/** opencode 2.x: `setup(ctx)` registers hooks on the domains that own them. */
 	async function setup(ctx = {}) {
 		const cwd = typeof ctx.location?.directory === "string" ? ctx.location.directory : process.cwd();
-		const core = coreFor(cwd, undefined);
+		// V2 has no logger: the host's storage is where a report survives.
+		const core = coreFor(cwd, storageLogger(ctx.storage));
 		const controllers = [];
 
 		// Each seat is registered on its own: a host that does not have one
@@ -1278,7 +1518,9 @@ export function createPlugin({ exec, binary, env = process.env, logger, registry
 						for await (const event of stream) {
 							const sessionID = sessionIDOfEvent(event);
 							if (event?.type === "session.deleted") {
-								await core.endSession(sessionID);
+								// The host's own end signal: the session is over, so its
+								// state is written before the plugin forgets it.
+								await core.closeSession(sessionID);
 								continue;
 							}
 							await core.startSession(sessionID, directoryOfEvent(event) ?? cwd);
@@ -1298,7 +1540,7 @@ export function createPlugin({ exec, binary, env = process.env, logger, registry
 			for (const controller of controllers) {
 				controller.abort();
 			}
-			await core.shutdown();
+			return core.shutdown();
 		};
 	}
 
@@ -1338,7 +1580,9 @@ export function createPlugin({ exec, binary, env = process.env, logger, registry
 					return;
 				}
 				if (event.type === "session.deleted") {
-					await core.endSession(sessionIDOfEvent(event));
+					// The host's own end signal: end the session and leave the state
+					// it closed with. The answer is the close's own report.
+					return core.closeSession(sessionIDOfEvent(event));
 				}
 			},
 
@@ -1386,7 +1630,7 @@ export function createPlugin({ exec, binary, env = process.env, logger, registry
 			},
 
 			async dispose() {
-				await core.shutdown();
+				return core.shutdown();
 			},
 		};
 	}
