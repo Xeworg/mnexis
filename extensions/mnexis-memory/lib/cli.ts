@@ -588,7 +588,20 @@ export function createClient({ exec = defaultExec, binary, env = process.env, re
 			return this.run(["config", "show"], { json: true, cwd });
 		},
 
-		async save({ namespace, content, title, tags, keywords, topicKey, idempotencyKey, type }, cwd) {
+		async save(
+			{
+				namespace,
+				content,
+				title,
+				tags,
+				keywords,
+				replaceKeywords,
+				topicKey,
+				idempotencyKey,
+				type,
+			},
+			cwd,
+		) {
 			const args = ["save", "--namespace", namespace];
 			if (typeof type === "string" && type !== "") {
 				args.push("--type", type);
@@ -601,6 +614,12 @@ export function createClient({ exec = defaultExec, binary, env = process.env, re
 			}
 			if (keywords) {
 				args.push("--keywords", keywords);
+			}
+			// The way out of the words' cap: the list replaces the record's
+			// own instead of adding to it. Without this flag the escape the
+			// engine's answer names does not exist on this surface.
+			if (replaceKeywords) {
+				args.push("--replace-keywords");
 			}
 			if (topicKey) {
 				args.push("--topic-key", topicKey);

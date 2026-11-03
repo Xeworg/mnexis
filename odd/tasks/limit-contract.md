@@ -102,3 +102,11 @@ the model reads declares the cap before the caller hits it.
   tree from another path); the opencode plugin 80 pass / 0 fail / 1 skip.
 - **L9** — Not committed: the tree carries the change and the human decides
   the branch, the PR and the merge.
+- **L10** — The delivery, branch `fix/limit-contract` over main `3975363`: the
+  slice boundary is **one contract, three surfaces**, and the authored total is
+  ~540 lines, past the ~400-line review unit. It stays one PR because the
+  three slices are the same contract and a reader cannot judge any of them
+  alone: `549373c` (the engine's answers and the tests that hold them),
+  `3dc7b94` (the schema and the help that declare the caps), and the last
+  slice (the pi extension's escape, `S7`). A PR that carried only the first
+  would leave the schema claiming a cap and the extension missing the flag.

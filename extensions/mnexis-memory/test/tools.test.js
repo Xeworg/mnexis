@@ -1505,6 +1505,48 @@ test("the save passes the words to the engine", async () => {
 	);
 });
 
+test("the save declares the way out of the words' cap", async () => {
+	setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+
+	const replace = save.parameters.properties.replace_keywords;
+	assert.ok(
+		replace,
+		`the tool declares replace_keywords: ${JSON.stringify(save.parameters)}`,
+	);
+	assert.equal(replace.type, "boolean", "it is a switch, not a value");
+
+	const keywords = save.parameters.properties.keywords;
+	assert.match(
+		keywords.description,
+		/32 words/,
+		`the words' description names the cap: ${keywords.description}`,
+	);
+});
+
+test("the save passes the way out to the engine", async () => {
+	const { log } = setup();
+	const { tools, pi } = fakeHost();
+	mnexisMemory(pi);
+	const save = tools.get("mnexis_save");
+
+	await save.execute(
+		"k1b",
+		{ content: "el puerto es 8081", keywords: "puerto", replace_keywords: true },
+		undefined,
+		undefined,
+		context(),
+	);
+	const call = calls(log).find((args) => args[0] === "save");
+	assert.ok(call, "the engine was asked");
+	assert.ok(
+		call.includes("--replace-keywords"),
+		`the escape reaches the engine: ${JSON.stringify(call)}`,
+	);
+});
+
 test("the save message shows the accumulated words", async () => {
 	const { log } = setup();
 	// The record already carries a vocabulary a previous session wrote; this
