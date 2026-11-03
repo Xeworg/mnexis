@@ -1,7 +1,37 @@
-# Mnexis
+<div align="center">
+  <img src="assets/emblem.png" alt="Mnexis" width="320" />
+  <h1>Mnexis</h1>
+  <p><strong>Local-first memory engine for AI agents.</strong><br/>
+  SQLite + FTS5, single Rust binary, no daemon, no cloud. Linux-first MVP.</p>
+  <p>
+    <a href="https://github.com/Xeworg/mnexis/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Xeworg/mnexis?include_prereleases&logo=github" /></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Xeworg/mnexis" /></a>
+    <img alt="Platform" src="https://img.shields.io/badge/platform-Linux-blue" />
+    <img alt="Rust" src="https://img.shields.io/badge/rust-1.95%2B-orange?logo=rust" />
+    <a href="https://ko-fi.com/xeworgmmm"><img alt="Ko-fi" src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?logo=kofi&logoColor=white" /></a>
+  </p>
+</div>
 
-Local-first memory engine for AI agents. SQLite + FTS5, single Rust
-binary, no daemon, no cloud. Linux-first MVP.
+---
+
+## Why mnexis
+
+An AI agent without memory starts every session from zero: to do anything
+well it has to **re-read the whole project** — the docs, the code, the
+"why" behind each decision — burning time and tokens, and still losing
+everything the repository does not say: what you asked for, what was tried
+and rejected, the port, the constraint, the plan.
+
+mnexis keeps that context on your machine: a local-first memory engine
+(SQLite + FTS5, one Rust binary, no daemon, no cloud) where the facts,
+the decisions and the sessions are stored once and retrieved in
+milliseconds.
+
+And here is the simple part: **you don't have to do anything.** Install
+the extension for your agent — `pi` or `opencode`, one command — and from
+then on the agent loads the project's memory at the start of every
+session, saves what matters on its own, and never re-reads the whole
+project again. The TUI is there for when *you* want to look.
 
 ## Install
 
@@ -17,7 +47,7 @@ It downloads the release artifact for your platform, checks it against
 a version with `MNEXIS_VERSION`:
 
 ```sh
-MNEXIS_VERSION=0.2.0 \
+MNEXIS_VERSION=0.6.0 \
   curl -fsSL https://github.com/Xeworg/mnexis/releases/latest/download/install.sh | bash
 ```
 
@@ -137,7 +167,8 @@ replaces the list when a word is wrong.
 
 The repository also ships a pi extension that exposes the memory engine as
 native tools, so an agent can store and recall project memory without being
-asked to, and without choosing a namespace itself:
+asked to, and without choosing a namespace itself. Extensions exist for
+**pi and opencode only** — no other agent environment is wired:
 
 ```sh
 ./install.sh extensions --env pi            # → <agent-dir>/extensions/
@@ -153,6 +184,14 @@ mnexis agent status
 mnexis agent install --env pi
 mnexis agent install --env opencode
 ```
+
+The two environments get different integrations, and that is deliberate:
+pi receives the skill **and** the native extension (its hooks let the
+extension store prompts without the model), while opencode receives the
+skill, its own plugin and the MCP server wiring (`agent status` answers
+the three for each environment). Anything else — Claude Code, Cursor,
+whatever comes next — can still reach the engine through the MCP stdio
+server (`mnexis mcp serve`), but ships no pre-packaged integration.
 
 On a fresh profile, `mnexis init` creates the default data directory
 (`~/.local/share/mnexis`) with `mnexis.db` and `mnexis.toml`; copy those two
@@ -214,66 +253,33 @@ another project's memories. See
 
 ## CLI
 
-The full surface (25 command groups; see `mnexis --help`):
+Most of the 34 commands are for the **agent**, not for you: it saves,
+recalls, supersedes and audits memory on its own, and `mnexis --help`
+prints the full surface when you need it (errors follow a stable
+exit-code set — 0 for success, 1 reserved for infrastructure, the stable
+labels from `INVALID_ARGUMENT=2` to `BUSY=10` — documented in the
+[PRD](docs/PRD-Mnexis.md)). The ones a human actually types:
 
-```
-version           print the version and exit
-init              create a new profile (mnexis.db + mnexis.toml)
-mcp serve         run the MCP stdio server
-save              save a new memory (--title names the fact, --keywords its words)
-update            update a memory (optimistic revision)
-supersede         mark an older memory superseded by a newer one
-search            ranked search (every word of the query counts)
-suggest-topic-key the topic key a title yields, and who holds it
-list              list memories (--value keeps only the ones that carry a value)
-session           register the session this process runs in
-end               end a session, with an optional summary
-sessions          the sessions this profile can read
-prompt            store what the user said
-prompts           list or search what the user said
-status            where this workspace may write, and what is already there
-show              show a memory (current or specific revision)
-history           show revision history (each revision as the record stood)
-timeline          the life of one memory: identity, events, supersede links
-delete            soft-delete a memory
-restore           restore a soft-deleted memory
-purge             hard-delete soft-deleted memories (dry-run by default)
-reindex           rebuild the FTS5 index from canonical data
-doctor            health checks with a stable machine contract
-doctor repair     plan / dry-run / apply — repairs what it can fix
-stats             what every namespace holds, and the totals
-upgrade           check for a newer release and install it
-config show       print effective configuration and scope
-config allow-namespace
-                  authorize a namespace for read and write in the profile
-config allow-read-namespace
-                  authorize reading a namespace in the profile, without writes
-config allow-global
-                  open (or --revoke) the reserved 'global' namespace
-config allow-read-all
-                  open (or --revoke) reads across namespaces
-project bind/list/unbind
-                  manage workspace → namespace bindings (see docs/projects.md)
-import / export   JSONL round-trip with conflict policies
-context           budgeted memory_context pipeline (PRD §9)
-tui               browse and edit memories in a terminal UI
+```sh
+mnexis save --title "the fact's name" "the fact itself"
+mnexis search "wrap mode"         # find it again
+mnexis context "extend the game"  # what the agent will read for a task
+mnexis status                     # where this workspace may write
+mnexis stats                      # what every namespace holds
+mnexis doctor                     # health checks (`doctor repair` fixes)
+mnexis upgrade                    # self-update
 ```
 
-`list` also filters by **value**: `mnexis list --value 8081` answers with the
-records whose text carries that value — a run of three or more digits, exactly
-as written, so `8081` matches `the port is 8081` and `v8081` but not `80810`.
-The filter applies **before** the limit, so the answer is every record that
-carries the value and never a short page of the namespace; `--offset` pages the
-matches. A value nobody carries is an empty answer, and an argument that is
-not a value (`80`, `abc`) is an `INVALID_ARGUMENT` that says what a value is.
-
-Exit codes follow the stable error set (`INVALID_ARGUMENT=2`,
-`NOT_FOUND=3`, `FORBIDDEN=4`, `REVISION_CONFLICT|TOPIC_CONFLICT=5`,
-`INDEX_UNAVAILABLE=6`, `BUDGET_TOO_SMALL=7`, `CURSOR_EXPIRED=8`,
-`UNSUPPORTED_VERSION=9`, `BUSY=10`); 1 is reserved for infrastructure
-errors, 0 for success.
+And `mnexis tui` is the human face of the engine: the same surface,
+interactive — browse and edit memories, search with `/`, the write flows
+with confirmations — plus *Install for agents*, so wiring an agent
+integration needs no flags at all (see [docs/tui.md](docs/tui.md)).
 
 ## TUI
+
+<div align="center">
+  <img src="assets/tui.png" alt="mnexis TUI" width="720" />
+</div>
 
 `mnexis tui` opens a full-CRUD terminal UI over the same service as the
 CLI: three panes (namespaces / memories / detail), FTS5 search with `/`,
@@ -327,7 +333,8 @@ another one it may read. All errors map to JSON-RPC code `-32050` with
 
 ## Testing
 
-`cargo test` runs 244 tests across 15 suites (lib + binary + integration).
+`cargo test` runs 849 tests across 25 suites (lib + binary + integration),
+all green.
 CI is currently the dev host's `cargo fmt --check && git diff --check
 && cargo test --all-targets` chain — there is no hosted CI yet.
 
@@ -340,9 +347,11 @@ MIT. See [LICENSE](LICENSE).
 
 ## Status
 
-v0.2.0 (E0..E5 MVP, plus the agent-memory-ergonomics feature: the recall
-happens on its own, `mnexis status` answers "where may I write?" and the
-installer wires opencode's MCP server). Linux only. The 500-memory/150-query
+<div align="center">
+  <img src="assets/logo-neon.png" alt="Mnexis" width="200" />
+</div>
+
+v0.6.0. Linux only. The 500-memory/150-query
 evaluation
 fixture is not yet committed; the spike corpora (`docs/t14-fts5-benchmark.md`)
 are the only measured quality evidence at the moment. See `odd/tasks/`
