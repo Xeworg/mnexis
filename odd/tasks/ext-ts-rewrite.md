@@ -166,7 +166,7 @@ installed pi dist. Verdicts:
   registered, prompt captured, /mnexis renders, declared tools == 5 and
   tool_search reachability, journal lines visible in the transcript, footer
   counters live. Route: parent inline. Risk: item 5 (installer + host
-  environment) → own commit.
+  environment) → own commit. Commit: 8800626.
 
 ## Log
 
@@ -257,4 +257,20 @@ installed pi dist. Verdicts:
   start verb, mnexis_workspace demoted to binding/allowlists, and the overlap
   note: the extension is the code layer, the skill is the advisory layer and
   repeats nothing the tools declare. cargo agents 23/23 (the skill re-embeds
-  green).
+  green). 
+- L12: T7 evidence (8800626): the FIRST live probe failed — `Cannot find
+  module './lib/budget.ts'` — T4 added the module to the tree but the installer
+  manifest (src/assets.rs) was never updated, and the suite could not catch it
+  because tests run against the tree. Fix: the manifest entry plus
+  `the_extension_manifest_ships_exactly_the_tree`, a drift test walking the
+  tree (minus test/) and asserting both directions. Second defect found live:
+  the installer does not REMOVE files it no longer ships — stale index.js and
+  lib/*.js coexisted with the .ts files until manually deleted; board item
+  (manifest-based upgrade cleanup is its own feature). After the fix:
+  rebuilt, reinstalled, and the probe session listed EXACTLY the five door
+  tools (workspace, context, search, show, save); the probe session registered
+  in the store and closed cleanly (the budgeted close path); its prompt was
+  captured (row 85). Full cargo test: 26 ok, 0 failed. Manual visual checks
+  ride the user's next interactive session: footer counters, journal lines,
+  the /mnexis card, the visible nudge line, default-shell padding and error
+  colors.
