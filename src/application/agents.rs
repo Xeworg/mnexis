@@ -664,6 +664,51 @@ mod tests {
         fs::remove_dir_all(&home).ok();
     }
 
+    /// Every file in the extension tree (except its tests) must be in the
+    /// shipped manifest, and every manifest entry must exist in the tree:
+    /// a module added to the tree and forgotten here ships an extension the
+    /// host cannot load (`Cannot find module './lib/<new>.ts'` — caught live
+    /// at T7, when lib/budget.ts was missing from the manifest).
+    #[test]
+    fn the_extension_manifest_ships_exactly_the_tree() {
+        fn collect_files(dir: &Path, prefix: &str, out: &mut Vec<String>) {
+            for entry in fs::read_dir(dir).expect("read extension dir").flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                if path.is_dir() {
+                    if name != "test" {
+                        collect_files(&path, &format!("{prefix}{name}/"), out);
+                    }
+                    continue;
+                }
+                out.push(format!("{prefix}{name}"));
+            }
+        }
+        let tree = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("extensions")
+            .join("mnexis-memory");
+        let mut expected = Vec::new();
+        collect_files(&tree, "", &mut expected);
+        assert!(!expected.is_empty(), "the extension tree walked empty");
+        let shipped: HashSet<String> = crate::assets::EXTENSION_MNEXIS_MEMORY
+            .files
+            .iter()
+            .map(|f| f.path.to_string())
+            .collect();
+        for path in &expected {
+            assert!(
+                shipped.contains(path),
+                "file in the tree but not shipped (the host cannot load it): {path}"
+            );
+        }
+        for path in &shipped {
+            assert!(
+                expected.contains(path),
+                "shipped but absent from the tree: {path}"
+            );
+        }
+    }
+
     #[test]
     fn uninstall_removes_only_the_shipped_files() {
         let home = temp_home();

@@ -55,6 +55,10 @@ pub const EXTENSION_MNEXIS_MEMORY: EmbeddedAsset = EmbeddedAsset {
             contents: include_str!("../extensions/mnexis-memory/lib/gate.ts"),
         },
         EmbeddedFile {
+            path: "lib/budget.ts",
+            contents: include_str!("../extensions/mnexis-memory/lib/budget.ts"),
+        },
+        EmbeddedFile {
             path: "lib/workspace.ts",
             contents: include_str!("../extensions/mnexis-memory/lib/workspace.ts"),
         },
