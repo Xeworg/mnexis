@@ -1,5 +1,5 @@
-//! Installing the agent integration (skill and extension) into an agent
-//! environment.
+//! Installing the agent integration (skill, extension and plugin) into an
+//! agent environment.
 //!
 //! This is the only place that writes those files. The CLI and the TUI both
 //! go through it, so an installation performed from the terminal and one
@@ -78,6 +78,8 @@ pub enum AssetFilter {
     Skill,
     /// Only the agent extension.
     Extension,
+    /// Only the host plugin.
+    Plugin,
 }
 
 impl AssetFilter {
@@ -87,13 +89,14 @@ impl AssetFilter {
             "all" => Some(AssetFilter::All),
             "skill" | "skills" => Some(AssetFilter::Skill),
             "extension" | "extensions" => Some(AssetFilter::Extension),
+            "plugin" | "plugins" => Some(AssetFilter::Plugin),
             _ => None,
         }
     }
 
     /// The filter names, for help and error messages.
     pub fn supported_ids() -> String {
-        "all, skill, extension".to_string()
+        "all, skill, extension, plugin".to_string()
     }
 
     /// Whether this filter includes a kind.
@@ -102,6 +105,7 @@ impl AssetFilter {
             AssetFilter::All => true,
             AssetFilter::Skill => matches!(kind, AssetKind::Skill),
             AssetFilter::Extension => matches!(kind, AssetKind::Extension),
+            AssetFilter::Plugin => matches!(kind, AssetKind::Plugin),
         }
     }
 }
@@ -113,6 +117,8 @@ pub enum AssetKind {
     Skill,
     /// An agent extension (an executable module for the host).
     Extension,
+    /// A host plugin (a single file the host auto-loads).
+    Plugin,
 }
 
 impl AssetKind {
@@ -121,6 +127,7 @@ impl AssetKind {
         match self {
             AssetKind::Skill => "skill",
             AssetKind::Extension => "extension",
+            AssetKind::Plugin => "plugin",
         }
     }
 }
@@ -198,6 +205,15 @@ impl AgentInstaller {
         }
     }
 
+    /// The directory where the environment looks for plugins, when it
+    /// supports them at all.
+    pub fn plugins_dir(&self, environment: AgentEnvironment) -> Option<PathBuf> {
+        match environment {
+            AgentEnvironment::Pi => None,
+            AgentEnvironment::Opencode => Some(self.home.join(".config").join("opencode").join("plugins")),
+        }
+    }
+
     /// Every asset that can be installed into an environment.
     pub fn targets(&self, environment: AgentEnvironment) -> Vec<AssetTarget> {
         let mut targets = vec![AssetTarget {
@@ -212,6 +228,16 @@ impl AgentInstaller {
                 kind: AssetKind::Extension,
                 name: "mnexis-memory",
                 directory: dir.join("mnexis-memory"),
+            });
+        }
+        if let Some(dir) = self.plugins_dir(environment) {
+            targets.push(AssetTarget {
+                environment,
+                kind: AssetKind::Plugin,
+                name: "mnexis-memory",
+                // The plugins directory itself: opencode loads every .js
+                // file it finds there, so the file name is the asset's.
+                directory: dir,
             });
         }
         targets
@@ -326,6 +352,15 @@ impl AgentInstaller {
                         }
                         Err(_) => {}
                     }
+                }
+            }
+            // The receipt is install bookkeeping, not a shipped file: once
+            // nothing of ours remains, it says nothing and must not keep a
+            // directory that uninstall just emptied alive.
+            let receipt = target.directory.join(INSTALL_MANIFEST_FILENAME);
+            if let Err(error) = fs::remove_file(&receipt) {
+                if error.kind() != io::ErrorKind::NotFound {
+                    return Err(error);
                 }
             }
             remove_empty_directories(&target.directory, &protected);
@@ -476,10 +511,13 @@ fn asset_for(kind: AssetKind) -> Option<&'static EmbeddedAsset> {
     ALL_ASSETS.iter().find(|asset| {
         matches!(
             (kind, asset.name),
-            (AssetKind::Skill, "mnexis-memory") | (AssetKind::Extension, "mnexis-memory")
+            (AssetKind::Skill, "mnexis-memory")
+                | (AssetKind::Extension, "mnexis-memory")
+                | (AssetKind::Plugin, "mnexis-memory")
         ) && match kind {
             AssetKind::Skill => asset.files.iter().any(|f| f.path == "SKILL.md"),
             AssetKind::Extension => asset.files.iter().any(|f| f.path == "index.ts"),
+            AssetKind::Plugin => asset.files.iter().any(|f| f.path == "mnexis-memory.js"),
         }
     })
 }
@@ -663,17 +701,102 @@ mod tests {
     }
 
     #[test]
-    fn opencode_gets_the_skill_only() {
+    fn opencode_gets_the_skill_and_the_plugin() {
         let home = temp_home();
         let installer = AgentInstaller::new(&home);
         let targets = installer.targets(AgentEnvironment::Opencode);
-        assert_eq!(targets.len(), 1);
+        assert_eq!(targets.len(), 2);
         assert_eq!(targets[0].kind, AssetKind::Skill);
-        assert!(
-            targets[0]
-                .directory
-                .ends_with("opencode/skills/mnexis-memory")
+        assert!(targets[0]
+            .directory
+            .ends_with("opencode/skills/mnexis-memory"));
+        assert_eq!(targets[1].kind, AssetKind::Plugin);
+        // The plugin lands in the plugins directory itself: opencode loads
+        // every .js file it finds there, so the file name is the asset's.
+        assert!(targets[1].directory.ends_with("opencode/plugins"));
+        assert_eq!(targets[1].name, "mnexis-memory");
+    }
+
+    /// The opencode plugin is installed with the same receipt contract as
+    /// every other target: the receipt names what was shipped, a foreign
+    /// plugin in the same directory is never touched.
+    #[test]
+    fn install_writes_the_opencode_plugin_and_records_it_in_the_receipt() {
+        let home = temp_home();
+        let installer = AgentInstaller::new(&home);
+        let report = installer
+            .install(AgentEnvironment::Opencode, AssetFilter::All)
+            .expect("install");
+        let plugins = installer.targets(AgentEnvironment::Opencode)[1]
+            .directory
+            .clone();
+        let plugin = plugins.join("mnexis-memory.js");
+        assert!(plugin.is_file(), "the plugin file was not written");
+        assert!(report.files.iter().any(|f| f.path == plugin));
+        let receipt =
+            fs::read_to_string(plugins.join(".mnexis-manifest.json")).expect("read receipt");
+        assert!(receipt.contains("mnexis-memory.js"));
+
+        fs::write(plugins.join("foreign-plugin.js"), "theirs").expect("write foreign");
+        installer
+            .install(AgentEnvironment::Opencode, AssetFilter::All)
+            .expect("reinstall");
+        let contents =
+            fs::read_to_string(plugins.join("foreign-plugin.js")).expect("read foreign");
+        assert_eq!(contents, "theirs");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// Uninstalling removes the plugin file but never the plugins directory:
+    /// other plugins the user installed live there too.
+    #[test]
+    fn uninstall_removes_the_opencode_plugin_but_keeps_the_plugins_directory() {
+        let home = temp_home();
+        let installer = AgentInstaller::new(&home);
+        installer
+            .install(AgentEnvironment::Opencode, AssetFilter::All)
+            .expect("install");
+        let plugins = installer.targets(AgentEnvironment::Opencode)[1]
+            .directory
+            .clone();
+        fs::write(plugins.join("foreign-plugin.js"), "theirs").expect("write foreign");
+
+        installer
+            .uninstall(AgentEnvironment::Opencode, AssetFilter::All)
+            .expect("uninstall");
+
+        assert!(!plugins.join("mnexis-memory.js").exists());
+        assert!(plugins.is_dir(), "the plugins directory itself was removed");
+        assert_eq!(
+            fs::read_to_string(plugins.join("foreign-plugin.js")).expect("read foreign"),
+            "theirs"
         );
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// The receipt is install bookkeeping: uninstall removes it together
+    /// with the files it named, so a directory uninstall emptied can
+    /// finally be removed too.
+    #[test]
+    fn uninstall_removes_the_install_receipt() {
+        let home = temp_home();
+        let installer = AgentInstaller::new(&home);
+        installer
+            .install(AgentEnvironment::Pi, AssetFilter::All)
+            .expect("install");
+        let skill = installer.targets(AgentEnvironment::Pi)[0].directory.clone();
+        assert!(skill.join(".mnexis-manifest.json").is_file());
+
+        installer
+            .uninstall(AgentEnvironment::Pi, AssetFilter::All)
+            .expect("uninstall");
+
+        assert!(
+            !skill.join(".mnexis-manifest.json").exists(),
+            "the receipt survived the uninstall"
+        );
+        assert!(!skill.exists(), "the emptied skill directory was not removed");
+        fs::remove_dir_all(&home).ok();
     }
 
     #[test]

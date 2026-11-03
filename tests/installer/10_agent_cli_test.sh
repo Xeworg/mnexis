@@ -19,6 +19,7 @@ mkdir -p "$AGENT_HOME"
 PI_SKILLS="$AGENT_HOME/.pi/agent/skills/mnexis-memory"
 PI_EXTENSIONS="$AGENT_HOME/.pi/agent/extensions/mnexis-memory"
 OC_SKILLS="$AGENT_HOME/.config/opencode/skills/mnexis-memory"
+OC_PLUGINS="$AGENT_HOME/.config/opencode/plugins"
 
 # The binary with a HOME of its own, never the caller's.
 run_agent() {
@@ -42,6 +43,7 @@ assert_contains "status names the pi environment" "pi"
 assert_contains "status names the opencode environment" "opencode"
 assert_contains "status reports the skill as not installed" "skill:     not installed"
 assert_contains "status reports the extension as not installed" "extension: not installed"
+assert_contains "status reports the plugin as not installed" "plugin:    not installed"
 assert_contains "status lists the pi skill directory" ".pi/agent/skills/mnexis-memory"
 assert_contains "status lists the opencode skill directory" ".config/opencode/skills/mnexis-memory"
 
@@ -63,8 +65,10 @@ assert_contains "install names the skill" "Installed skill 'mnexis-memory'"
 assert_contains "install names the extension" "Installed extension 'mnexis-memory'"
 assert_contains "install names the written file" "SKILL.md"
 assert_file "the pi skill is installed" "$PI_SKILLS/SKILL.md"
-assert_file "the pi extension entry point is installed" "$PI_EXTENSIONS/index.js"
-assert_file "the pi extension lib is installed" "$PI_EXTENSIONS/lib/cli.js"
+assert_file "the pi extension entry point is installed" "$PI_EXTENSIONS/index.ts"
+assert_file "the pi extension lib is installed" "$PI_EXTENSIONS/lib/cli.ts"
+assert_file "the pi extension budget lib is installed" "$PI_EXTENSIONS/lib/budget.ts"
+assert_file "the pi extension chrome lib is installed" "$PI_EXTENSIONS/lib/chrome.ts"
 assert_file "the pi extension package.json is installed" "$PI_EXTENSIONS/package.json"
 assert_dir_missing "the extension tests are not installed" "$PI_EXTENSIONS/test"
 
@@ -79,10 +83,12 @@ while IFS='|' read -r installed shipped; do
   fi
 done <<EOF
 $PI_SKILLS/SKILL.md|skills/mnexis-memory/SKILL.md
-$PI_EXTENSIONS/index.js|extensions/mnexis-memory/index.js
-$PI_EXTENSIONS/lib/cli.js|extensions/mnexis-memory/lib/cli.js
-$PI_EXTENSIONS/lib/gate.js|extensions/mnexis-memory/lib/gate.js
-$PI_EXTENSIONS/lib/workspace.js|extensions/mnexis-memory/lib/workspace.js
+$PI_EXTENSIONS/index.ts|extensions/mnexis-memory/index.ts
+$PI_EXTENSIONS/lib/cli.ts|extensions/mnexis-memory/lib/cli.ts
+$PI_EXTENSIONS/lib/chrome.ts|extensions/mnexis-memory/lib/chrome.ts
+$PI_EXTENSIONS/lib/gate.ts|extensions/mnexis-memory/lib/gate.ts
+$PI_EXTENSIONS/lib/budget.ts|extensions/mnexis-memory/lib/budget.ts
+$PI_EXTENSIONS/lib/workspace.ts|extensions/mnexis-memory/lib/workspace.ts
 $PI_EXTENSIONS/package.json|extensions/mnexis-memory/package.json
 $PI_EXTENSIONS/README.md|extensions/mnexis-memory/README.md
 EOF
@@ -118,7 +124,7 @@ assert_status "uninstall exits 0" 0
 assert_file "the foreign skill file survives" "$PI_SKILLS/foreign.md"
 assert_file "the foreign extension file survives" "$PI_EXTENSIONS/NOTES.md"
 assert_dir_missing "the shipped skill file is removed" "$PI_SKILLS/SKILL.md"
-assert_dir_missing "the shipped extension file is removed" "$PI_EXTENSIONS/index.js"
+assert_dir_missing "the shipped extension file is removed" "$PI_EXTENSIONS/index.ts"
 rm -f "$PI_SKILLS/foreign.md" "$PI_EXTENSIONS/NOTES.md"
 run_agent agent uninstall --env pi
 assert_dir_missing "an emptied skill directory is removed" "$PI_SKILLS"
@@ -148,6 +154,8 @@ pi_hash="$(cd "$AGENT_HOME/.pi" && find . -type f -exec sha256sum {} + | sort | 
 run_agent agent install --env opencode
 assert_status "install --env opencode exits 0" 0
 assert_file "the opencode skill is installed" "$OC_SKILLS/SKILL.md"
+assert_file "the opencode plugin is installed" "$OC_PLUGINS/mnexis-memory.js"
+assert_file "the opencode install receipt names the shipped files" "$OC_PLUGINS/.mnexis-manifest.json"
 assert_dir_missing "nothing is installed in opencode extensions" \
   "$AGENT_HOME/.config/opencode/extensions"
 if [[ "$(cd "$AGENT_HOME/.pi" && find . -type f -exec sha256sum {} + | sort | sha256sum)" == "$pi_hash" ]]; then
@@ -162,7 +170,33 @@ assert_dir_missing "the opencode skill directory is removed" "$OC_SKILLS"
 # opencode has no extension target: asking for one is an error.
 run_agent agent install --env opencode --only extension
 assert_status "an extension in opencode exits 2" 2
-assert_contains "the opencode extension error names the skill" "--only skill"
+assert_contains "the opencode extension error names the plugin" "--only plugin"
+
+# pi has no plugin target: asking for one is an error.
+run_agent agent install --env pi --only plugin
+assert_status "a plugin in pi exits 2" 2
+assert_contains "the pi plugin error names the alternatives" "--only skill"
+
+# The installed opencode bytes are the repository bytes (S7), and a
+# foreign plugin in the plugins directory survives install and uninstall.
+run_agent agent install --env opencode
+if [[ "$(sha256sum <"$OC_PLUGINS/mnexis-memory.js")" == "$(sha256sum <"$REPO_ROOT/extensions/mnexis-opencode/index.js")" ]]; then
+  ok "the installed opencode plugin is the repository build"
+else
+  not_ok "the installed opencode plugin differs from extensions/mnexis-opencode/index.js"
+fi
+printf 'not ours\n' >"$OC_PLUGINS/foreign-plugin.js"
+foreign_plugin_hash="$(sha256sum <"$OC_PLUGINS/foreign-plugin.js")"
+run_agent agent install --env opencode
+if [[ "$(sha256sum <"$OC_PLUGINS/foreign-plugin.js")" == "$foreign_plugin_hash" ]]; then
+  ok "install does not touch a foreign plugin"
+else
+  not_ok "install touched a foreign plugin"
+fi
+run_agent agent uninstall --env opencode
+assert_file "the foreign plugin survives the uninstall" "$OC_PLUGINS/foreign-plugin.js"
+assert_dir_missing "the shipped opencode plugin is removed" "$OC_PLUGINS/mnexis-memory.js"
+rm -f "$OC_PLUGINS/foreign-plugin.js"
 
 # --- --only installs exactly what was asked for -------------------------
 run_agent agent install --env pi --only skill
@@ -171,18 +205,18 @@ assert_file "--only skill writes the skill" "$PI_SKILLS/SKILL.md"
 assert_dir_missing "--only skill does not create the extension" "$PI_EXTENSIONS"
 run_agent agent install --env pi --only extension
 assert_status "install --env pi --only extension exits 0" 0
-assert_file "--only extension writes the extension" "$PI_EXTENSIONS/index.js"
+assert_file "--only extension writes the extension" "$PI_EXTENSIONS/index.ts"
 run_agent agent uninstall --env pi --only skill
 assert_status "uninstall --env pi --only skill exits 0" 0
 assert_dir_missing "--only skill removes only the skill" "$PI_SKILLS"
-assert_file "--only skill leaves the extension alone" "$PI_EXTENSIONS/index.js"
+assert_file "--only skill leaves the extension alone" "$PI_EXTENSIONS/index.ts"
 run_agent agent uninstall --env pi
 assert_dir_missing "the tree is clean after the filters" "$PI_EXTENSIONS"
 
 # uninstall for opencode cannot take an extension either
 run_agent agent uninstall --env opencode --only extension
 assert_status "removing an extension in opencode exits 2" 2
-assert_contains "the uninstall error names the skill" "--only skill"
+assert_contains "the uninstall error names the plugin" "--only plugin"
 
 # --- unknown values ------------------------------------------------------
 run_agent agent install --env claude

@@ -13,6 +13,11 @@
 #                                Install the shipped agent extensions
 #                                (extensions/) to the selected environment
 #                                (same rebuild rule as skills).
+#   ./install.sh plugins [--env <name>]
+#                                Install the shipped host plugins
+#                                (extensions/mnexis-opencode/index.js as
+#                                plugins/mnexis-memory.js) to the selected
+#                                environment (same rebuild rule as skills).
 #   ./install.sh uninstall       Remove the installed binary; profile data
 #                                is kept.
 #   ./install.sh uninstall --skills [--env <name>]
@@ -21,6 +26,9 @@
 #   ./install.sh uninstall --extensions [--env <name>]
 #                                Remove the mnexis-installed agent
 #                                extensions from the selected environment.
+#   ./install.sh uninstall --plugins [--env <name>]
+#                                Remove the mnexis-installed host plugins
+#                                from the selected environment.
 #   ./install.sh uninstall --purge
 #                                Also remove the resolved profile data
 #                                directory after an interactive y/N prompt.
@@ -54,7 +62,7 @@ usage() {
     'Usage: ./install.sh [install]' \
     '       ./install.sh skills [--env <name>]' \
     '       ./install.sh extensions [--env <name>]' \
-    '       ./install.sh uninstall [--skills [--env <name>]|--extensions [--env <name>]|--purge]' \
+    '       ./install.sh uninstall [--skills [--env <name>]|--extensions [--env <name>]|--plugins [--env <name>]|--purge]' \
     '       ./install.sh --help' \
     '' \
     'Installs mnexis into $HOME/.local/bin. Run from the repository it builds' \
@@ -80,9 +88,17 @@ usage() {
     '                     into an AI environment (default: pi). The' \
     '                     extensions ship inside the binary too; the skills' \
     '                     rebuild rule applies.' \
+    '  plugins            Install the shipped host plugins to an AI' \
+    '                     environment (default: opencode). The plugin ships' \
+    '                     inside the binary too; the skills rebuild rule' \
+    '                     applies.' \
     '  uninstall --extensions' \
     '                     Remove the mnexis-installed agent extensions;' \
     '                     extension directories mnexis does not ship are kept.' \
+    '                     Cannot be combined with --skills or --purge.' \
+    '  uninstall --plugins' \
+    '                     Remove the mnexis-installed host plugins; plugin' \
+    '                     files mnexis does not ship are kept.' \
     '                     Cannot be combined with --skills or --purge.' \
     '  uninstall --purge  Also remove the profile data directory' \
     '                     ($MNEXIS_DATA_DIR, or $HOME/.local/share/mnexis)' \
@@ -758,14 +774,39 @@ main() {
       env="${env:-pi}"
       cmd_extensions "$env" extension
       ;;
+    plugins)
+      shift
+      local env=""
+      while (($# > 0)); do
+        case "$1" in
+          --env)
+            (($# >= 2)) || die "--env requires a value"
+            env="$2"
+            shift 2
+            ;;
+          -h | --help)
+            usage
+            return 0
+            ;;
+          *)
+            error "unknown option for 'plugins': $1"
+            usage >&2
+            return 2
+            ;;
+        esac
+      done
+      env="${env:-opencode}"
+      cmd_skills "$env" plugin
+      ;;
     uninstall)
       shift
-      local purge=0 skills=0 extensions=0 env=""
+      local purge=0 skills=0 extensions=0 plugins=0 env=""
       while (($# > 0)); do
         case "$1" in
           --purge) purge=1 ;;
           --skills) skills=1 ;;
           --extensions) extensions=1 ;;
+          --plugins) plugins=1 ;;
           --env)
             (($# >= 2)) || die "--env requires a value"
             env="$2"
@@ -784,8 +825,8 @@ main() {
         shift
       done
       if ((skills == 1)); then
-        if ((purge == 1 || extensions == 1)); then
-          error "--skills, --extensions and --purge are separate scopes; run them separately."
+        if ((purge == 1 || extensions == 1 || plugins == 1)); then
+          error "--skills, --extensions, --plugins and --purge are separate scopes; run them separately."
           return 2
         fi
         if [[ -z "$env" ]]; then
@@ -794,11 +835,17 @@ main() {
         require_known_env "$env"
         cmd_uninstall_skills "$env" skill
       elif ((extensions == 1)); then
-        if ((purge == 1)); then
-          error "--extensions and --purge are separate scopes; run them separately."
+        if ((purge == 1 || plugins == 1)); then
+          error "--extensions, --plugins and --purge are separate scopes; run them separately."
           return 2
         fi
         cmd_uninstall_extensions "${env:-pi}" extension
+      elif ((plugins == 1)); then
+        if ((purge == 1)); then
+          error "--plugins and --purge are separate scopes; run them separately."
+          return 2
+        fi
+        cmd_uninstall_skills "${env:-opencode}" plugin
       elif ((purge == 1)); then
         cmd_uninstall_purge
       else

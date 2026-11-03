@@ -73,8 +73,21 @@ pub const EXTENSION_MNEXIS_MEMORY: EmbeddedAsset = EmbeddedAsset {
     ],
 };
 
+/// The opencode plugin (`mnexis-memory.js`), installable only where
+/// opencode loads plugins. The repository's build output is
+/// `extensions/mnexis-opencode/index.js`; opencode loads every `.js` file
+/// in its plugins directory, so the shipped file carries the asset's name.
+pub const PLUGIN_MNEXIS_MEMORY: EmbeddedAsset = EmbeddedAsset {
+    name: "mnexis-memory",
+    files: &[EmbeddedFile {
+        path: "mnexis-memory.js",
+        contents: include_str!("../extensions/mnexis-opencode/index.js"),
+    }],
+};
+
 /// Every asset the binary can install, in installation order.
-pub const ALL_ASSETS: &[EmbeddedAsset] = &[SKILL_MNEXIS_MEMORY, EXTENSION_MNEXIS_MEMORY];
+pub const ALL_ASSETS: &[EmbeddedAsset] =
+    &[SKILL_MNEXIS_MEMORY, EXTENSION_MNEXIS_MEMORY, PLUGIN_MNEXIS_MEMORY];
 
 #[cfg(test)]
 mod tests {

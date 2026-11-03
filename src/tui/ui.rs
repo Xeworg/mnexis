@@ -773,8 +773,12 @@ mod tests {
             "the pi row renders its asset states: {text}"
         );
         assert!(
-            text.contains("opencode — skill: not installed"),
+            text.contains("opencode — skill: not installed, plugin: not installed"),
             "the opencode row renders its asset states: {text}"
+        );
+        assert!(
+            text.contains("plugin → /home/tester/.config/opencode/plugins"),
+            "the plugin destination renders: {text}"
         );
         assert!(
             text.contains("/home/tester/.pi/agent/skills/mnexis-memory"),
@@ -808,12 +812,20 @@ mod tests {
             },
             EnvironmentStatus {
                 environment: AgentEnvironment::Opencode,
-                assets: vec![AssetStatus {
-                    kind: AssetKind::Skill,
-                    name: "mnexis-memory",
-                    directory: PathBuf::from("/home/tester/.config/opencode/skills/mnexis-memory"),
-                    installed: false,
-                }],
+                assets: vec![
+                    AssetStatus {
+                        kind: AssetKind::Skill,
+                        name: "mnexis-memory",
+                        directory: PathBuf::from("/home/tester/.config/opencode/skills/mnexis-memory"),
+                        installed: false,
+                    },
+                    AssetStatus {
+                        kind: AssetKind::Plugin,
+                        name: "mnexis-memory",
+                        directory: PathBuf::from("/home/tester/.config/opencode/plugins"),
+                        installed: false,
+                    },
+                ],
             },
         ]
     }

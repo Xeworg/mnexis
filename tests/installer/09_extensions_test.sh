@@ -13,8 +13,8 @@ PI_SKILLS="$HOME/.pi/agent/skills"
 
 run_installer extensions --env pi
 assert_status "extensions --env pi exits 0" 0
-assert_file "extension entry point installed" "$PI_EXTENSIONS/mnexis-memory/index.js"
-assert_file "extension module installed" "$PI_EXTENSIONS/mnexis-memory/lib/cli.js"
+assert_file "extension entry point installed" "$PI_EXTENSIONS/mnexis-memory/index.ts"
+assert_file "extension module installed" "$PI_EXTENSIONS/mnexis-memory/lib/cli.ts"
 assert_contains "install names the extension" "Installed extension 'mnexis-memory'"
 assert_contains "install names the target directory" "$PI_EXTENSIONS"
 
@@ -26,7 +26,7 @@ CUSTOM_AGENT="$HOME/custom-agent"
 run_installer_with_env "PI_CODING_AGENT_DIR=$CUSTOM_AGENT" extensions --env pi
 assert_status "extensions honours PI_CODING_AGENT_DIR" 0
 assert_file "extension installed in the relocated agent dir" \
-  "$CUSTOM_AGENT/extensions/mnexis-memory/index.js"
+  "$CUSTOM_AGENT/extensions/mnexis-memory/index.ts"
 
 # Unknown environments are refused.
 run_installer extensions --env claude

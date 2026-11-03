@@ -31,7 +31,7 @@ is the engine's own:
 
 ```sh
 ./extensions/mnexis-opencode/install.sh          # → ~/.config/opencode/plugins/mnexis-memory.js
-mnexis agent install --env opencode             # → the skill + the mnexis MCP entry
+mnexis agent install --env opencode             # → the skill + the plugin + the mnexis MCP entry
 ```
 
 Restart opencode. `install.sh --uninstall` removes the plugin file and nothing else;
@@ -123,7 +123,10 @@ The plugin is a single file with a default export both plugin models read:
   object with an `id` and calls its `server()`;
 - **opencode 2.x** discovers the same file and runs its `setup(ctx)`.
 
-`install.sh` writes that one file; there is no second install path and no `node_modules`
+Both paths write the same single file; the engine installer additionally records
+it in a receipt (`.mnexis-manifest.json` in the plugins directory), so a later
+`mnexis agent install` deletes files it stopped shipping and never touches a
+plugin of yours. There is no `node_modules`
 (the plugin imports nothing from opencode). RESEARCH.md §4 explains how, and
 `test/host.smoke.test.js` asks the installed opencode to load it.
 
