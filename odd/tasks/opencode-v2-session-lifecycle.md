@@ -158,3 +158,55 @@ makes the test harness able to catch a dead seat in the first place.
   (1247 lines) are build outputs of the sources in the same commit, so the
   repository's authored change is ~538 lines over the three commits; the
   generated pair must travel with the sources that produce them.
+
+## The V1 population, measured at last (2026-11-03)
+
+The V1 half of this feature was left as a follow-up: the plugin still ships
+the 1.x entry, and every verdict in it had been measured on 2.2.5. The
+population in the field is `opencode-ai@1.19.5` (the npm `latest` tag), and
+it is now measured live, in `podman`, on the same fixture shape the v2 run
+used (`payments` / `example/payments-api`, threaway profile mounted at
+`/root`).
+
+**What 1.19.5 really publishes and calls** (probe plugin, one headless run
+plus one file-changing run):
+
+| seat | V1 1.19.5 | V2 2.2.5 (for contrast) |
+| --- | --- | --- |
+| `session.created` | **fires** | never fired in a run |
+| `session.deleted` | did not fire (explicit removal only) | same |
+| `session.idle` | fires after every turn | deprecated in the schema |
+| `chat.message` | **fires**, `input.sessionID` present | not the same seat |
+| `tool.execute.before/after` | **fires**: `write`, `read`, `bash`, `mnexis_memory_*` | fires |
+| `experimental.chat.system.transform` | **fires**, `input.sessionID` present | different seat |
+| `dispose` | **fires at process exit** (headless included) | setup cleanup |
+
+**A push into `output.system` reaches the model.** Measured with a sentinel
+line and a model asked to repeat it: the model answered the sentinel. The
+pointer and the settle question therefore have a live seat on V1, and the
+instrumented copy of the plugin confirms the settle's own decision
+(`state={"files":true,"saves":0,"asked":false}` → the ask, then
+`asked:true`). **The first read of the system prompt said the settle never
+rode, and it was the probe's order, not the host: a probe plugin that reads
+the array before the real plugin pushed onto it cannot see the push.** The
+correction is recorded because the wrong reading is the tempting one.
+
+**The end-to-end run works on V1.** One headless `opencode run` on the
+fixture wrote: the session (namespace `payments`, branch `master`, canonical
+remote, `ended_at: null`), the prompt verbatim, and one memory through the
+MCP tool (`title: Payments service port`, `topic_key: service.payments.port`,
+keywords `puerto, port, payments`, content naming port 8081 read from
+`service.toml`).
+
+**The one real defect the measurement found.** On V1, **nothing ever closes
+a session**: `session.deleted` does not fire in a run, and the V1 entry's
+`dispose` still takes the recorded "reload" path
+(`shutdown()` → `action: "skipped"`, `RELOAD_SKIP_REASON`), which was
+decided when V1 was believed to have an end signal of its own. It does not:
+`ended_at` stays `null` forever, the `sessions` list grows with open rows,
+and the "estado al cierre" record is never written for a V1 user. `dispose`
+**does** fire on V1 headless — measured — so the same close V2 performs at
+teardown is available here.
+
+- **L14** — the V1 seats, the push that reaches the model, the end-to-end
+  run, and the open-session defect above.
