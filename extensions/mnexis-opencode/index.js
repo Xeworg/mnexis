@@ -26,6 +26,7 @@
  * | session     | a session must land where its memories land          |
  * | pointer     | a session that never hears of the door never asks    |
  * | compaction  | the state must survive the context that held it      |
+ * | settle      | the session's own outcomes show unsaved work         |
  * | gate        | permissions belong to the human, not to the agent    |
  * | definitions | the catalog the model reads is the host's (V2 only)  |
  *
@@ -56,15 +57,175 @@ export const STATE_CHARS = 3000;
 /** How much of the previous session's summary the pointer may carry. */
 export const SUMMARY_CHARS = 240;
 
+// --- the budgets and the retry (odd/tasks/opencode-parity.md, S3) ---------
+//
+// Every call below runs inside a hook the host awaits, so each one carries a
+// ceiling of its own. The numbers and the retry are the engine-compatible ones
+// measured on the pi side before the split; this plugin keeps its own copy,
+// because each host owns its logic and the engine is the only contract they
+// share.
+
+/** How long one engine read may take before the plugin stops it. */
+export const READ_TIMEOUT_MS = 10_000;
+
+/**
+ * A write may wait on the store's lock and pay for its fsync, so it gets the
+ * longer budget — thirty seconds, never forever.
+ */
+export const WRITE_TIMEOUT_MS = 30_000;
+
+/**
+ * The engine's exit code for a store that was locked (`src/cli/output.rs`).
+ * The engine waits two seconds on the lock itself and then gives up; one more
+ * try is what keeps a decided fact from being lost to another process's write.
+ */
+export const BUSY_EXIT_CODE = 10;
+
+/** The waits between the tries of a call that found the store locked. */
+export const BUSY_RETRY_DELAYS_MS = [250, 750];
+
+/**
+ * How long the capture of one message may take.
+ *
+ * The capture runs on every message, and the turn is the human's: a store that
+ * cannot take the message in a second and a half loses the message, never the
+ * turn.
+ */
+export const PROMPT_CAPTURE_BUDGET_MS = 1_500;
+
+/**
+ * How long the pointer's reads may take on the per-request path: the pointer
+ * is a nicety, and a store that cannot answer it in a second and a half leaves
+ * it out instead of delaying the model request.
+ */
+export const POINTER_BUDGET_MS = 1_500;
+
+/** The environment override for the capture budget. */
+export const CAPTURE_BUDGET_ENV = "MNEXIS_OPENCODE_CAPTURE_BUDGET_MS";
+
+/** The environment override for the pointer budget. */
+export const POINTER_BUDGET_ENV = "MNEXIS_OPENCODE_POINTER_BUDGET_MS";
+
+/** The commands that change the store: the longer budget. */
+const WRITE_COMMANDS = new Set(["session", "end", "prompt"]);
+
+/**
+ * The commands a locked store is worth trying again, because a second try is
+ * the same effect and never a second row: a session row is keyed by its id, an
+ * end stamps that row, and a prompt is one row of the session. A read is left
+ * out on purpose: an answer that never came is worth one report, not three.
+ */
+const RETRY_COMMANDS = new Set(["session", "end", "prompt"]);
+
+/** The save tool's id on this host: the engine's `memory_save`, namespaced. */
+const SAVE_TOOL_ID = "mnexis_memory_save";
+
+/** A positive integer environment override, or the default the code names. */
+export function budgetOf(override, fallback) {
+	const value = Number.parseInt(String(override ?? ""), 10);
+	return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/** The token a step gets when it ran out of time: never a value it could return. */
+const ABANDONED = Symbol("abandoned");
+
+function sleep(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * A deadline, in milliseconds from now.
+ *
+ * `step` runs one piece of work with whatever is left and abandons what does
+ * not fit instead of waiting for it. The answer is `{ value }` or `{
+ * abandoned: reason }` — never a rejection the caller has to tell apart from an
+ * engine failure.
+ *
+ * @param {number} budgetMs how long the whole piece of work may take
+ * @param {string} label what the work is, for the reason an abandonment carries
+ */
+export function createDeadline(budgetMs, label) {
+	const budget = Number.isFinite(budgetMs) && budgetMs > 0 ? budgetMs : 0;
+	const deadline = Date.now() + budget;
+	const name = typeof label === "string" && label !== "" ? label : "the work";
+
+	return {
+		/** What is left of the budget, in milliseconds, never below zero. */
+		remaining() {
+			return Math.max(0, deadline - Date.now());
+		},
+
+		async step(step, work) {
+			const left = this.remaining();
+			if (left <= 0) {
+				return {
+					abandoned: `${step} was abandoned: the ${budget} ms ${name} budget was already spent`,
+				};
+			}
+			let timer = null;
+			try {
+				const expiry = new Promise((resolve) => {
+					timer = setTimeout(() => resolve(ABANDONED), left);
+				});
+				const answer = await Promise.race([work(left), expiry]);
+				if (answer === ABANDONED) {
+					return {
+						abandoned: `${step} did not finish within the ${budget} ms ${name} budget and was abandoned`,
+					};
+				}
+				return { value: answer };
+			} finally {
+				if (timer !== null) {
+					clearTimeout(timer);
+				}
+			}
+		},
+	};
+}
+
+/**
+ * The children one plugin instance started.
+ *
+ * A shutdown must end what is still in flight instead of letting a capture
+ * finish into a session that is closing. `defaultExec` tracks every child it
+ * spawns; a child that exits on its own leaves the registry, and `killAll` is
+ * idempotent so a cleanup that runs twice is safe.
+ */
+export function createChildRegistry() {
+	const children = new Set();
+	return {
+		track(child) {
+			if (!child || typeof child.once !== "function" || typeof child.kill !== "function") {
+				return child;
+			}
+			children.add(child);
+			child.once("exit", () => children.delete(child));
+			return child;
+		},
+		killAll() {
+			const live = [...children];
+			children.clear();
+			for (const child of live) {
+				try {
+					child.kill("SIGTERM");
+				} catch {
+					// A child that is already gone is gone.
+				}
+			}
+		},
+	};
+}
+
 // --- the CLI ---------------------------------------------------------------
 
 /** Default exec: resolves with `{ code, stdout, stderr }` and never rejects. */
 export function defaultExec(command, args, options = {}) {
+	const { registry, ...spawnOptions } = options;
 	return new Promise((resolve) => {
-		nodeExecFile(
+		const child = nodeExecFile(
 			command,
 			args,
-			{ encoding: "utf8", maxBuffer: 8 * 1024 * 1024, ...options },
+			{ encoding: "utf8", maxBuffer: 8 * 1024 * 1024, ...spawnOptions },
 			(error, stdout, stderr) => {
 				let code = 0;
 				if (error) {
@@ -76,6 +237,9 @@ export function defaultExec(command, args, options = {}) {
 				resolve({ code, stdout: stdout ?? "", stderr: stderr ?? "" });
 			},
 		);
+		if (registry && typeof registry.track === "function") {
+			registry.track(child);
+		}
 	});
 }
 
@@ -101,62 +265,119 @@ export function parseJson(stdout) {
 	}
 }
 
+/** The budget one call gets: the write one for a write, the read one otherwise. */
+function timeoutFor(name) {
+	return WRITE_COMMANDS.has(name) ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS;
+}
+
 /**
- * Create the CLI client. The same shape the pi extension uses, so the two
- * integrations never disagree about an argument: `exec` is injected by the
- * tests, and neither the binary nor a profile is needed to exercise it.
+ * Create the CLI client.
+ *
+ * `exec` is injected by the tests, so neither the binary nor a profile is
+ * needed to exercise it. Every call carries its own budget, and the commands
+ * whose identity the engine owns retry a locked store; `withBudget(ms)` answers
+ * a client whose calls are bounded by a smaller budget (the work a host hook
+ * awaits without a timeout of its own).
  */
-export function createClient({ exec = defaultExec, binary, env = process.env } = {}) {
+export function createClient({ exec = defaultExec, binary, env = process.env, registry = null } = {}) {
 	const command = binary || env.MNEXIS_BIN || "mnexis";
 
-	async function run(args, { json = false, cwd } = {}) {
+	async function run(args, { json = false, cwd, timeout: override = null } = {}) {
 		const fullArgs = json ? [...args, "--json"] : args;
-		const result = await exec(command, fullArgs, { cwd, env });
-		return { ...result, data: json ? parseJson(result.stdout) : null };
+		const name = String(args[0] ?? "");
+		const timeout = Number.isFinite(override) && override > 0 ? override : timeoutFor(name);
+		// The retry belongs to the command, not to the caller: a command that is
+		// idempotent by construction always retries, a read pays one call.
+		const retry = RETRY_COMMANDS.has(name);
+		const deadline = Date.now() + timeout;
+		const call = (budgetMs) => exec(command, fullArgs, { cwd, env, registry, timeout: budgetMs });
+
+		let result = await call(timeout);
+		let busyRetries = 0;
+		while (
+			retry &&
+			result.code === BUSY_EXIT_CODE &&
+			busyRetries < BUSY_RETRY_DELAYS_MS.length
+		) {
+			const delay = BUSY_RETRY_DELAYS_MS[busyRetries];
+			if (deadline - Date.now() <= delay) {
+				break;
+			}
+			await sleep(delay);
+			const left = deadline - Date.now();
+			if (left <= 0) {
+				break;
+			}
+			result = await call(left);
+			busyRetries += 1;
+		}
+
+		const data = json ? parseJson(result.stdout) : null;
+		return {
+			...result,
+			// The call this answer belongs to, the budget it had, and how many
+			// times a locked store was tried again: a journal reads these to tell
+			// a recovered call from a lost one.
+			command: name,
+			timeout_ms: timeout,
+			busy_retries: busyRetries,
+			data,
+		};
 	}
 
-	return {
-		command,
-		run,
+	function make(binding = {}) {
+		const call = (args, options = {}) => run(args, { ...binding, ...options });
 
-		/** Where this workspace may write, and what is already there. */
-		async status(cwd) {
-			return run(["status"], { json: true, cwd });
-		},
+		return {
+			command,
+			run: call,
 
-		/** The recall of the session before this one. */
-		async previousSession(cwd) {
-			return run(["recall", "--previous"], { json: true, cwd });
-		},
+			/** The same client, with every call bounded by `ms`. */
+			withBudget(ms) {
+				return make({ ...binding, timeout: ms });
+			},
 
-		/** The live records that must survive a compaction, with their content. */
-		async stateRecords(cwd, limit = STATE_LIMIT) {
-			return run(
-				["list", "--type", "project_state,decision", "--full", "--limit", String(limit)],
-				{ json: true, cwd },
-			);
-		},
+			/** Where this workspace may write, and what is already there. */
+			async status(cwd) {
+				return call(["status"], { json: true, cwd });
+			},
 
-		async sessionStart({ sessionId, directory }, cwd) {
-			const args = ["session", "--id", sessionId];
-			if (directory) {
-				args.push("--directory", directory);
-			}
-			return run(args, { json: true, cwd });
-		},
+			/** The recall of the session before this one. */
+			async previousSession(cwd) {
+				return call(["recall", "--previous"], { json: true, cwd });
+			},
 
-		async sessionEnd({ sessionId }, cwd) {
-			return run(["end", "--id", sessionId], { json: true, cwd });
-		},
+			/** The live records that must survive a compaction, with their content. */
+			async stateRecords(cwd, limit = STATE_LIMIT) {
+				return call(
+					["list", "--type", "project_state,decision", "--full", "--limit", String(limit)],
+					{ json: true, cwd },
+				);
+			},
 
-		async savePrompt({ content, sessionId }, cwd) {
-			const args = ["prompt", content];
-			if (sessionId) {
-				args.push("--session", sessionId);
-			}
-			return run(args, { json: true, cwd });
-		},
-	};
+			async sessionStart({ sessionId, directory }, cwd) {
+				const args = ["session", "--id", sessionId];
+				if (directory) {
+					args.push("--directory", directory);
+				}
+				return call(args, { json: true, cwd });
+			},
+
+			async sessionEnd({ sessionId }, cwd) {
+				return call(["end", "--id", sessionId], { json: true, cwd });
+			},
+
+			async savePrompt({ content, sessionId }, cwd) {
+				const args = ["prompt", content];
+				if (sessionId) {
+					args.push("--session", sessionId);
+				}
+				return call(args, { json: true, cwd });
+			},
+		};
+	}
+
+	return make();
 }
 
 // --- pure decisions (every one of them is pinned by a test) ----------------
@@ -166,9 +387,9 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
  * the human. The plugin owns that rule on every host, so a model-issued call
  * that tries to do it behind the plugin's back is refused.
  *
- * The pattern is the pi extension's, unchanged: the same grant means the same
- * thing in both hosts, and two copies of the rule that disagree would be a
- * hole in one of them.
+ * The rule is this host's own copy of the invariant: a grant means the same
+ * thing on every host, and two copies that disagree would be a hole in one of
+ * them. The engine's own command names are the contract.
  */
 const PERMISSION_GRANT_PATTERN =
 	/\bmnexis\s+config\s+allow-namespace\b|\bmnexis\s+project\s+bind\b/;
@@ -422,19 +643,24 @@ function previousSummary(previous) {
 //
 // opencode lists an MCP server's tools as `<server>_<tool>`, model-facing, with
 // the description the engine publishes. The engine's descriptions say what a
-// tool *does*; the curated ones below say what it is *for*, in pi's voice, so a
-// model on opencode meets the vocabulary a model on pi meets. This is an inline
-// copy on purpose — the file has no dependency and no `node_modules` (S6) — and
-// a test pins every entry to the files it was copied from (S5).
+// tool *does*; the curated ones below say what it is *for*, in this host's
+// voice, so a model on opencode meets the vocabulary the engine defines. This
+// is an inline copy on purpose — the file has no dependency and no
+// `node_modules` (S6) — and a test pins every entry to the engine's inventory
+// (S5).
 
 /** The prefix the host gives every tool of the `mnexis` MCP server. */
 const MCP_TOOL_PREFIX = "mnexis_";
 
 /**
- * The seven kinds, one line each — the same lines pi's `SETTLE_NUDGE` carries
- * (`extensions/mnexis-memory/index.js`). One definition of the vocabulary, two
- * consumers: pi's nudge and the save description below. A test pins the two
- * copies together, verbatim.
+ * The seven kinds, one line each — this plugin's own copy of the vocabulary.
+ *
+ * The NAMES are the engine's closed set: `MEMORY_TYPES` in
+ * `src/domain/memory_type.rs`, stated in the `memory_type` docs of
+ * `src/mcp/tools.rs` that schemars carries into the MCP schema every host
+ * reads. The engine is the only contract the hosts share, and a test pins
+ * these names to it. The gloss is this host's: each surface owns its wording
+ * and may evolve it without touching another surface.
  */
 export const TYPE_GLOSSES = [
 	"knowledge — a durable fact about the domain, the tools or the data.",
@@ -446,6 +672,29 @@ export const TYPE_GLOSSES = [
 	"fact — the neutral default when none of the others fit.",
 ];
 
+/** The seven names, split from the glosses: the plugin states them once. */
+const TYPE_NAMES = TYPE_GLOSSES.map((gloss) => gloss.split(" — ")[0]);
+
+/**
+ * The question the settle nudge asks, once per session.
+ *
+ * The hooks capture the mechanical floor; whether a session deserved a memory
+ * is judgment. The plugin asks it when the session's own outcomes show work
+ * that may have changed a file and no `mnexis_memory_save` that landed, and
+ * the ask points at the taxonomy's home: the save tool, and the seven
+ * `memory_type` names it accepts. It asks for the judgment, not for a quota.
+ */
+export const SETTLE_NUDGE = [
+	"This session changed files but saved no memory. If a decision, preference, " +
+		"discovery or project-state change deserves to survive the session, save it now " +
+		"with one `mnexis_memory_save`; otherwise reply that nothing deserves memory.",
+	"",
+	"`mnexis_memory_save` carries the vocabulary: `memory_type` is the engine's closed " +
+		"set — " +
+		TYPE_NAMES.join(", ") +
+		" — so pick the one that fits.",
+].join("\n");
+
 /** What the save description states before the seven kinds it lets you pick. */
 const SAVE_GLOSS_HEADER = "Save it typed — `memory_type` is the one that fits:";
 
@@ -455,8 +704,8 @@ const SAVE_GLOSS_HEADER = "Save it typed — `memory_type` is the one that fits:
  * tool, no more: a test pins the map to the engine's inventory, so a renamed or
  * added tool fails the build instead of shipping a dead entry.
  *
- * The wording is pi's where pi has the same tool, adapted to what the MCP
- * surface actually answers (previews, ids, and the fields the tool takes).
+ * The wording is this host's own: it follows what the MCP surface actually
+ * answers (previews, ids, and the fields the tool takes).
  */
 export const CURATED_DESCRIPTIONS = {
 	mnexis_memory_context:
@@ -589,10 +838,14 @@ function curateCatalog(editor) {
  * — a refusal reaches `logger`, which each adapter wires to whatever the host
  * offers (V1 has `client.app.log`; V2 has no logger in the plugin context).
  */
-function createCore({ cwd, client, env = process.env, logger } = {}) {
-	const cli = client ?? createClient({ env });
+function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
+	const children = registry ?? createChildRegistry();
+	const cli = client ?? createClient({ env, registry: children });
 	const sessions = new Map();
 	const pointed = new Set();
+	// The session's own outcomes: work that may have changed a file, and the
+	// saves that landed. It is what the settle question is decided on.
+	const evidence = new Map();
 
 	function report(kind, data) {
 		if (typeof logger !== "function") {
@@ -605,6 +858,87 @@ function createCore({ cwd, client, env = process.env, logger } = {}) {
 		}
 	}
 
+	function evidenceOf(sessionID) {
+		let state = evidence.get(sessionID);
+		if (!state) {
+			state = { files: false, saves: 0, asked: false };
+			evidence.set(sessionID, state);
+		}
+		return state;
+	}
+
+	/**
+	 * One tool outcome, as both hosts report it.
+	 *
+	 * The evidence is the outcome, never the attempt: a tool that did not run,
+	 * or ran and failed, changed no file and saved nothing. Both hosts name a
+	 * failure in one of the fields below, and a call that names none of them
+	 * is a call that landed.
+	 */
+	function observeTool(event) {
+		if (!event || typeof event !== "object") {
+			return;
+		}
+		const tool =
+			typeof event.tool === "string"
+				? event.tool
+				: typeof event.toolName === "string"
+					? event.toolName
+					: "";
+		if (tool === "") {
+			return;
+		}
+		const failed =
+			event.isError === true ||
+			event.error != null ||
+			event.result?.isError === true ||
+			event.output?.isError === true;
+		if (failed) {
+			return;
+		}
+		const sessionID =
+			typeof event.sessionID === "string" && event.sessionID !== ""
+				? event.sessionID
+				: typeof event.session_id === "string"
+					? event.session_id
+					: "";
+		if (sessionID === "") {
+			return;
+		}
+		const state = evidenceOf(sessionID);
+		// A save that landed is the one datum that closes the question; a save
+		// that was attempted and failed is not a save.
+		if (tool === SAVE_TOOL_ID) {
+			state.saves += 1;
+			return;
+		}
+		// The gate already observes these same tools. A shell command is the
+		// host's own signal that work happened, and the plugin cannot tell a
+		// read from a write without spending a process on every command.
+		if (SHELL_TOOLS.has(tool) || EDIT_TOOLS.has(tool)) {
+			state.files = true;
+		}
+	}
+
+	/**
+	 * The settle question, once per session.
+	 *
+	 * It is asked when the session's own outcomes show work that may have
+	 * changed a file and no save that landed. `asked` is the latch: one ask per
+	 * session, whether or not the model takes it.
+	 */
+	function settle(sessionID) {
+		if (typeof sessionID !== "string" || sessionID === "") {
+			return null;
+		}
+		const state = evidence.get(sessionID);
+		if (!state || !state.files || state.saves > 0 || state.asked) {
+			return null;
+		}
+		state.asked = true;
+		return SETTLE_NUDGE;
+	}
+
 	/** Register a session once, in the directory the host gave. */
 	async function startSession(sessionID, directory) {
 		if (typeof sessionID !== "string" || sessionID === "") {
@@ -613,26 +947,68 @@ function createCore({ cwd, client, env = process.env, logger } = {}) {
 		if (sessions.has(sessionID)) {
 			return;
 		}
-		sessions.set(sessionID, directory || cwd);
+		const where = directory || cwd;
+		sessions.set(sessionID, where);
 		try {
-			await cli.sessionStart({ sessionId: sessionID, directory: directory || cwd }, cwd);
+			const result = await cli.sessionStart({ sessionId: sessionID, directory: where }, cwd);
+			if (result.code !== 0) {
+				// A profile that is not initialised, or a namespace not allowed
+				// for writes, is the engine's answer; the session still works.
+				report("session-start", { session: sessionID, exit_code: result.code });
+				return;
+			}
+			const session = result.data && typeof result.data === "object" ? result.data : null;
+			const endedAt =
+				session && typeof session.ended_at === "string" && session.ended_at !== ""
+					? session.ended_at
+					: null;
+			if (endedAt !== null) {
+				// The engine's state machine, verified against the binary: a
+				// second start of the same id is a no-op, and a start after an
+				// end answers the ended row — it never reopens a session. So a
+				// taken start is not an error, an ended id is not an error, and
+				// neither is hidden from the journal.
+				report("session-start", {
+					session: sessionID,
+					already_ended: true,
+					ended_at: endedAt,
+				});
+			}
 		} catch (error) {
-			// A profile that is not initialised, or a namespace not allowed
-			// for writes, is the engine's answer; the session still works.
 			report("session-start", { session: sessionID, error: String(error) });
 		}
 	}
 
-	/** End every session this plugin opened, best effort. */
-	async function endSessions() {
-		for (const [sessionID, directory] of sessions) {
-			try {
-				await cli.sessionEnd({ sessionId: sessionID }, directory);
-			} catch (error) {
-				report("session-end", { session: sessionID, error: String(error) });
-			}
+	/** End one session the plugin opened, best effort. */
+	async function endSession(sessionID) {
+		if (typeof sessionID !== "string" || sessionID === "") {
+			return;
 		}
-		sessions.clear();
+		const where = sessions.get(sessionID) ?? cwd;
+		sessions.delete(sessionID);
+		// The outcomes of a closed session are not the next session's evidence.
+		evidence.delete(sessionID);
+		try {
+			const result = await cli.sessionEnd({ sessionId: sessionID }, where);
+			if (result.code === 3) {
+				// The engine never heard of this session: nothing to end, and
+				// nothing to write its state into. The refusal gets its name.
+				report("session-end", { session: sessionID, exit_code: 3, not_registered: true });
+				return;
+			}
+			if (result.code !== 0) {
+				report("session-end", { session: sessionID, exit_code: result.code });
+			}
+		} catch (error) {
+			report("session-end", { session: sessionID, error: String(error) });
+		}
+	}
+
+	/** End every session this plugin opened, once. */
+	async function endSessions() {
+		for (const sessionID of [...sessions.keys()]) {
+			await endSession(sessionID);
+		}
 	}
 
 	/**
@@ -641,7 +1017,9 @@ function createCore({ cwd, client, env = process.env, logger } = {}) {
 	 * The session is registered first, so the prompt joins the session and
 	 * the memories of one workspace. A message the store refuses is never
 	 * truncated and never lost silently: its size and exit code reach the
-	 * journal, and its text never does.
+	 * journal, and its text never does. The capture runs on every message, so
+	 * it gets a budget of its own: a store that cannot take the message inside
+	 * it loses the message, never the turn.
 	 */
 	async function capture(sessionID, text) {
 		if (typeof text !== "string" || text.trim() === "") {
@@ -649,10 +1027,26 @@ function createCore({ cwd, client, env = process.env, logger } = {}) {
 		}
 		await startSession(sessionID, cwd);
 		const bytes = Buffer.byteLength(text, "utf8");
+		const budget = createDeadline(
+			budgetOf(env[CAPTURE_BUDGET_ENV], PROMPT_CAPTURE_BUDGET_MS),
+			"prompt capture",
+		);
 		try {
-			const result = await cli.savePrompt({ content: text, sessionId: sessionID }, cwd);
+			const captured = await budget.step("capture", (left) =>
+				cli.withBudget(left).savePrompt({ content: text, sessionId: sessionID }, cwd),
+			);
+			if (captured.abandoned) {
+				report("capture", { session: sessionID, bytes, abandoned: captured.abandoned });
+				return;
+			}
+			const result = captured.value;
 			if (result.code !== 0) {
-				report("capture", { session: sessionID, bytes, exit_code: result.code });
+				report("capture", {
+					session: sessionID,
+					bytes,
+					exit_code: result.code,
+					busy_retries: result.busy_retries,
+				});
 			}
 		} catch (error) {
 			report("capture", { session: sessionID, bytes, error: String(error) });
@@ -663,7 +1057,8 @@ function createCore({ cwd, client, env = process.env, logger } = {}) {
 	 * The pointer for this session, delivered once.
 	 *
 	 * A failed read is remembered as delivered too: an engine that cannot
-	 * answer must not cost a CLI call on every model request.
+	 * answer must not cost a CLI call on every model request. The two reads
+	 * share one budget, because this runs on the model-request path.
 	 */
 	async function pointer(sessionID) {
 		if (env[POINTER_ENV] === "0") {
@@ -678,17 +1073,27 @@ function createCore({ cwd, client, env = process.env, logger } = {}) {
 			return null;
 		}
 		pointed.add(sessionID);
+		const budget = createDeadline(budgetOf(env[POINTER_BUDGET_ENV], POINTER_BUDGET_MS), "pointer");
 		try {
-			const status = await cli.status(cwd);
+			const statusStep = await budget.step("status", (left) =>
+				cli.withBudget(left).status(cwd),
+			);
+			if (statusStep.abandoned) {
+				report("pointer", { session: sessionID, abandoned: statusStep.abandoned });
+				return null;
+			}
+			const status = statusStep.value;
 			if (status.code !== 0) {
 				report("pointer", { session: sessionID, exit_code: status.code });
 				return null;
 			}
 			let previous = null;
 			try {
-				const recall = await cli.previousSession(cwd);
-				if (recall.code === 0) {
-					previous = recall.data;
+				const recallStep = await budget.step("recall", (left) =>
+					cli.withBudget(left).previousSession(cwd),
+				);
+				if (!recallStep.abandoned && recallStep.value.code === 0) {
+					previous = recallStep.value.data;
 				}
 			} catch {
 				// No previous session is not an error: the pointer is shorter.
@@ -717,7 +1122,28 @@ function createCore({ cwd, client, env = process.env, logger } = {}) {
 		}
 	}
 
-	return { cli, capture, startSession, endSessions, pointer, compaction };
+	/**
+	 * The end of this plugin instance: the calls still in flight die first, so
+	 * a capture cannot finish into a session that is closing, and then every
+	 * session the plugin opened is ended. Both halves are idempotent.
+	 */
+	async function shutdown() {
+		children.killAll();
+		await endSessions();
+	}
+
+	return {
+		cli,
+		capture,
+		startSession,
+		endSession,
+		endSessions,
+		pointer,
+		settle,
+		observeTool,
+		compaction,
+		shutdown,
+	};
 }
 
 // --- the plugin, in both shapes -------------------------------------------
@@ -725,16 +1151,20 @@ function createCore({ cwd, client, env = process.env, logger } = {}) {
 /**
  * Build the plugin.
  *
- * `exec`/`binary`/`env`/`logger` are injectable so the tests never need the
- * binary, a profile or a host.
+ * `exec`/`binary`/`env`/`logger`/`registry` are injectable so the tests never
+ * need the binary, a profile or a host.
  */
-export function createPlugin({ exec, binary, env = process.env, logger } = {}) {
+export function createPlugin({ exec, binary, env = process.env, logger, registry } = {}) {
+	// One registry per plugin instance: the client spawns the children, and the
+	// shutdown is the one that kills what is still in flight.
+	const children = registry ?? createChildRegistry();
 	const coreFor = (cwd, hostLogger) =>
 		createCore({
 			cwd,
 			env,
-			client: createClient({ exec, binary, env }),
+			client: createClient({ exec, binary, env, registry: children }),
 			logger: logger ?? hostLogger,
+			registry: children,
 		});
 
 	/** opencode 2.x: `setup(ctx)` registers hooks on the domains that own them. */
@@ -759,13 +1189,22 @@ export function createPlugin({ exec, binary, env = process.env, logger } = {}) {
 				// No prompt seat: the other rules still run.
 			}
 
-			// The system prompt is assembled per model request; the pointer is
-			// delivered once per session and is a no-op afterwards.
+			// The system prompt is assembled per model request. The pointer is
+			// delivered once per session and is a no-op afterwards; the settle
+			// question rides the same seat, once, when the session's own
+			// outcomes show unsaved work.
 			try {
 				await ctx.session.hook("context", async (event) => {
-					const text = await core.pointer(event?.sessionID);
-					if (text && Array.isArray(event?.system)) {
-						event.system.push({ type: "text", text });
+					if (!Array.isArray(event?.system)) {
+						return;
+					}
+					const pointer = await core.pointer(event?.sessionID);
+					if (pointer) {
+						event.system.push({ type: "text", text: pointer });
+					}
+					const settle = core.settle(event?.sessionID);
+					if (settle) {
+						event.system.push({ type: "text", text: settle });
 					}
 				});
 			} catch {
@@ -796,6 +1235,16 @@ export function createPlugin({ exec, binary, env = process.env, logger } = {}) {
 			} catch {
 				// No tool seat: nothing is guarded, and nothing else is lost.
 			}
+
+			// The outcome seat: a successful shell/edit call is the evidence
+			// the settle question reads, and a save that landed closes it.
+			try {
+				await ctx.tool.hook("execute.after", (event) => {
+					core.observeTool(event);
+				});
+			} catch {
+				// No outcome seat: the question is never asked on this host.
+			}
 		}
 
 		if (ctx.tool && typeof ctx.tool.transform === "function") {
@@ -820,11 +1269,18 @@ export function createPlugin({ exec, binary, env = process.env, logger } = {}) {
 			try {
 				const controller = new AbortController();
 				controllers.push(controller);
-				const stream = ctx.event.subscribe({ types: ["session.created"], signal: controller.signal });
+				const stream = ctx.event.subscribe({
+					types: ["session.created", "session.deleted"],
+					signal: controller.signal,
+				});
 				void (async () => {
 					try {
 						for await (const event of stream) {
 							const sessionID = sessionIDOfEvent(event);
+							if (event?.type === "session.deleted") {
+								await core.endSession(sessionID);
+								continue;
+							}
 							await core.startSession(sessionID, directoryOfEvent(event) ?? cwd);
 						}
 					} catch {
@@ -842,7 +1298,7 @@ export function createPlugin({ exec, binary, env = process.env, logger } = {}) {
 			for (const controller of controllers) {
 				controller.abort();
 			}
-			await core.endSessions();
+			await core.shutdown();
 		};
 	}
 
@@ -874,10 +1330,16 @@ export function createPlugin({ exec, binary, env = process.env, logger } = {}) {
 			},
 
 			async event({ event }) {
-				if (!event || event.type !== "session.created") {
+				if (!event) {
 					return;
 				}
-				await core.startSession(sessionIDOfEvent(event), directoryOfEvent(event) ?? cwd);
+				if (event.type === "session.created") {
+					await core.startSession(sessionIDOfEvent(event), directoryOfEvent(event) ?? cwd);
+					return;
+				}
+				if (event.type === "session.deleted") {
+					await core.endSession(sessionIDOfEvent(event));
+				}
 			},
 
 			async "tool.execute.before"(hookInput, output) {
@@ -887,12 +1349,32 @@ export function createPlugin({ exec, binary, env = process.env, logger } = {}) {
 				}
 			},
 
-			// The system prompt is assembled per model request; the pointer is
-			// delivered once per session and is a no-op afterwards.
+			// The outcome of a tool call: the settle question's evidence.
+			async "tool.execute.after"(hookInput, output) {
+				core.observeTool({
+					tool: hookInput?.tool,
+					sessionID: hookInput?.sessionID,
+					isError: output?.isError ?? hookInput?.isError,
+					error: output?.error,
+					result: output?.result,
+				});
+			},
+
+			// The system prompt is assembled per model request. The pointer is
+			// delivered once per session and is a no-op afterwards; the settle
+			// question rides the same seat, once, when the session's own
+			// outcomes show unsaved work.
 			async "experimental.chat.system.transform"(hookInput, output) {
-				const text = await core.pointer(hookInput?.sessionID);
-				if (text && Array.isArray(output?.system)) {
-					output.system.push(text);
+				if (!Array.isArray(output?.system)) {
+					return;
+				}
+				const pointer = await core.pointer(hookInput?.sessionID);
+				if (pointer) {
+					output.system.push(pointer);
+				}
+				const settle = core.settle(hookInput?.sessionID);
+				if (settle) {
+					output.system.push(settle);
 				}
 			},
 
@@ -904,7 +1386,7 @@ export function createPlugin({ exec, binary, env = process.env, logger } = {}) {
 			},
 
 			async dispose() {
-				await core.endSessions();
+				await core.shutdown();
 			},
 		};
 	}

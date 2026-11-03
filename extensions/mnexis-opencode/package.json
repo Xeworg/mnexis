@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
-	"description": "opencode plugin for the mnexis memory engine: prompt capture, session registration, the pointer to the door, compaction state, and the permission gate.",
+	"description": "opencode plugin for the mnexis memory engine: prompt capture, session registration, the pointer to the door, the settle question, compaction state, the permission gate, and the curated definitions.",
 	"license": "MIT",
 	"main": "./index.js",
 	"exports": {

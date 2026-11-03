@@ -2,10 +2,11 @@
  * The decisions, without a host and without the binary.
  *
  * Every one of these is a rule the plugin applies on both plugin models, so
- * a mistake here is a mistake in two hosts at once. The drift pins at the end
- * read the repository's own files: the plugin is one flat file, so its curated
- * copy of pi's vocabulary and the engine's tool ids has to be checked against
- * the files it was copied from.
+ * a mistake here is a mistake in two hosts at once. The pins at the end read
+ * the repository's own files: the plugin is one flat file, so its copy of the
+ * vocabulary and of the engine's tool ids has to be checked against the engine
+ * — the only contract every host shares. Nothing here reads another host's
+ * extension tree.
  */
 
 import assert from "node:assert/strict";
@@ -14,15 +15,20 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import mnexisMemory from "../../mnexis-memory/index.ts";
-
 import {
+	BUSY_EXIT_CODE,
+	BUSY_RETRY_DELAYS_MS,
 	CURATED_DESCRIPTIONS,
 	GRANT_REFUSAL,
 	PROFILE_REFUSAL,
+	READ_TIMEOUT_MS,
 	STATE_CHARS,
 	SUMMARY_CHARS,
 	TYPE_GLOSSES,
+	WRITE_TIMEOUT_MS,
+	createChildRegistry,
+	createClient,
+	createDeadline,
 	gateViolation,
 	isHumanMessage,
 	parseJson,
@@ -223,12 +229,13 @@ test("the CLI's JSON is read even when something else wrote around it", () => {
 	assert.equal(parseJson("not json"), null);
 });
 
-// --- the drift pins (odd/tasks/opencode-polish.md, S5) --------------------
+// --- the engine pins (odd/tasks/opencode-parity.md, S1+S2) -----------------
 //
 // The curated definitions and the seven glosses are an inline copy in the one
 // flat file the plugin must stay, because the plugin cannot import from the
-// engine or from pi. A copy that may drift is a copy nobody can trust, so each
-// pin reads the file the copy came from, from the repository root.
+// engine. A copy that may drift is a copy nobody can trust, so each pin reads
+// the engine's own source, from the repository root. The engine is the only
+// contract the hosts share; no pin reads another host's extension tree.
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -238,53 +245,45 @@ function repoFile(relative) {
 }
 
 /**
- * The seven type glosses a text states, as `kind — gloss` lines.
+ * The engine's seven type names, read from its own source.
  *
- * The plugin states them as string literals in one flat file; pi states them
- * as the lines of `mnexis_save`'s description (they moved there in T3, AB5).
- * Both write one kind per line, so the pin is textual and carrier-agnostic:
- * the same gloss in another carrier is the same line here, and a reworded one
- * is a different line even when both sides would still be exported and
- * imported.
+ * `SaveArgs::memory_type`'s doc comment states the closed set ("Memory type:
+ * knowledge, decision, preference, procedure, project_state, episode or
+ * fact."), and schemars carries that doc into the MCP input schema every host
+ * reads. The extraction drops the `///` markers, so a reflowed comment is
+ * still the same list.
  */
-function glossLines(text) {
-	const lines = [];
-	for (const line of String(text ?? "").split("\n")) {
-		const match = line.match(
-			/^\s*"?(knowledge|decision|preference|procedure|project_state|episode|fact) — (.+?)"?,?$/,
-		);
-		if (match) {
-			lines.push(`${match[1]} — ${match[2]}`);
-		}
-	}
-	return lines;
+function engineTypeNames() {
+	const source = repoFile("src/mcp/tools.rs");
+	const match = source.match(/Memory type:\s*([^.]*)\./);
+	assert.ok(match, "the engine's save argument states the memory types");
+	const text = match[1]
+		.split("\n")
+		.map((line) => line.replace(/^\s*\/\/+\s*/, "").trim())
+		.join(" ");
+	return text
+		.split(/\s*(?:,|\bor\b)\s*/)
+		.map((name) => name.trim())
+		.filter((name) => name !== "");
 }
 
-test("the seven type glosses in the plugin are exactly the ones pi's save description carries", () => {
-	const plugin = glossLines(repoFile("extensions/mnexis-opencode/index.js"));
-	// The carrier changed in T3 (AB5): the taxonomy moved out of the settle
-	// nudge and into the save description, where the model reads it at the
-	// moment of the write. The parity intent does not: one vocabulary, two
-	// hosts, and neither may reword a kind on its own.
-	const tools = new Map();
-	mnexisMemory({
-		registerTool: (tool) => tools.set(tool.name, tool),
-		on() {},
-		appendEntry() {},
-	});
-	const save = glossLines(tools.get("mnexis_save").description);
+test("the plugin's seven type names are the engine's closed set, and the gloss is the plugin's own", () => {
+	const engine = engineTypeNames();
+	assert.equal(engine.length, 7, `the engine states seven kinds: ${engine.join(", ")}`);
+	assert.equal(new Set(engine).size, 7, "the engine's names are distinct");
 
-	assert.equal(
-		save.length,
-		7,
-		`the save description states the seven kinds once: ${save.join(" | ")}`,
-	);
+	const plugin = TYPE_GLOSSES.map((gloss) => {
+		const [name, ...rest] = String(gloss).split(" — ");
+		assert.notEqual(rest.join(" — ").trim(), "", `a gloss is a name and one line: ${gloss}`);
+		assert.doesNotMatch(rest.join(" — "), /\n/, `a gloss is one line: ${gloss}`);
+		return name;
+	});
+
 	assert.deepEqual(
 		plugin,
-		save,
-		"the plugin's glosses are pi's, verbatim: one definition of the vocabulary, two consumers",
+		engine,
+		"the plugin's names are the engine's, in the engine's order: the engine is the shared contract",
 	);
-	assert.deepEqual(plugin, TYPE_GLOSSES, "and the exported list is the one the save description carries");
 });
 
 test("the curated map carries exactly one non-empty description per MCP tool id", () => {
@@ -307,37 +306,128 @@ test("the curated map carries exactly one non-empty description per MCP tool id"
 	}
 });
 
-/** pi's declared tools, prose only: the repo's own measurement.
- *
- * The loadout T3 decides is what the model is declared on every request: the
- * `direct`, active tools. A `deferred` or `hidden` tool's description is
- * registered but never declared (odd/tasks/ext-ts-rewrite.md, rules 3 and 7),
- * so it is not part of this bill. */
-function piToolsProse() {
-	const tools = new Map();
-	mnexisMemory({
-		registerTool: (tool) => tools.set(tool.name, tool),
-		on() {},
-		appendEntry() {},
-	});
-	const parts = [];
-	for (const tool of tools.values()) {
-		if ((tool.exposure ?? "direct") !== "direct" || tool.defaultActive === false) {
-			continue;
-		}
-		parts.push(tool.description);
-		for (const property of Object.values(tool.parameters?.properties ?? {})) {
-			parts.push(property?.description ?? "");
-		}
-	}
-	return Buffer.byteLength(parts.join(""), "utf8");
+// --- the reliability patterns (odd/tasks/opencode-parity.md, S3) -----------
+//
+// The host awaits these calls, so each of them gets its own ceiling, and a
+// store that is momentarily locked is worth one more try on the commands whose
+// identity the engine owns. Both patterns are the engine-compatible ones the
+// pi extension measured; the plugin keeps its own copy.
+
+/** Fake exec: records calls and replays scripted answers. */
+function scriptedExec(answers = []) {
+	const calls = [];
+	const exec = async (command, args, options) => {
+		calls.push({ command, args, options });
+		return answers.shift() ?? { code: 0, stdout: "{}", stderr: "" };
+	};
+	return { exec, calls };
 }
 
-test("pi's declared tools block still fits the 5500 B pin the curated map was not allowed to grow", () => {
-	// The vocabulary has two consumers (S1-L2): pi's save description and this
-	// plugin's save description. T3 moved the glosses into pi's save (AB5),
-	// so this pin now measures the block they ride in — the tools pi declares
-	// on every request, with the same 5 500 B budget.
-	const bytes = piToolsProse();
-	assert.ok(bytes <= 5500, `pi's declared tools block is ${bytes} B (budget 5500 B)`);
+const BUSY = { code: BUSY_EXIT_CODE, stdout: "", stderr: "busy: sql: database is locked" };
+
+test("every CLI call carries a budget: a read ten seconds, a write thirty", async () => {
+	const { exec, calls } = scriptedExec();
+	const client = createClient({ exec });
+
+	await client.status("/repo");
+	await client.previousSession("/repo");
+	await client.stateRecords("/repo");
+	await client.sessionStart({ sessionId: "s1" }, "/repo");
+	await client.sessionEnd({ sessionId: "s1" }, "/repo");
+	await client.savePrompt({ content: "hola", sessionId: "s1" }, "/repo");
+
+	assert.deepEqual(
+		calls.map((call) => call.options.timeout),
+		[READ_TIMEOUT_MS, READ_TIMEOUT_MS, READ_TIMEOUT_MS, WRITE_TIMEOUT_MS, WRITE_TIMEOUT_MS, WRITE_TIMEOUT_MS],
+	);
+});
+
+test("a call bound to a smaller budget passes exactly that to the child", async () => {
+	const { exec, calls } = scriptedExec();
+	const client = createClient({ exec });
+
+	await client.withBudget(700).savePrompt({ content: "hola" }, "/repo");
+
+	assert.equal(calls[0].options.timeout, 700);
+});
+
+test("a locked store is tried again on a call that is idempotent by construction", async () => {
+	const { exec, calls } = scriptedExec([BUSY, { code: 0, stdout: '{"id":"s1"}', stderr: "" }]);
+	const client = createClient({ exec });
+
+	const result = await client.sessionStart({ sessionId: "s1" }, "/repo");
+
+	assert.equal(calls.length, 2, "the start was tried twice");
+	assert.equal(result.code, 0, "the answer that came back is the one kept");
+	assert.equal(result.data.id, "s1");
+	assert.equal(result.busy_retries, 1, "the answer says how many times it was tried again");
+});
+
+test("a locked store is tried at most twice more, and then reports the lock", async () => {
+	const { exec, calls } = scriptedExec([BUSY, BUSY, BUSY, BUSY, BUSY]);
+	const client = createClient({ exec });
+
+	const result = await client.savePrompt({ content: "hola", sessionId: "s1" }, "/repo");
+
+	assert.equal(calls.length, 1 + BUSY_RETRY_DELAYS_MS.length, "the tries are bounded");
+	assert.equal(result.code, BUSY_EXIT_CODE, "a store that stays locked is still a failure");
+	assert.equal(result.busy_retries, BUSY_RETRY_DELAYS_MS.length);
+});
+
+test("a locked read is not tried again: an answer that never came is one report", async () => {
+	for (const call of [
+		(client) => client.status("/repo"),
+		(client) => client.previousSession("/repo"),
+		(client) => client.stateRecords("/repo"),
+	]) {
+		const { exec, calls } = scriptedExec([BUSY, { code: 0, stdout: "{}", stderr: "" }]);
+		const result = await call(createClient({ exec }));
+
+		assert.equal(calls.length, 1);
+		assert.equal(result.code, BUSY_EXIT_CODE);
+		assert.equal(result.busy_retries, 0);
+	}
+});
+
+test("a step that runs out of budget is abandoned, never awaited forever", async () => {
+	const deadline = createDeadline(20, "prompt capture");
+
+	const answer = await deadline.step("capture", () => new Promise(() => {}));
+
+	assert.match(answer.abandoned, /capture did not finish within the .* prompt capture budget/);
+});
+
+test("a step that fits keeps its answer, and a spent budget abandons without work", async () => {
+	const deadline = createDeadline(500, "pointer");
+	const answer = await deadline.step("status", async () => "ok");
+	assert.equal(answer.value, "ok");
+
+	const spent = createDeadline(0, "pointer");
+	let ran = false;
+	const skipped = await spent.step("status", async () => {
+		ran = true;
+		return "never";
+	});
+	assert.match(skipped.abandoned, /already spent/);
+	assert.equal(ran, false, "work with no budget left is never started");
+});
+
+test("the child registry kills what it tracks, once, and forgets what exited", () => {
+	const registry = createChildRegistry();
+	const killed = [];
+	const exited = [];
+	const first = {
+		kill: (signal) => killed.push(signal),
+		once: (name, callback) => exited.push({ name, callback }),
+	};
+	registry.track(first);
+	registry.track({ kill: () => killed.push("SIGTERM"), once: () => {} });
+
+	// A child that exits on its own is no longer the registry's to kill.
+	exited.find((entry) => entry.name === "exit").callback();
+
+	registry.killAll();
+	assert.deepEqual(killed, ["SIGTERM"]);
+	registry.killAll();
+	assert.deepEqual(killed, ["SIGTERM"], "the registry is emptied by the first kill");
 });

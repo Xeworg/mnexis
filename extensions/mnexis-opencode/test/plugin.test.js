@@ -16,6 +16,7 @@ import plugin, {
 	PLUGIN_ID,
 	POINTER_ENV,
 	PROFILE_REFUSAL,
+	SETTLE_NUDGE,
 	TYPE_GLOSSES,
 	createPlugin,
 } from "../index.js";
@@ -398,6 +399,7 @@ test("v2: setup registers the four hooks and one subscription, and hands back a 
 		"session:compaction",
 		"session:context",
 		"session:prompt",
+		"tool:execute.after",
 		"tool:execute.before",
 	]);
 	host.close();
@@ -536,6 +538,23 @@ test("v2: a host missing one seat still gets the other rules", async () => {
 
 	host.close();
 	await cleanup();
+});
+
+test("v2: the cleanup kills the calls still in flight before it ends the sessions", async () => {
+	const events = [];
+	const registry = { killAll: () => events.push("kill") };
+	const { exec } = recordingExec((args) => {
+		events.push(args[0]);
+		return {};
+	});
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {}, registry }).setup(host.ctx);
+
+	await host.hooks.get("session:prompt")({ sessionID: "s1", prompt: { text: "hola" } });
+	host.close();
+	await cleanup();
+
+	assert.deepEqual(events, ["session", "prompt", "kill", "end"]);
 });
 
 test("v2: the cleanup ends every session the plugin opened", async () => {
@@ -698,4 +717,155 @@ test("v2: a catalog with no mnexis tools is left exactly as it is", async () => 
 
 	host.close();
 	await cleanup();
+});
+
+// --- the settle question (odd/tasks/opencode-parity.md, S3) ----------------
+//
+// The pi extension asks once, at the final boundary, when the session's own
+// events show unsaved work. opencode promises no such boundary, so the ask
+// rides the seat that is delivered per model request: the pointer's. The
+// evidence is the outcome — a tool that failed changed no file and saved
+// nothing — and the latch is one ask per session.
+
+test("v1: a session that changed files and saved nothing is asked once, pointing at the taxonomy", async () => {
+	const { exec } = recordingExec(engine());
+	const hooks = await createPlugin({ exec, env: {} }).server({ directory: "/repo" });
+
+	const system = [];
+	await hooks["experimental.chat.system.transform"]({ sessionID: "s1" }, { system });
+	assert.equal(system.length, 1, "nothing has changed yet: only the pointer is delivered");
+
+	// A shell call that landed is the host's own observation that work happened.
+	await hooks["tool.execute.after"]({ tool: "shell", sessionID: "s1" }, {});
+
+	await hooks["experimental.chat.system.transform"]({ sessionID: "s1" }, { system });
+	await hooks["experimental.chat.system.transform"]({ sessionID: "s1" }, { system });
+
+	assert.equal(system.length, 2, "the pointer, then the question once");
+	assert.equal(system[1], SETTLE_NUDGE);
+	assert.match(system[1], /mnexis_memory_save/, "the ask names the tool that carries the taxonomy");
+	assert.match(system[1], /memory_type/);
+	assert.match(system[1], /knowledge/);
+});
+
+test("v1: a failed save is not a save, and a save that landed closes the question", async () => {
+	const { exec } = recordingExec(engine());
+	const hooks = await createPlugin({ exec, env: {} }).server({ directory: "/repo" });
+
+	// s1: the save was attempted and failed, so the question stays open.
+	await hooks["tool.execute.after"]({ tool: "write", sessionID: "s1" }, {});
+	await hooks["tool.execute.after"]({ tool: "mnexis_memory_save", sessionID: "s1" }, { isError: true });
+	const asked = [];
+	await hooks["experimental.chat.system.transform"]({ sessionID: "s1" }, { system: asked });
+	assert.ok(asked.includes(SETTLE_NUDGE));
+
+	// s2: the save landed, so there is no question to ask.
+	await hooks["tool.execute.after"]({ tool: "write", sessionID: "s2" }, {});
+	await hooks["tool.execute.after"]({ tool: "mnexis_memory_save", sessionID: "s2" }, {});
+	const quiet = [];
+	await hooks["experimental.chat.system.transform"]({ sessionID: "s2" }, { system: quiet });
+	assert.equal(quiet.includes(SETTLE_NUDGE), false);
+});
+
+test("v1: a tool that failed, or a tool that changed no file, earns no question", async () => {
+	const { exec } = recordingExec(engine());
+	const hooks = await createPlugin({ exec, env: {} }).server({ directory: "/repo" });
+
+	await hooks["tool.execute.after"]({ tool: "edit", sessionID: "s1" }, { isError: true });
+	await hooks["tool.execute.after"]({ tool: "read", sessionID: "s1" }, {});
+	const system = [];
+	await hooks["experimental.chat.system.transform"]({ sessionID: "s1" }, { system });
+
+	assert.equal(system.includes(SETTLE_NUDGE), false);
+});
+
+test("v2: the settle question rides the context seat once, from the session's own outcomes", async () => {
+	const { exec } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	const after = host.hooks.get("tool:execute.after");
+	assert.equal(typeof after, "function", "the outcome seat is registered beside the gate");
+	assert.doesNotThrow(() => after(undefined), "an outcome the plugin cannot read never breaks the turn");
+
+	const event = { sessionID: "s1", system: [], messages: [], options: {} };
+	await host.hooks.get("session:context")(event);
+	after({ tool: "shell", sessionID: "s1", input: { command: "cargo test" } });
+	after({ tool: "mnexis_memory_save", sessionID: "s1", isError: true });
+	await host.hooks.get("session:context")(event);
+	await host.hooks.get("session:context")(event);
+
+	assert.equal(event.system.filter((part) => part.text === SETTLE_NUDGE).length, 1);
+
+	// A session whose save landed is never asked.
+	const quiet = { sessionID: "s2", system: [], messages: [], options: {} };
+	after({ tool: "edit", sessionID: "s2", input: { filePath: "/repo/src/main.rs" } });
+	after({ tool: "mnexis_memory_save", sessionID: "s2" });
+	await host.hooks.get("session:context")(quiet);
+	assert.equal(quiet.system.some((part) => part.text === SETTLE_NUDGE), false);
+
+	host.close();
+	await cleanup();
+});
+
+// --- the session lifecycle (odd/tasks/opencode-parity.md, S3) -------------
+
+test("v1: a session the engine already holds as ended is noted, not treated as an error", async () => {
+	const journal = [];
+	const { exec } = recordingExec(
+		engine({ session: { stdout: JSON.stringify({ id: "s1", ended_at: "2026-10-01T00:00:00Z" }) } }),
+	);
+	const hooks = await createPlugin({ exec, env: {}, logger: (record) => journal.push(record) }).server({
+		directory: "/repo",
+	});
+
+	await hooks.event({ event: { type: "session.created", properties: { info: { id: "s1" } } } });
+
+	assert.deepEqual(
+		journal.map((record) => [record.kind, record.already_ended, record.ended_at]),
+		[["session-start", true, "2026-10-01T00:00:00Z"]],
+		"a start never reopens a session: the engine's answer is reported, not hidden",
+	);
+});
+
+test("v1: ending a session the engine never heard of is the engine's answer, not an exception", async () => {
+	const journal = [];
+	const { exec } = recordingExec(engine({ end: { code: 3, stderr: "not found" } }));
+	const hooks = await createPlugin({ exec, env: {}, logger: (record) => journal.push(record) }).server({
+		directory: "/repo",
+	});
+
+	await hooks.event({ event: { type: "session.created", properties: { info: { id: "s1" } } } });
+	await hooks.dispose();
+
+	const end = journal.find((record) => record.kind === "session-end");
+	assert.equal(end.exit_code, 3);
+	assert.equal(end.not_registered, true);
+});
+
+test("v1: a session the host deletes is ended once, and not again at unload", async () => {
+	const { exec, calls } = recordingExec(engine());
+	const hooks = await createPlugin({ exec, env: {} }).server({ directory: "/repo" });
+
+	await hooks.event({ event: { type: "session.created", properties: { info: { id: "s1" } } } });
+	await hooks.event({ event: { type: "session.deleted", properties: { info: { id: "s1" } } } });
+	await hooks.dispose();
+
+	assert.deepEqual(callsWith(calls, "end").map(argv), ["mnexis end --id s1 --json"]);
+});
+
+test("v2: the host's session.deleted ends that session, and the cleanup does not repeat it", async () => {
+	const { exec, calls } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	host.push({ type: "session.created", data: { sessionID: "s7" } });
+	assert.ok(await waitFor(() => callsWith(calls, "session").length === 1), "the session was registered");
+	host.push({ type: "session.deleted", data: { sessionID: "s7" } });
+	assert.ok(await waitFor(() => callsWith(calls, "end").length === 1), "the deleted session was ended");
+
+	host.close();
+	await cleanup();
+
+	assert.deepEqual(callsWith(calls, "end").map(argv), ["mnexis end --id s7 --json"]);
 });
