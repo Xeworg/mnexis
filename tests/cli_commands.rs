@@ -5576,6 +5576,17 @@ fn a_save_whose_union_would_cross_the_cap_is_rejected_whole() {
         stderr.contains("keywords: exceeds max count: 33 > 32"),
         "the error names the union's count, not the request's: {stderr}"
     );
+    // The answer also says how the count is made and where the way out is:
+    // an agent that hits the cap and does not see the escape re-tries with
+    // fewer words and fails the same way.
+    assert!(
+        stderr.contains("the record already carried 2"),
+        "the error says how the count is made: {stderr}"
+    );
+    assert!(
+        stderr.contains("replace_keywords"),
+        "the error names the escape: {stderr}"
+    );
     // The rejection is whole: the record keeps its words and its content.
     let out = p
         .run_silent(&["show", first.as_str()])

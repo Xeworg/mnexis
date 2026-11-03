@@ -1464,3 +1464,162 @@ fn an_update_keeps_the_words_of_the_record() {
     );
     assert_eq!(words_of(&svc, "uuid-1"), words(&["puerto", "port"]));
 }
+
+// ---------------------------------------------------------------------------
+// The limits, named in the answer (the cap tells the caller what the limit
+// is and what to do; a bare count leaves the caller guessing, and the agent
+// that hits a cap re-tries the same way until it gives up).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_content_cap_error_names_the_limit_and_the_way_out() {
+    let max = ServiceConfig::default().max_content_bytes;
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-cap-content", "");
+    req.content = "x".repeat(max + 1);
+    let err = svc.save(req).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("content"),
+        "the error names the field: {message}"
+    );
+    assert!(
+        message.contains(&max.to_string()),
+        "the error names the limit in effect: {message}"
+    );
+    assert!(
+        message.contains("the profile's limit"),
+        "the error says whose limit it is: {message}"
+    );
+    assert!(
+        message.contains("split"),
+        "the error names a way out: {message}"
+    );
+}
+
+#[test]
+fn the_topic_key_cap_error_names_the_limit() {
+    let max = ServiceConfig::default().max_topic_key_bytes;
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-cap-key", "hola");
+    req.topic_key = "k".repeat(max + 1);
+    let err = svc.save(req).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("topic_key"),
+        "the error names the field: {message}"
+    );
+    assert!(
+        message.contains(&max.to_string()),
+        "the error names the limit in effect: {message}"
+    );
+    assert!(
+        message.contains("Shorten the key"),
+        "the error names a way out: {message}"
+    );
+}
+
+#[test]
+fn the_tags_cap_error_names_the_cap() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-cap-tags", "hola");
+    req.tags = (0..33).map(|i| format!("t{i}")).collect();
+    let err = svc.save(req).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("exceeds max count: 33 > 32"),
+        "the error names the count and the cap: {message}"
+    );
+    assert!(
+        message.contains("at most 32 tags"),
+        "the error names a way out: {message}"
+    );
+}
+
+#[test]
+fn the_query_cap_error_names_the_limit() {
+    let max = ServiceConfig::default().max_query_bytes;
+    let (svc, _dir) = make_service();
+    let long = "q".repeat(max + 1);
+    let err = svc.search(&long, None, 10, MatchMode::Any).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("query"),
+        "the error names the field: {message}"
+    );
+    assert!(
+        message.contains(&max.to_string()),
+        "the error names the limit in effect: {message}"
+    );
+    assert!(
+        message.contains("Shorten the query"),
+        "the error names a way out: {message}"
+    );
+}
+
+#[test]
+fn the_keyword_cap_error_names_the_way_out() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-cap-keywords", "hola");
+    req.keywords = (0..33).map(|i| format!("w{i}")).collect();
+    let err = svc.save(req).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("exceeds max count: 33 > 32"),
+        "the error names the count and the cap: {message}"
+    );
+    assert!(
+        message.contains("at most 32 words"),
+        "the error names a way out: {message}"
+    );
+}
+
+#[test]
+fn the_keyword_word_cap_error_names_the_limit() {
+    let (mut svc, _dir) = make_service();
+    let mut req = save_req("uuid-cap-word", "hola");
+    req.keywords = vec!["w".repeat(49)];
+    let err = svc.save(req).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("word exceeds max bytes"),
+        "the error names what is over: {message}"
+    );
+    assert!(
+        message.contains("48"),
+        "the error names the limit in effect: {message}"
+    );
+    assert!(
+        message.contains("Shorten the word"),
+        "the error names a way out: {message}"
+    );
+}
+
+#[test]
+fn the_keyword_union_cap_error_names_the_split_and_the_escape() {
+    let (mut svc, _dir) = make_service();
+    let mut first = save_req("uuid-union", "el servicio escucha en el puerto 8081");
+    first.keywords = vec!["puerto".into(), "port".into()];
+    svc.save(first).unwrap();
+
+    // 31 new words on a record that carries 2: the request fits under the
+    // cap, the union does not. The error has to say which count is over and
+    // where the way out is, or the caller re-tries with fewer words and
+    // fails again.
+    let mut second = save_req("uuid-union", "el servicio escucha en el puerto 9091");
+    second.keywords = (0..31).map(|i| format!("extra{i}")).collect();
+    let err = svc.save(second).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("exceeds max count: 33 > 32"),
+        "the error names the count and the cap: {message}"
+    );
+    assert!(
+        message.contains("the record already carried 2"),
+        "the error says how the count is made: {message}"
+    );
+    assert!(
+        message.contains("replace_keywords"),
+        "the error names the escape: {message}"
+    );
+}

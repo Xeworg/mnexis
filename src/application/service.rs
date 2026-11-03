@@ -174,7 +174,11 @@ impl<R: MemoryRepository> MemoryService<R> {
         // is trimmed, an empty one is not a word, and a word the request
         // repeats in another case is the same word (the first spelling wins).
         let requested_keywords = normalize_keywords(&req.keywords);
-        validate_keywords(&requested_keywords, self.config.max_keywords)?;
+        validate_keywords(
+            &requested_keywords,
+            self.config.max_keywords,
+            KeywordCount::Requested,
+        )?;
         req.keywords = requested_keywords.clone();
 
         // The key comes from the title: the same title always gives the same
@@ -1157,12 +1161,16 @@ impl<R: MemoryRepository> MemoryService<R> {
         idem_hash: Option<String>,
     ) -> Result<Memory, MnexisError> {
         let next_revision = current.revision + 1;
-        let keywords = if req.replace_keywords {
-            requested_keywords.to_vec()
+        let (keywords, count) = if req.replace_keywords {
+            (requested_keywords.to_vec(), KeywordCount::Replacing)
         } else {
-            union_keywords(requested_keywords, &current.keywords)
+            let carried = current.keywords.len();
+            (
+                union_keywords(requested_keywords, &current.keywords),
+                KeywordCount::Union { carried },
+            )
         };
-        validate_keywords(&keywords, self.config.max_keywords)?;
+        validate_keywords(&keywords, self.config.max_keywords, count)?;
         let updated = Memory {
             id: current.id,
             uuid: current.uuid.clone(),
@@ -1360,7 +1368,11 @@ fn validate_content(content: &str, max_bytes: usize) -> Result<(), MnexisError> 
     if content.len() > max_bytes {
         Err(MnexisError::invalid_argument(
             "content",
-            format!("exceeds max bytes: {} > {}", content.len(), max_bytes),
+            format!(
+                "exceeds max bytes: {} > {} (the profile's limit). Trim it, or split it into several records.",
+                content.len(),
+                max_bytes
+            ),
         ))
     } else {
         Ok(())
@@ -1371,7 +1383,11 @@ fn validate_topic_key(topic_key: &str, max_bytes: usize) -> Result<(), MnexisErr
     if topic_key.len() > max_bytes {
         return Err(MnexisError::invalid_argument(
             "topic_key",
-            format!("exceeds max bytes: {} > {}", topic_key.len(), max_bytes),
+            format!(
+                "exceeds max bytes: {} > {} (the profile's limit). Shorten the key.",
+                topic_key.len(),
+                max_bytes
+            ),
         ));
     }
     for c in topic_key.chars() {
@@ -1413,7 +1429,12 @@ fn validate_tags(tags: &[String], max_tags: usize) -> Result<(), MnexisError> {
     if tags.len() > max_tags {
         return Err(MnexisError::invalid_argument(
             "tags",
-            format!("exceeds max count: {} > {}", tags.len(), max_tags),
+            format!(
+                "exceeds max count: {} > {}. Send at most {} tags.",
+                tags.len(),
+                max_tags,
+                max_tags
+            ),
         ));
     }
     for tag in tags {
@@ -1468,18 +1489,59 @@ fn same_word(a: &str, b: &str) -> bool {
     a.to_lowercase() == b.to_lowercase()
 }
 
-fn validate_keywords(keywords: &[String], max_keywords: usize) -> Result<(), MnexisError> {
+/// What the count of words means when it crosses the cap.
+///
+/// The cap is per memory and the words **accumulate**, so the same request
+/// can be under the cap or over it depending on what the record already
+/// carries. The error has to say which count is over, or the caller that
+/// does not know the rule re-tries the same way and fails the same way.
+#[derive(Clone, Copy)]
+enum KeywordCount {
+    /// The list the request carries, on its own.
+    Requested,
+    /// The union of the words the record already carries and the new ones.
+    Union { carried: usize },
+    /// The list replaces the words the record carries.
+    Replacing,
+}
+
+fn validate_keywords(
+    keywords: &[String],
+    max_keywords: usize,
+    count: KeywordCount,
+) -> Result<(), MnexisError> {
     if keywords.len() > max_keywords {
+        let detail = match count {
+            KeywordCount::Requested => {
+                format!("Send at most {max_keywords} words.")
+            }
+            KeywordCount::Replacing => {
+                format!(
+                    "Your list replaces the record's words, so it has to fit on its own. Send at most {max_keywords} words."
+                )
+            }
+            KeywordCount::Union { carried } => {
+                let added = keywords.len().saturating_sub(carried);
+                format!(
+                    "The count is the union: the record already carried {carried}, and you are adding {added}. Send replace_keywords to prune the record's words, or send fewer new words."
+                )
+            }
+        };
         return Err(MnexisError::invalid_argument(
             "keywords",
-            format!("exceeds max count: {} > {}", keywords.len(), max_keywords),
+            format!(
+                "exceeds max count: {} > {max_keywords}. {detail}",
+                keywords.len()
+            ),
         ));
     }
     for word in keywords {
         if word.len() > MAX_KEYWORD_BYTES {
             return Err(MnexisError::invalid_argument(
                 "keywords",
-                format!("word exceeds max bytes: {word:?} > {MAX_KEYWORD_BYTES}"),
+                format!(
+                    "word exceeds max bytes: {word:?} > {MAX_KEYWORD_BYTES} (the profile's limit for one word). Shorten the word."
+                ),
             ));
         }
     }
@@ -1490,7 +1552,11 @@ fn validate_query(query: &str, max_bytes: usize) -> Result<(), MnexisError> {
     if query.len() > max_bytes {
         Err(MnexisError::invalid_argument(
             "query",
-            format!("exceeds max bytes: {} > {}", query.len(), max_bytes),
+            format!(
+                "exceeds max bytes: {} > {} (the profile's limit). Shorten the query.",
+                query.len(),
+                max_bytes
+            ),
         ))
     } else {
         Ok(())
