@@ -11,7 +11,9 @@
  * saves on its own, inside the namespaces the human already authorized.
  */
 
-import { createClient, defaultExec } from "./lib/cli.js";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+import { createClient, defaultExec } from "./lib/cli.ts";
 import {
 	decideAuthorization,
 	decideBinding,
@@ -19,7 +21,7 @@ import {
 	engineSilence,
 	allowNamespaceCommand,
 	bindCommand,
-} from "./lib/gate.js";
+} from "./lib/gate.ts";
 import {
 	candidateFromMarker,
 	deriveWorkspaceCandidate,
@@ -27,8 +29,8 @@ import {
 	readWorkspaceCandidate,
 	selectNamespace,
 	workspaceKey,
-} from "./lib/workspace.js";
-import { renderers, withStatus } from "./lib/chrome.js";
+} from "./lib/workspace.ts";
+import { renderers, withStatus } from "./lib/chrome.ts";
 
 /**
  * Register a memory tool with the chrome pi draws: the call line, the panel
@@ -853,7 +855,7 @@ function typeArticle(type) {
 	return /^[aeiou]/i.test(String(type ?? "")) ? "an" : "a";
 }
 
-export default function mnexisMemoryExtension(pi) {
+export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 	// One client and one resolution cache per extension instance (per session).
 	const client = createClient({
 		exec: defaultExec,

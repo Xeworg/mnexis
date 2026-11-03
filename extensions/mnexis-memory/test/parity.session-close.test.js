@@ -24,8 +24,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import mnexisMemory from "../index.js";
-import { createClient } from "../lib/cli.js";
+import mnexisMemory from "../index.ts";
+import { createClient } from "../lib/cli.ts";
 
 const NAMESPACE = "payments";
 const CLOSE_TITLE = "estado al cierre";

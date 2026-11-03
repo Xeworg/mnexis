@@ -20,7 +20,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import mnexisMemory from "../index.js";
+import mnexisMemory from "../index.ts";
 
 /**
  * A fake engine that answers nothing until its sleep is over, and leaves a

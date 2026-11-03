@@ -39,24 +39,24 @@ pub const EXTENSION_MNEXIS_MEMORY: EmbeddedAsset = EmbeddedAsset {
     name: "mnexis-memory",
     files: &[
         EmbeddedFile {
-            path: "index.js",
-            contents: include_str!("../extensions/mnexis-memory/index.js"),
+            path: "index.ts",
+            contents: include_str!("../extensions/mnexis-memory/index.ts"),
         },
         EmbeddedFile {
-            path: "lib/cli.js",
-            contents: include_str!("../extensions/mnexis-memory/lib/cli.js"),
+            path: "lib/cli.ts",
+            contents: include_str!("../extensions/mnexis-memory/lib/cli.ts"),
         },
         EmbeddedFile {
-            path: "lib/chrome.js",
-            contents: include_str!("../extensions/mnexis-memory/lib/chrome.js"),
+            path: "lib/chrome.ts",
+            contents: include_str!("../extensions/mnexis-memory/lib/chrome.ts"),
         },
         EmbeddedFile {
-            path: "lib/gate.js",
-            contents: include_str!("../extensions/mnexis-memory/lib/gate.js"),
+            path: "lib/gate.ts",
+            contents: include_str!("../extensions/mnexis-memory/lib/gate.ts"),
         },
         EmbeddedFile {
-            path: "lib/workspace.js",
-            contents: include_str!("../extensions/mnexis-memory/lib/workspace.js"),
+            path: "lib/workspace.ts",
+            contents: include_str!("../extensions/mnexis-memory/lib/workspace.ts"),
         },
         EmbeddedFile {
             path: "package.json",

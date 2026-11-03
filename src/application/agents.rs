@@ -423,7 +423,7 @@ fn asset_for(kind: AssetKind) -> Option<&'static EmbeddedAsset> {
             (AssetKind::Skill, "mnexis-memory") | (AssetKind::Extension, "mnexis-memory")
         ) && match kind {
             AssetKind::Skill => asset.files.iter().any(|f| f.path == "SKILL.md"),
-            AssetKind::Extension => asset.files.iter().any(|f| f.path == "index.js"),
+            AssetKind::Extension => asset.files.iter().any(|f| f.path == "index.ts"),
         }
     })
 }
@@ -659,7 +659,7 @@ mod tests {
             .install(AgentEnvironment::Pi, AssetFilter::All)
             .expect("install");
         let extension = installer.targets(AgentEnvironment::Pi)[1].directory.clone();
-        assert!(extension.join("index.js").is_file());
+        assert!(extension.join("index.ts").is_file());
         assert!(!extension.join("test").exists());
         fs::remove_dir_all(&home).ok();
     }

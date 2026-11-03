@@ -1353,7 +1353,7 @@ mod tests {
                 .join("agent")
                 .join("extensions")
                 .join("mnexis-memory")
-                .join("index.js")
+                .join("index.ts")
                 .is_file(),
             "the extension is written"
         );

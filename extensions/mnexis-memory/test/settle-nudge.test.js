@@ -25,7 +25,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import mnexisMemory from "../index.js";
+import mnexisMemory from "../index.ts";
 
 /** The question the model reads when the evidence says it owes one (S4). */
 const NUDGE = [

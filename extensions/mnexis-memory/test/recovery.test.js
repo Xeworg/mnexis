@@ -46,7 +46,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import mnexisMemory from "../index.js";
+import mnexisMemory from "../index.ts";
 
 const NAMESPACE = "payments";
 const OTHER_NAMESPACE = "otro-proyecto";

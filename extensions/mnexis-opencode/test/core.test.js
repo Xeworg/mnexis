@@ -14,7 +14,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import mnexisMemory from "../../mnexis-memory/index.js";
+import mnexisMemory from "../../mnexis-memory/index.ts";
 
 import {
 	CURATED_DESCRIPTIONS,
@@ -259,7 +259,7 @@ function glossLines(source) {
 
 test("the seven type glosses in the plugin are exactly the ones pi's settle nudge carries", () => {
 	const plugin = glossLines(repoFile("extensions/mnexis-opencode/index.js"));
-	const nudge = glossLines(repoFile("extensions/mnexis-memory/index.js"));
+	const nudge = glossLines(repoFile("extensions/mnexis-memory/index.ts"));
 
 	assert.equal(nudge.length, 7, `the nudge states the seven kinds once: ${nudge.join(" | ")}`);
 	assert.deepEqual(

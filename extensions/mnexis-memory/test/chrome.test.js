@@ -23,7 +23,7 @@ import {
 	typeIcon,
 	truncate,
 	withStatus,
-} from "../lib/chrome.js";
+} from "../lib/chrome.ts";
 
 /** The kinds of memory the agent may write. */
 const TYPES = [

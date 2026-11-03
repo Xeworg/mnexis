@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isPermissionGrantCommand, isProfileFilePath, needsProfileInit, readItems } from "../index.js";
+import { isPermissionGrantCommand, isProfileFilePath, needsProfileInit, readItems } from "../index.ts";
 
 test("readItems unwraps the { count, items } envelope", () => {
 	assert.deepEqual(readItems({ count: 1, items: [{ uuid: "a" }] }), [{ uuid: "a" }]);
