@@ -10,11 +10,13 @@ do, because they belong to the host:
 - **it registers the session** with the engine, where the project's memories live;
 - **it points the agent at the door** — `mnexis_memory_context` — once per session,
   with the previous session's summary in one line;
+- **it asks once for the judgment** when a session changed files and saved nothing,
+  with a pointer to the vocabulary the save carries;
 - **it keeps the project state alive through a compaction**;
 - **it guards the human's permissions**: a model-issued `mnexis config allow-namespace`
   or an edit of the mnexis profile is refused, with the command the human must run;
 - **it curates the definitions the model reads** (opencode 2 only): the seventeen tools
-  carry the same vocabulary a pi model meets, and `codemode` is off.
+  carry the engine's vocabulary restated for this host, and `codemode` is off.
 
 It registers no tools and draws nothing: the tools are the MCP server's, and opencode's
 TUI does not let a plugin restyle an MCP tool (RESEARCH.md §1).
@@ -72,26 +74,37 @@ written before this field existed keeps its bytes: the plugin's transform is wha
 tools direct. If you edit the entry by hand, keep `"codemode": false` in it —
 `mnexis agent uninstall` removes only the exact entry the current mnexis writes.
 
+### Where the vocabulary lives
+
+This plugin is a host of its own, not a copy of another host's extension. Its seven memory
+types are the **engine's closed set** — the `MEMORY_TYPES` the CLI, the MCP schema and every
+host share — and its gloss (`knowledge — a durable fact about the domain, the tools or the
+data.`) is this host's own wording. The engine is the only contract the two surfaces share:
+the plugin imports nothing from another extension and no test reads another extension's
+tree. `test/core.test.js` extracts the seven names from the engine's own `memory_type` docs
+(`src/mcp/tools.rs`) and fails when the plugin drifts from them.
+
 ### The curated definitions (opencode 2 only)
 
 The engine's MCP descriptions say what a tool does. In `ctx.tool.transform` — the one seat
 that can rewrite a model-facing definition — the plugin replaces them with the curated ones,
-so a model on opencode meets the vocabulary a model on pi meets:
+so a model on opencode meets the engine's vocabulary in this host's words:
 
-- `mnexis_memory_save` carries the **seven kinds, verbatim**, the same lines pi's settle
-  nudge states: one definition of the vocabulary, two consumers;
-- the other sixteen carry one curated description each, pi's wording where pi has the same
-  tool, adapted to what the MCP surface answers (previews, ids, the fields each tool takes).
+- `mnexis_memory_save` carries the **seven kinds, one line each**: the names are the
+  engine's closed set, the gloss is this plugin's;
+- the other sixteen carry one curated description each, adapted to what the MCP surface
+  answers (previews, ids, the fields each tool takes).
 
 Two rules hold the copy honest. An id the plugin does not know (the engine renamed a tool)
 is skipped, never guessed at; and a catalog with no `mnexis_*` tools — MCP down, or the
 refresh before the first `tools/list` — is a no-op. The whole transform body is wrapped:
 an uncaught throw inside this callback corrupts the turn, so a plugin must never let one out.
 
-The copy is drift-pinned by `test/core.test.js`: the seven glosses are compared to pi's
-`SETTLE_NUDGE` as it is on disk, the map to the engine's tool inventory in
-`src/mcp/server.rs`, and pi's tools block to its 5500 B budget (the glosses must never be
-added there).
+Two pins keep the copy honest, and both read the engine — never another host's extension.
+`test/core.test.js` extracts the seven type names from the engine's own `memory_type` docs
+(`src/mcp/tools.rs`) and compares them to the glosses' names, and it compares the curated
+map's keys to the engine's tool inventory (`src/mcp/server.rs`). The gloss wording itself is
+this plugin's, and it may change without touching another surface.
 
 **opencode 1 has no equivalent seat.** It keeps the engine's own descriptions, as it always
 did — the transform is registered only where the host offers it.
@@ -113,15 +126,25 @@ The plugin is a single file with a default export both plugin models read:
 | Rule | What it does | opencode 1 | opencode 2 |
 | --- | --- | --- | --- |
 | capture | every prompt you type, byte for byte, in the workspace's namespace | `chat.message` | `session.hook("prompt")` |
-| session | `mnexis session --id … --directory …`, and `mnexis end` when the plugin unloads | `session.created`, `dispose` | `session.created`, setup cleanup |
+| session | `mnexis session --id … --directory …`, and `mnexis end` when the host deletes the session or the plugin unloads | `session.created`, `session.deleted`, `dispose` | `session.created`, `session.deleted`, setup cleanup |
 | pointer | one system-prompt line per session: the namespace, the memory count, the door, the previous session's summary | `experimental.chat.system.transform` | `session.hook("context")` |
+| settle | one question per session when a tool succeeded and no `mnexis_memory_save` landed; the ask names the save and its `memory_type` vocabulary | `tool.execute.after` + the system transform | `tool.hook("execute.after")` + the context hook |
 | compaction | the live `project_state` and `decision` records, from `mnexis list --type … --full`, bounded and counted | `experimental.session.compacting` | `session.hook("compaction")` |
 | gate | refuses a model-issued namespace grant and any edit of `mnexis.toml`/`projects.toml` | `tool.execute.before` | `tool.hook("execute.before")` |
 | definitions | the curated description of every `mnexis_*` tool, and `codemode: false` | — (no seat) | `tool.transform` |
 
 Everything is best effort: a memory engine that cannot answer never fails a turn. A
 capture the store refuses keeps its size and exit code in the host's log (opencode 1) and
-never keeps the message text.
+never keeps the message text. Each call carries a ceiling — ten seconds for a read, thirty
+for a write — and the three commands whose identity the engine owns (`session`, `end`,
+`prompt`) try a locked store again before giving up. The capture has a 1.5 s budget of its
+own, so a store that cannot take the message costs the message, never the turn.
+
+The settle question is outcome-based, not quota-based: a tool that failed changed no file
+and saved nothing, a save that was attempted and failed is not a save, and the question is
+spent as soon as it is asked — one per session. This host has no "before the agent settles"
+boundary, so the question rides the next model request's system part, the same seat the
+pointer uses.
 
 The pointer is a **pointer**, not a second answer: it names the door and the rules that
 make the door cheap, and it does not re-render the memories. The measured reason is in
@@ -146,6 +169,8 @@ refuses, and names the command you must run.
 | `MNEXIS_BIN` | Path to the `mnexis` binary (default: `mnexis` on `PATH`). |
 | `MNEXIS_DATA_DIR` | Profile directory, forwarded to the CLI unchanged. |
 | `MNEXIS_OPENCODE_POINTER` | Set to `0` to stop the plugin from pointing at the door. |
+| `MNEXIS_OPENCODE_CAPTURE_BUDGET_MS` | The capture's budget (default `1500`). |
+| `MNEXIS_OPENCODE_POINTER_BUDGET_MS` | The pointer's two reads' shared budget (default `1500`). |
 
 ## Tests
 
@@ -168,6 +193,13 @@ OPENCODE_BIN="$(command -v opencode)" node --test "extensions/mnexis-opencode/te
   plugin the summary it produced, and opencode 2's `session.compaction.ended` carries the
   text but its meaning has not been verified at runtime, so nothing writes it
   (RESEARCH.md §1, §6).
+- The settle question rides the next model request: opencode exposes no equivalent of the
+  final settle boundary, so a session that ends immediately after its last tool call is
+  never asked.
+- On opencode 1 the model sees the engine's own `memory_save` description, which names no
+  types; the seven names are in the argument schema, the glosses are not. Carrying the
+  taxonomy examples in the engine's `memory_save` description is an engine-side change
+  (RESEARCH.md §8), not something a plugin can do on opencode 1.
 - The pointer costs about 127 tokens (508 characters, by the chars/4 estimate), once per
   session. It is off with `MNEXIS_OPENCODE_POINTER=0`.
 - `mnexis agent install --env opencode` does not install this plugin yet: the engine only
