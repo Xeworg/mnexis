@@ -152,7 +152,8 @@ installed pi dist. Verdicts:
   R3 session state machine (verify engine first, then upsert/idempotent + the
   four sequence tests), R4 compaction stable title + compact_failed journal,
   R5 RPC gate + tri-state, R6 session_tree reset, R7 input budget, R8 child
-  registry. Route: parent inline. Risk: none.
+  registry. Route: parent inline (worker-executed under the context backstop).
+  Risk: none. Commit: 5cd9792.
 - T5 (S2/S3): the human set — UX1 entry renderer (4 kinds), UX2 footer counters,
   UX3 /mnexis durable card + completion, UX4 nudge visible, UX5 default shell,
   UX7 partial line, AB3 conditional `<mnexis_memory>` section. Route: parent
@@ -217,3 +218,20 @@ installed pi dist. Verdicts:
   slice boundary (T3 alone: 985 lines, ~60% tests). The live host still runs
   the OLD installed extension — the new loadout and nudge land at T7's
   install.
+- L9: T4 evidence (5cd9792): extension suite 288/288 (+31), opencode 47/0,
+  cargo agents 23/23. The ENGINE's session state machine, verified parity-style
+  (no Rust change needed): a second start with the same id is a no-op (no
+  error, no reopen); start-after-end never reopens; interleaved sessions are
+  independent; `end` of an unknown id exits 3; a second `end` keeps the first
+  timestamp. Decisions: the journal keeps its four entry KINDS and grows
+  VARIANTS (action "noted"/"abandoned", step "start"/"end"/"save",
+  not_registered; compaction gained action "failed", aborted compactions stay
+  quiet) — T5's renderer must read action/step, never assume "skipped"; no
+  `mode` remains anywhere — asking keys on ctx.hasUI only; the close kills the
+  child registry BEFORE the budget work and on "reload" too; the deadline
+  race returns the hook while the per-call timeout kills the child; the
+  tri-state needed the extension's own AbortSignal because ui.confirm resolves
+  false on decline, timeout AND abort. NEW DEFECT queued into T5 (found by T4,
+  deliberately untouched): ensureWritable and bindOnConfirmation pass the long
+  question as ui.confirm's TITLE and the short label as MESSAGE — swapped
+  against pi's confirm(title, message) signature.
