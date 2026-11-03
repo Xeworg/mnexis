@@ -100,6 +100,40 @@ reversible with evidence.
   copy logic and its `install_never_ships_the_extension_tests` pin get a sibling
   test asserting `.ts` files land in the agent dir.
 
+## Amendments (2026-11-02 — three-lens explore review)
+
+Three read-only explores reviewed the installed pi docs, the extension, and this
+design: agent-behavior (mvzwxi8x-1-px76), reliability (mvzx0xps-2-r976),
+human-UX (mvzx55bn-3-o3tm). Evidence is path:line in the extension or the
+installed pi dist. Verdicts:
+
+| # | Finding | Verdict |
+|---|---|---|
+| AB1 | `deferred` without an active `tool_search` = 7 dead ends: the call fails before any handler (`Tool X not found`), `tool_result` never fires, and the miss is invisible. `tool_search` registers `defaultActive: false` and nothing activates it for third-party extensions (only pi's MCP extension does, for its own). | **ACCEPT — blocking for B**: activate `tool_search` at `session_start` when `pi.getAllTools()` finds it (as pi's MCP extension does) + a reachability test. Never rely on host settings. |
+| AB2 | The tools' own answers imply tail tools (context returns uuids + left-out count, index.js:2690-2790; search says "read one with mnexis_show"). | **ACCEPT**: context/search/save activate the 1-2 implied tail tools via `setActiveTools` inside `execute` (sticky per branch, one delta, no search round trip). |
+| AB3 | The `before_agent_start` REJECT rests on a false premise: `systemPromptOptions` is mutable and pi diffs sections (agent-session.js:1308-1313) — cache-safe. Only returning `systemPrompt` busts caches. | **ACCEPT as A's complement**: one `<mnexis_memory>` section via `systemPromptOptions.sections`, emitted only when the workspace is bound AND has memories; never return `systemPrompt`. promptGuidelines stay the minimal always-on baseline. |
+| AB4 | The 4 bullets contradict the surface: two competing FIRSTs (workspace's own description says "Call this FIRST", index.js:2665), "search or show" is a dead-end verb (show needs a UUID the model does not have), "same turn" contradicts the settle-nudge timing, and naming 4 hidden tools invites AB1's dead end. | **ACCEPT**: one start verb (`mnexis_context`; demote workspace's FIRST), bullet 2 → "search, then show the hit", bullet 3 → "before reporting the task done", bullet 4 teaches the verb (`tool_search`), not hidden names. |
+| AB5 | The survival taxonomy (examples + 7 type one-liners) lives only in SETTLE_NUDGE (index.js:456-469); save's description carries bare names (index.js:2064-2078) — taught at the worst moment, once. | **ACCEPT**: move the taxonomy into `mnexis_save`'s description; shrink the nudge to one line + pointer. |
+| AB6 | The nudge counts attempts (`tool_call`, index.js:1909-1914), not outcomes: a refused or failed save silences the only ask. | **ACCEPT**: count successful saves from `tool_execution_end` (`isError === false`); a denied save keeps the question open once, with the gate's reason in the text. |
+| AB7 | `mnexis_save_prompt` double-writes: the input hook already captures every prompt (index.js:1858-1885); `deferred` keeps the tool tool_search-reachable → duplicate rows. | **ACCEPT**: register it `hidden` in pi (unreachable AND unsearchable); unchanged in the MCP surface. |
+| AB8 | No `tool_result` teaching after the fact. | **DEFER**: superseded by AB2 (activation removes the dead ends the pointers patched); revisit with bench evidence of misses. |
+| R1 | `session_shutdown` is awaited with NO timeout on /new, /resume, /fork, quit (agent-session-runtime.js:106-110); the close can spend ~60 s (end + save, each 30 s, lib/cli.js:26,57-63). | **ACCEPT**: wall-clock budget (~5 s) on shutdown work, journal the abandonment, keep the close re-runnable. |
+| R2 | Busy-retry is keyed to save identity (lib/cli.js:101-130,467); `sessionStart/End`, `savePrompt`, `bind/allowNamespace` and the untitled compaction save never retry. `executionMode: "sequential"` serializes tool calls only — not hooks, other processes, or bash-spawned mnexis. | **ACCEPT**: retry becomes a property of the command (idempotent-by-construction commands always retry; only an untitled `save` must not). |
+| R3 | Session identity is not a state machine: `sessionStart` fires on every reason incl. reload (index.js:1740-1775) with the error swallowed; start-after-end on resume of a quit-closed session; fork ends the source id the human can reopen. | **ACCEPT**: first verify the engine's answer to the four sequences (parity-style test against the binary); make start = upsert-by-id and end = idempotent where the engine disagrees; journal (never swallow) failures. |
+| R4 | Compaction writes untitled (index.js:1985-1997) → one new row per compaction, never deduped; `session_compact_failed` invisible; branch summaries never captured. | **ACCEPT**: stable title/topic key per session (revises instead of accumulating); journal `session_compact_failed`; branch summaries stay REJECTED, now explicitly recorded. |
+| R5 | The gate requires `mode === "tui"` (lib/gate.js:177,217) — RPC supports dialogs (`ctx.hasUI` true); the refusal text is false there and IDE clients can never authorize. | **ACCEPT**: gate on `ctx.hasUI` (tui + rpc), keep terminal-only chrome on `mode`; dialog `timeout`; tri-state refusal text (declined ≠ timed out). |
+| R6 | No `session_tree` handler: the nudge latch leaks across branches (suppression or false fire after /tree). | **ACCEPT**: reset the evidence trio on `session_tree`; journals documented as branch data. |
+| R7 | The input hook awaits a 30 s write on every user message (index.js:1858-1896). | **ACCEPT**: dedicated 1-2 s budget, journal abandonment; the capture never blocks the turn. |
+| R8 | Hook calls carry no signal; children spawn detached (lib/cli.js:196-210) and can outlive the session, finishing writes into a closed session and holding the lock. | **ACCEPT**: session-scoped child registry, killed idempotently on shutdown; hooks get a registry signal. |
+| UX1 | The 4 `appendEntry` journal kinds render NOTHING in chat without `registerEntryRenderer` (interactive-mode.js:3134-3138) — while index.js:1310-1312 and README.md:210-214 claim visibility. | **ACCEPT — overturns the by-omission rejection**: one entry renderer, collapsed line + expandable detail, 4 kinds; survives resume and exports. |
+| UX2 | Adoption has no instrument: footer status exists only inside a tool execute (lib/chrome.js:296-339); a session with zero reads shows nothing at all. | **ACCEPT**: keyed footer counters set at `session_start`, updated on `tool_call` (`ctx/search/save`), always visible — the product's core question answered before the human asks. |
+| UX3 | `/mnexis` as `notify` is a dim overwritten line for a 7-field card. | **ACCEPT (card)**: `appendEntry` + the UX1 renderer (durable, expandable) + `getArgumentCompletions` subcommands. **DEFER (grant path)**: letting /mnexis perform bind/allow touches the permission surface — its own decision, not folded into the rewrite. |
+| UX4 | The settle nudge is `display: false` with no renderer — indistinguishable from agent spontaneity; the human cannot tell fired/fired-wrongly/never-fired. | **ACCEPT**: `display: true` + `registerMessageRenderer`, one collapsed line, expandable to the nudge text. |
+| UX5 | `renderShell: "self"` opts out of error background, padding, and the expand keyHint (tool-execution.js:53-55,199-213; lib/chrome.js:304-364 ignores theme/outputPad). | **ACCEPT**: revert to the default shell (semantics for free); Panel stays as renderResult content; manual visual check in T7. |
+| UX6 | The gate's blocking confirm has no timeout, and yes/no over a five-line paragraph. | **ACCEPT (timeout ~90 s + tri-state per R5)**. **DEFER (select shape)**: recorded for its own pass. |
+| UX7 | `isPartial` wipes the call line with "…" (lib/chrome.js:258). | **ACCEPT**: keep the call line, append a state suffix. |
+| UX8 | The audit table omitted `registerEntryRenderer`, `registerMessageRenderer`, `notify`; the UI REJECT row bundled five mechanisms in one sentence. | **ACCEPT**: fixed by this amendment; widgets, overlay, custom editor, and the autocomplete provider stay REJECTED with the split recorded. |
+
 ## Tasks
 
 - T1 (S2): this spec + design document, committed on the feature branch. Route:
@@ -108,18 +142,27 @@ reversible with evidence.
   suite runs under the loader, installer ships .ts (test-first: loader runs RED
   on .ts imports, then GREEN; installer .ts test RED → GREEN). Route: parent
   inline. Risk: none.
-- T3 (S2/S3): capabilities A–D (guidelines, loadout, sequential, annotations)
-  with one test each proving the registered definition carries them, plus a
-  loadout table test. Route: parent inline. Risk: none.
-- T4 (S2/S3): the `/mnexis` status command (E) with its test. Route: parent
+- T3 (S2/S3): the agent-behavior set — AB1 guarded `tool_search` activation +
+  reachability test, AB2 evidence-driven activation, AB4 bullet rewrite, AB5
+  taxonomy into save, AB6 outcome-based nudge, AB7 save_prompt hidden, amended
+  loadout B (5 declared + tool_search). Route: parent inline. Risk: none.
+- T4 (S2/S3): the reliability set — R1 shutdown budget, R2 per-command retry,
+  R3 session state machine (verify engine first, then upsert/idempotent + the
+  four sequence tests), R4 compaction stable title + compact_failed journal,
+  R5 RPC gate + tri-state, R6 session_tree reset, R7 input budget, R8 child
+  registry. Route: parent inline. Risk: none.
+- T5 (S2/S3): the human set — UX1 entry renderer (4 kinds), UX2 footer counters,
+  UX3 /mnexis durable card + completion, UX4 nudge visible, UX5 default shell,
+  UX7 partial line, AB3 conditional `<mnexis_memory>` section. Route: parent
   inline. Risk: none.
-- T5 (S2/S3): README of the extension + the pi skill's overlap note updated
-  (the skill stays the advisory layer; guidelines are the code layer). Route:
-  parent inline. Risk: none.
-- T6 (S3): install on the host, live verification: markers present, session
-  registered, prompt captured, /mnexis renders, declared tool count == 5.
-  Route: parent inline. Risk: item 5 (installer + host environment) → own
-  commit.
+- T6 (S2/S3): docs — README truth fixes (journal visibility claims), decision
+  table completeness, the pi skill's overlap note. Route: parent inline. Risk:
+  none.
+- T7 (S3): install on the host, live verification: markers present, session
+  registered, prompt captured, /mnexis renders, declared tools == 5 and
+  tool_search reachability, journal lines visible in the transcript, footer
+  counters live. Route: parent inline. Risk: item 5 (installer + host
+  environment) → own commit.
 
 ## Log
 
@@ -135,3 +178,14 @@ reversible with evidence.
   0, executionMode/annotations/exposure/defaultActive 0, no registerCommand;
   abort-signal and hasUI/mode handling already correct. Recorded as memory
   `defect.extension-pi-gaps` (namespace mnexis).
+- L4: "bien antes de seguir pon 3 agentes a leer la documentacion que di y
+  analicen la extension de distintos puntos, para que te propongan mejoras o
+  punto importantes que deberiamos tener en cuenta"; "usa explorers".
+- L5: Three explore reports received (tasks mvzwxi8x-1-px76,
+  mvzx0xps-2-r976, mvzx55bn-3-o3tm), read-only, path:line evidence; their
+  substance is carried by the Amendments table.
+- L6: Parent verdicts on all 24 findings: 21 ACCEPT (folded into T3-T5), 3
+  DEFER with recorded reasons (AB8 teaching pointers — superseded by AB2;
+  UX3 grant path — permission surface; UX6 select shape). B is amended by AB1:
+  without guarded `tool_search` activation the deferred tail is unreachable
+  and the misses invisible.
