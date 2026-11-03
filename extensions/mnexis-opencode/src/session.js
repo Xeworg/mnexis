@@ -319,11 +319,16 @@ function createSession({ sessions, evidence, cwd, cli, env, report }) {
 			if (keep && sessionID === keep) {
 				continue;
 			}
-			const closed = await budget.step("end", () => closeSession(sessionID));
-			if (closed.abandoned) {
-				sweep.abandoned.push(closed.abandoned);
+			// The step wraps the close's own report: the action and the reason
+			// live on the value, never on the wrapper, so reading them off the
+			// wrapper reported every close as a failure while the sessions were
+			// closed.
+			const step = await budget.step("end", () => closeSession(sessionID));
+			if (step.abandoned) {
+				sweep.abandoned.push(step.abandoned);
 				continue;
 			}
+			const closed = step.value;
 			if (closed.action === "closed") {
 				sweep.closed.push(sessionID);
 				continue;

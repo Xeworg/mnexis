@@ -669,12 +669,18 @@ test("an unbound workspace asks once, then binds and allows the confirmed candid
 	// The engine's candidate, deliberately not the name the git remote would
 	// derive: the extension reads the candidate, it does not derive it again.
 	process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE = "nodexar";
+	// The workspace key and the path are the test's own, never the checkout's:
+	// a key read from the developer's real remote made this suite pass or fail
+	// by where the repository happens to live.
+	const dir = mkdtempSync(join(tmpdir(), "mnexis-fixture-"));
+	const key = "git:github.com-example-fixture-repo";
+	process.env.MNEXIS_FAKE_PUBLISHED_KEY = key;
 	try {
 		const { tools, pi } = fakeHost();
 		mnexisMemory(pi);
 		const save = tools.get("mnexis_save");
 		assert.ok(save, "mnexis_save is registered");
-		const ui = interactive(true);
+		const ui = interactive(true, dir);
 
 		const result = await save.execute(
 			"t-candidate-yes",
@@ -691,9 +697,8 @@ test("an unbound workspace asks once, then binds and allows the confirmed candid
 		);
 		const question = ui.prompts[0];
 		assert.match(question, /nodexar/, `the question names the namespace: ${question}`);
-		assert.match(
-			question,
-			/git:github\.com-xeworg-mnexis/,
+		assert.ok(
+			question.includes(key),
 			`the question names the workspace key: ${question}`,
 		);
 		assert.ok(
@@ -711,7 +716,7 @@ test("an unbound workspace asks once, then binds and allows the confirmed candid
 		assert.equal(bind[2], "nodexar", "the bind names the engine's candidate");
 		assert.equal(
 			bind[bind.indexOf("--key") + 1],
-			"git:github.com-xeworg-mnexis",
+			key,
 			"the bind names the workspace key",
 		);
 		assert.equal(allow[2], "nodexar", "the allow names the same namespace");
@@ -730,6 +735,8 @@ test("an unbound workspace asks once, then binds and allows the confirmed candid
 	} finally {
 		delete process.env.MNEXIS_FAKE_NO_BINDING;
 		delete process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE;
+		delete process.env.MNEXIS_FAKE_PUBLISHED_KEY;
+		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
@@ -778,13 +785,21 @@ test("a headless session names the candidate and the two commands a human must r
 	const { log } = setup();
 	process.env.MNEXIS_FAKE_NO_BINDING = "1";
 	process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE = "nodexar";
+	// The fixture's key, so the command the answer prints is this test's and
+	// not whatever remote the checkout happens to carry.
+	const dir = mkdtempSync(join(tmpdir(), "mnexis-fixture-"));
+	const key = "git:github.com-example-fixture-repo";
+	process.env.MNEXIS_FAKE_PUBLISHED_KEY = key;
 	try {
 		const { tools, pi } = fakeHost();
 		mnexisMemory(pi);
 		const save = tools.get("mnexis_save");
 		assert.ok(save, "mnexis_save is registered");
 
-		const result = await save.execute("t-candidate-headless", { content: "a fact" }, undefined, undefined, context());
+		const result = await save.execute("t-candidate-headless", { content: "a fact" }, undefined, undefined, {
+			...context(),
+			cwd: dir,
+		});
 
 		const logged = calls(log);
 		assert.equal(
@@ -799,9 +814,8 @@ test("a headless session names the candidate and the two commands a human must r
 		);
 		const text = result.content.map((block) => block.text).join(" ");
 		assert.match(text, /nodexar/, `the answer names the candidate: ${text}`);
-		assert.match(
-			text,
-			/mnexis project bind nodexar --key git:github\.com-xeworg-mnexis/,
+		assert.ok(
+			text.includes(`mnexis project bind nodexar --key ${key}`),
 			`the answer names the bind command, filled in: ${text}`,
 		);
 		assert.match(
@@ -812,6 +826,8 @@ test("a headless session names the candidate and the two commands a human must r
 	} finally {
 		delete process.env.MNEXIS_FAKE_NO_BINDING;
 		delete process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE;
+		delete process.env.MNEXIS_FAKE_PUBLISHED_KEY;
+		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
@@ -2829,12 +2845,16 @@ test("the workspace question is titled short and carries the whole question", as
 	const { log } = setup();
 	process.env.MNEXIS_FAKE_NO_BINDING = "1";
 	process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE = "nodexar";
+	// The fixture's own workspace, so the path the question carries is the
+	// one the test named and not the checkout's.
+	const dir = mkdtempSync(join(tmpdir(), "mnexis-fixture-"));
+	process.env.MNEXIS_FAKE_PUBLISHED_KEY = "git:github.com-example-fixture-repo";
 	try {
 		const { tools, pi } = fakeHost();
 		mnexisMemory(pi);
 		const save = tools.get("mnexis_save");
 		assert.ok(save, "mnexis_save is registered");
-		const ui = interactive(false);
+		const ui = interactive(false, dir);
 
 		await save.execute("title-1", { content: "a fact" }, undefined, undefined, ui.ctx);
 
@@ -2857,6 +2877,8 @@ test("the workspace question is titled short and carries the whole question", as
 	} finally {
 		delete process.env.MNEXIS_FAKE_NO_BINDING;
 		delete process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE;
+		delete process.env.MNEXIS_FAKE_PUBLISHED_KEY;
+		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
