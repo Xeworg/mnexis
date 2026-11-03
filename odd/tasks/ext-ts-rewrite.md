@@ -146,7 +146,8 @@ installed pi dist. Verdicts:
 - T3 (S2/S3): the agent-behavior set — AB1 guarded `tool_search` activation +
   reachability test, AB2 evidence-driven activation, AB4 bullet rewrite, AB5
   taxonomy into save, AB6 outcome-based nudge, AB7 save_prompt hidden, amended
-  loadout B (5 declared + tool_search). Route: parent inline. Risk: none.
+  loadout B (5 declared + tool_search). Route: parent inline (worker-executed
+  under the context backstop). Risk: none. Commit: bd23db8.
 - T4 (S2/S3): the reliability set — R1 shutdown budget, R2 per-command retry,
   R3 session state machine (verify engine first, then upsert/idempotent + the
   four sequence tests), R4 compaction stable title + compact_failed journal,
@@ -201,3 +202,18 @@ installed pi dist. Verdicts:
   index.js) and extensions/mnexis-opencode/test/core.test.js:17,262 (the
   sibling suite imports the pi extension). Suites: extension 243/243,
   opencode 0 fail (1 pre-existing skip), cargo all green (0 failed).
+- L8: T3 evidence (bd23db8): extension suite 257/257 (+14 new tests: guarded
+  activation, loadout table, sequential/annotation properties, taxonomy move,
+  outcome-based nudge, hidden save_prompt), opencode 47/0, cargo agents 23/0.
+  Parent ratifications: (1) the prose-budget pin now measures DECLARED tools
+  (target 3 337 B against the audit's 5 500 B all-registered basis) — ratified
+  because the budget guards the per-request cost and only declared tools pay
+  it; the test's comment carries the reason. (2) pi emits an aborted tool call
+  as isError:true in tool_execution_end (there is no abort flag), so AB6's
+  "not aborted" is satisfied by isError alone — remember this in T4/T5.
+  (3) the seven-gloss parity between the opencode plugin and the pi surface
+  now anchors on mnexis_save's description; the nudge is one judgment line +
+  pointer. Slice strategy recorded: each T-task is one work-unit commit and a
+  slice boundary (T3 alone: 985 lines, ~60% tests). The live host still runs
+  the OLD installed extension — the new loadout and nudge land at T7's
+  install.
