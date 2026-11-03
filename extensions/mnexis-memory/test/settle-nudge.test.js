@@ -366,3 +366,43 @@ test("the richer text did not change when the question fires", async (t) => {
 		"unsaved work: and never a second time",
 	);
 });
+
+// --- R6: the evidence is the branch's, not the process's -----------------
+//
+// `/tree` moves the session to another leaf of the same session: the branch
+// that was just left took its evidence and its spent question with it. Without
+// a `session_tree` handler the latch leaked across branches — a nudge spent on
+// branch A silenced branch B, and evidence from before the switch fired a
+// question about work the branch does not have.
+
+test("a branch switch resets the latch: the question spent on one branch is open on the next", async (t) => {
+	const { handlers } = fakeHost(t);
+	await emit(handlers, "tool_execution_end", wroteFile(), context("01JX"));
+	assert.equal(
+		(await emit(handlers, "agent_before_settle", {}, context("01JX")))[0]?.continue,
+		true,
+		"branch A is asked once",
+	);
+
+	await emit(handlers, "session_tree", { newLeafId: "leaf-b", oldLeafId: "leaf-a" }, context("01JX"));
+	await emit(handlers, "tool_execution_end", wroteFile("edit"), context("01JX"));
+
+	assert.equal(
+		(await emit(handlers, "agent_before_settle", {}, context("01JX")))[0]?.continue,
+		true,
+		"branch B is asked on its own evidence",
+	);
+});
+
+test("a branch switch clears the evidence it did not inherit", async (t) => {
+	const { handlers } = fakeHost(t);
+	await emit(handlers, "tool_execution_end", wroteFile(), context("01JX"));
+
+	await emit(handlers, "session_tree", { newLeafId: "leaf-b", oldLeafId: "leaf-a" }, context("01JX"));
+
+	assert.deepEqual(
+		await emit(handlers, "agent_before_settle", {}, context("01JX")),
+		[undefined],
+		"the writes of the branch we left are not the work of this one",
+	);
+});

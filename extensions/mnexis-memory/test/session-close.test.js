@@ -485,3 +485,54 @@ test("every shutdown that ends a session still ends it in the engine", async (t)
 		);
 	}
 });
+
+/**
+ * The other end of the lifecycle (ext-ts-rewrite R3): a start the engine could
+ * not take is journaled in the same entry, because a session the engine never
+ * registered must not look registered. The engine's semantics are verified
+ * against the binary in `parity.session-state.test.js`; this is the failure
+ * path, which needs no engine at all.
+ */
+test("a session the engine refused to register is journaled, never swallowed", async (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "mnexis-start-fail-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const previous = process.env.MNEXIS_BIN;
+	// A binary that is not there: the engine cannot answer the start at all.
+	process.env.MNEXIS_BIN = join(dir, "missing-mnexis");
+	t.after(() => {
+		if (previous === undefined) {
+			delete process.env.MNEXIS_BIN;
+		} else {
+			process.env.MNEXIS_BIN = previous;
+		}
+	});
+
+	const handlers = new Map();
+	const entries = [];
+	mnexisMemory({
+		registerTool() {},
+		on(event, handler) {
+			const list = handlers.get(event) ?? [];
+			list.push(handler);
+			handlers.set(event, list);
+		},
+		appendEntry(customType, data) {
+			entries.push({ customType, data });
+		},
+	});
+
+	const results = await emit(
+		handlers,
+		"session_start",
+		{ reason: "startup" },
+		sessionContext("01JX-NO-ENGINE", dir),
+	);
+	assert.deepEqual(results, [undefined], "a start that cannot reach the engine never rejects");
+	assert.equal(entries.length, 1, `the refusal reaches the journal: ${JSON.stringify(entries)}`);
+	assert.equal(entries[0].customType, "mnexis-session-close");
+	assert.equal(entries[0].data.kind, "session-close");
+	assert.equal(entries[0].data.step, "start");
+	assert.equal(entries[0].data.exit_code, 127);
+	assert.equal(entries[0].data.session, "01JX-NO-ENGINE");
+	assert.match(JSON.stringify(entries[0].data), /ENOENT|not found/i);
+});

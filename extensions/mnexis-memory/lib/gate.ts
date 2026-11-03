@@ -164,18 +164,86 @@ export function engineSilence({ command, no_answer } = {}, { wrote = false } = {
 }
 
 /**
+ * How long a human has to answer a dialog the extension asks for (R5, UX6).
+ *
+ * The gate's question blocks the tool call that asked it, and pi's confirm has
+ * no timeout of its own: a terminal left unanswered used to hold the call
+ * forever. Ninety seconds is long enough to read a five-line paragraph and
+ * short enough that a forgotten dialog is not a lost turn.
+ */
+export const DIALOG_TIMEOUT_MS = 90_000;
+
+/**
+ * Why a dialog nobody answered is not an answer (R5).
+ *
+ * The refusal a timed-out dialog produces must not claim the session has no
+ * interactive UI — it had one, and nobody answered it — and it must not read
+ * as the human's own no.
+ */
+export const DIALOG_TIMEOUT_REASON =
+	"the confirmation dialog was not answered in time, so no answer was given and nothing was changed";
+
+/**
+ * The dialog budget, with the override the corpus shortens it with.
+ *
+ * Same shape as every other budget in this extension: a positive integer wins,
+ * anything else is the default.
+ */
+export function dialogTimeoutMs(env = process.env) {
+	const value = Number.parseInt(String(env?.MNEXIS_DIALOG_TIMEOUT_MS ?? ""), 10);
+	return Number.isFinite(value) && value > 0 ? value : DIALOG_TIMEOUT_MS;
+}
+
+/**
+ * Ask one confirmation, and tell its three answers apart (R5).
+ *
+ * pi's `ui.confirm` resolves `false` for a decline AND for a dialog that timed
+ * out or was aborted — both modes resolve their default
+ * (`modes/rpc/rpc-mode.js:85`). So the signal is the extension's own: its timer
+ * sets the flag first and aborts second, which makes the unanswered dialog a
+ * third answer the caller can act on instead of a decline it has to guess at.
+ *
+ * @param {{ confirm: Function }} ui pi's dialog surface
+ * @returns {Promise<"confirmed" | "declined" | "timed_out">}
+ */
+export async function askConfirm(ui, title, message, timeoutMs = DIALOG_TIMEOUT_MS) {
+	const budget = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DIALOG_TIMEOUT_MS;
+	const controller = new AbortController();
+	let timedOut = false;
+	const timer = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, budget);
+	let confirmed = false;
+	try {
+		confirmed = await ui.confirm(title, message, { signal: controller.signal, timeout: budget });
+	} finally {
+		clearTimeout(timer);
+	}
+	if (confirmed) {
+		return "confirmed";
+	}
+	return timedOut ? "timed_out" : "declined";
+}
+
+/**
  * Decide what to do about a write to `namespace`.
  *
- * @param {{ namespace: string, writeNamespaces: string[], hasUI: boolean, mode: string }} input
+ * The ask keys on `hasUI` alone (R5): pi sets it in the two dialog-capable
+ * modes (tui and rpc, `ExtensionContext.hasUI`), so asking on `mode === "tui"`
+ * refused to ask a client that could draw the dialog — and told it, falsely,
+ * that the session had no UI. Terminal-only chrome, if it is ever added, keys
+ * on `mode`; a permission does not.
+ *
+ * @param {{ namespace: string, writeNamespaces: string[], hasUI: boolean }} input
  * @returns {{ action: "allow" | "confirm" | "pending", reason?: string }}
  */
-export function decideAuthorization({ namespace, writeNamespaces, hasUI, mode }) {
+export function decideAuthorization({ namespace, writeNamespaces, hasUI }) {
 	const allowed = Array.isArray(writeNamespaces) ? writeNamespaces : [];
 	if (allowed.includes(namespace)) {
 		return { action: "allow" };
 	}
-	const interactive = Boolean(hasUI) && mode === "tui";
-	if (!interactive) {
+	if (!hasUI) {
 		return {
 			action: "pending",
 			reason: `namespace '${namespace}' is not authorized for writes and this session has no interactive UI to ask for consent`,
@@ -189,6 +257,21 @@ export function allowNamespaceCommand(namespace) {
 	return `mnexis config allow-namespace ${namespace}`;
 }
 
+/**
+ * The refusal a write gets when it is not authorized and nobody could answer.
+ *
+ * `reason` is why: no dialog was available, or the dialog that was asked went
+ * unanswered (R5). Both say what a human can run to make the retry work, and
+ * neither claims anything about a dialog nobody saw.
+ */
+export function authorizationPendingMessage(namespace, reason) {
+	return (
+		`Writing to namespace '${namespace}' needs your authorization first. ` +
+		`Run \`${allowNamespaceCommand(namespace)}\` once, then retry. ` +
+		`Reason: ${reason}.`
+	);
+}
+
 /** The exact command a human must run to bind a workspace. */
 export function bindCommand(namespace, key, path) {
 	return `mnexis project bind ${namespace} --key ${key} --path ${path}`;
@@ -200,22 +283,21 @@ export function bindCommand(namespace, key, path) {
  *
  * A candidate is a question, never a grant: the reserved `global` and every
  * name the engine refused are reported with their reason instead of being
- * offered (S4), and only an interactive session may ask the human (one
- * confirmation per workspace). A headless session gets the two commands to
+ * offered (S4), and only a session with a dialog may ask the human (one
+ * confirmation per workspace, R5). A headless session gets the two commands to
  * hand over instead.
  *
- * @param {{ candidate?: string | null, refusal?: string | null, hasUI: boolean, mode: string }} input
+ * @param {{ candidate?: string | null, refusal?: string | null, hasUI: boolean }} input
  * @returns {{ action: "refuse", reason: string } | { action: "none" } | { action: "confirm" } | { action: "pending", reason: string }}
  */
-export function decideBinding({ candidate, refusal, hasUI, mode }) {
+export function decideBinding({ candidate, refusal, hasUI }) {
 	if (typeof refusal === "string" && refusal !== "") {
 		return { action: "refuse", reason: refusal };
 	}
 	if (typeof candidate !== "string" || candidate === "") {
 		return { action: "none" };
 	}
-	const interactive = Boolean(hasUI) && mode === "tui";
-	if (!interactive) {
+	if (!hasUI) {
 		return {
 			action: "pending",
 			reason:

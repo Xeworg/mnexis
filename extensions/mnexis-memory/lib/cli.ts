@@ -71,6 +71,27 @@ const WRITE_COMMANDS = new Set([
 	"config allow-namespace",
 ]);
 
+/**
+ * The commands a locked store is worth trying again, because a second try is
+ * the same effect and never a second record (R2).
+ *
+ * The busy exit means the store was locked and the call did not happen
+ * (`src/storage/sqlite.rs` waits two seconds and gives up), so a repeat is safe
+ * for every command whose identity the engine owns: a session row is keyed by
+ * its id, an end stamps the same row, a prompt is one row of the session, and
+ * a binding or an allowlist entry is one entry per key. A read is left out on
+ * purpose: an answer that never came is worth one report, not three.
+ * `save` is the exception below, because a save that names no record writes a
+ * new one every time.
+ */
+const IDEMPOTENT_BY_CONSTRUCTION = new Set([
+	"session",
+	"end",
+	"prompt",
+	"project bind",
+	"config allow-namespace",
+]);
+
 /** The name of a call, the way an answer says it: `search`, `project list`. */
 function commandName(args) {
 	const first = String(args[0] ?? "");
@@ -80,7 +101,7 @@ function commandName(args) {
 
 /** One call's budget: the write one for a write, the read one otherwise. */
 function timeoutFor(args, override) {
-	if (override !== null) {
+	if (Number.isFinite(override) && override > 0) {
 		return override;
 	}
 	return WRITE_COMMANDS.has(commandName(args)) ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS;
@@ -169,6 +190,85 @@ function killGroup(child, signal) {
 }
 
 /**
+ * The children one session's hooks started (R8).
+ *
+ * A hook's call carries no signal from pi, so a child it spawned used to be
+ * able to outlive the session: finishing a write into a closed session and
+ * holding the store's lock while the next session waited for it. The registry
+ * is the session's handle on them: every call it starts is tracked here, the
+ * hooks carry its signal, and `killAll` is the one call that ends what is
+ * left — idempotently, because a shutdown that runs twice must be safe.
+ *
+ * The signal is spent once it is killed; `rearm` gives the next session of the
+ * same runtime a live one (pi fires `session_shutdown` and then
+ * `session_start` for /new, in the same process).
+ */
+export function createChildRegistry() {
+	let controller = new AbortController();
+	const children = new Set();
+
+	const registry = {
+		/** The signal every hook-spawned call carries. */
+		get signal() {
+			return controller.signal;
+		},
+
+		/** How many children are still running. */
+		get size() {
+			return children.size;
+		},
+
+		/**
+		 * Remember one child until it finishes.
+		 *
+		 * @param {import("node:child_process").ChildProcess} child
+		 * @returns {() => void} forget it
+		 */
+		track(child) {
+			children.add(child);
+			return () => children.delete(child);
+		},
+
+		/**
+		 * Kill everything this registry still owns, and be safe when there is
+		 * nothing left: the abort ends the awaits that are still in flight, the
+		 * signals end the processes, and a second call finds an empty set.
+		 */
+		killAll() {
+			if (!controller.signal.aborted) {
+				controller.abort();
+			}
+			const running = [...children];
+			children.clear();
+			for (const child of running) {
+				killGroup(child, "SIGTERM");
+			}
+			if (running.length > 0) {
+				// A child that ignores SIGTERM is still a child of a closed session.
+				const grace = setTimeout(() => {
+					for (const child of running) {
+						killGroup(child, "SIGKILL");
+					}
+				}, KILL_GRACE_MS);
+				if (typeof grace.unref === "function") {
+					grace.unref();
+				}
+			}
+		},
+
+		/** A signal that was killed is spent: the next session gets a live one. */
+		rearm() {
+			if (controller.signal.aborted) {
+				controller = new AbortController();
+			}
+			return registry;
+		},
+	};
+
+	return registry;
+}
+
+/**
  * Default exec: resolves with { code, stdout, stderr } and never rejects.
  *
  * Two things end a call the engine does not answer: the `timeout` this client
@@ -177,7 +277,7 @@ function killGroup(child, signal) {
  * every save, and pi's abort could not reach the child (S2, audit A9).
  */
 export function defaultExec(command, args, options = {}) {
-	const { cwd, env, signal, timeout } = options;
+	const { cwd, env, signal, timeout, registry } = options;
 	const timeoutMs = Number.isFinite(timeout) && timeout > 0 ? timeout : 0;
 	return new Promise((resolve) => {
 		if (signal && signal.aborted) {
@@ -202,6 +302,10 @@ export function defaultExec(command, args, options = {}) {
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 
+		// The session's registry holds this child until it is gone, so a
+		// shutdown can end what a hook's call left behind (R8).
+		const forget = registry && typeof registry.track === "function" ? registry.track(child) : null;
+
 		const finish = (code) => {
 			if (settled) {
 				return;
@@ -212,6 +316,9 @@ export function defaultExec(command, args, options = {}) {
 			}
 			if (grace) {
 				clearTimeout(grace);
+			}
+			if (typeof forget === "function") {
+				forget();
 			}
 			if (signal && typeof signal.removeEventListener === "function") {
 				signal.removeEventListener("abort", onAbort);
@@ -318,16 +425,28 @@ function noAnswerOf(json, stdout, data) {
  * The client takes no signal: `client.withSignal(signal)` answers a client
  * bound to pi's abort signal for one tool call, so a cancelled tool kills the
  * engine it started while the rest of the session keeps its own calls.
+ * `client.withBudget(ms)` answers a client whose every call is bounded by a
+ * smaller budget (the work pi awaits without a timeout, R1 and R7), and
+ * `registry` is the session's handle on the children a call starts (R8).
  *
- * @param {{ exec?: Function, binary?: string, env?: Record<string, string|undefined> }} options
+ * @param {{ exec?: Function, binary?: string, env?: Record<string, string|undefined>, registry?: {track: Function} | null }} options
  */
-export function createClient({ exec = defaultExec, binary, env = process.env } = {}) {
+export function createClient({ exec = defaultExec, binary, env = process.env, registry = null } = {}) {
 	const command = binary || env.MNEXIS_BIN || "mnexis";
 	const budget = overrideOf(env);
 
-	async function run(args, { json = false, cwd, signal = null, retryBusy = false } = {}) {
+	async function run(
+		args,
+		{ json = false, cwd, signal = null, retryBusy, timeout: callBudget } = {},
+	) {
 		const fullArgs = json ? [...args, "--json"] : args;
-		const timeout = timeoutFor(args, budget);
+		const timeout = timeoutFor(args, callBudget ?? budget);
+		// R2: the retry belongs to the command, not to the caller. A command
+		// that is idempotent by construction always retries; a save says so
+		// itself (`save` below), because only it knows whether the record it
+		// writes has a name; everything else pays one call.
+		const retry =
+			retryBusy === undefined ? IDEMPOTENT_BY_CONSTRUCTION.has(commandName(args)) : retryBusy;
 		const deadline = Date.now() + timeout;
 		const call = (budgetMs) =>
 			exec(command, fullArgs, {
@@ -338,15 +457,16 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 				},
 				signal,
 				timeout: budgetMs,
+				registry,
 			});
 
 		let result = await call(timeout);
 		// A locked store is worth another try: the tries share the budget, so
-		// a save that cannot land inside it still fails, and a caller that
+		// a call that cannot land inside it still fails, and a caller that
 		// aborts gets no second try.
 		let busyRetries = 0;
 		while (
-			retryBusy &&
+			retry &&
 			result.code === BUSY_EXIT_CODE &&
 			busyRetries < BUSY_RETRY_DELAYS_MS.length &&
 			!signal?.aborted
@@ -387,11 +507,33 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 			cwd,
 			signal,
 			timeout: timeoutMs ?? (budget === null ? READ_TIMEOUT_MS : budget),
+			registry,
 		});
 		return {
 			...result,
 			value: result.code === 0 ? result.stdout.trim() : null,
 		};
+	}
+
+	/**
+	 * The same client, with `binding` applied to every call.
+	 *
+	 * Both bindings live in one place so they compose in either order: a call
+	 * bound to a signal and to a budget is the call with both, and a per-call
+	 * option still wins (`save` keeps its own retry decision).
+	 */
+	function bind(base, binding) {
+		const bound = Object.create(base);
+		bound.binding = { ...(base.binding ?? {}), ...binding };
+		bound.run = (args, options = {}) => run(args, { ...bound.binding, ...options });
+		bound.git = (args, cwd, timeoutMs) =>
+			runGit(
+				args,
+				cwd,
+				bound.binding.signal ?? null,
+				timeoutMs ?? bound.binding.timeout,
+			);
+		return bound;
 	}
 
 	const client = {
@@ -407,12 +549,23 @@ export function createClient({ exec = defaultExec, binary, env = process.env } =
 		 */
 		withSignal(signal) {
 			if (!signal) {
-				return client;
+				return this;
 			}
-			const bound = Object.create(client);
-			bound.run = (args, options = {}) => run(args, { ...options, signal });
-			bound.git = (args, cwd, timeoutMs) => runGit(args, cwd, signal, timeoutMs);
-			return bound;
+			return bind(this, { signal });
+		},
+
+		/**
+		 * The same client, with every call bounded by `ms` (R1, R7).
+		 *
+		 * The work pi awaits without a timeout hands each step the budget that
+		 * is left, so the child of that step dies at the same moment the step is
+		 * abandoned. A budget that is not a positive number changes nothing.
+		 */
+		withBudget(ms) {
+			if (!Number.isFinite(ms) || ms <= 0) {
+				return this;
+			}
+			return bind(this, { timeout: ms });
 		},
 
 		async init(cwd) {
