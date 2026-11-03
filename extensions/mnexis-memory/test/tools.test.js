@@ -7,7 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -331,13 +331,24 @@ function fakeHost() {
 	const tools = new Map();
 	const handlers = new Map();
 	const entries = [];
+	// The active set pi keeps, and every call that changed it: a `direct` tool
+	// is active from registration, a deferred, hidden or `defaultActive: false`
+	// one is not (odd/tasks/ext-ts-rewrite.md, rules 1-3).
+	const active = [];
+	const activations = [];
 	return {
 		tools,
 		handlers,
 		entries,
+		active,
+		activations,
 		pi: {
 			registerTool(tool) {
 				tools.set(tool.name, tool);
+				const exposure = tool.exposure ?? "direct";
+				if ((exposure === "direct" || exposure === "model-only") && tool.defaultActive !== false) {
+					active.push(tool.name);
+				}
 			},
 			on(event, handler) {
 				const list = handlers.get(event) ?? [];
@@ -346,6 +357,20 @@ function fakeHost() {
 			},
 			appendEntry(customType, data) {
 				entries.push({ customType, data });
+			},
+			getAllTools() {
+				return [...tools.values()].map((tool) => ({
+					name: tool.name,
+					exposure: tool.exposure ?? "direct",
+					reachesTools: tool.reachesTools,
+				}));
+			},
+			getActiveTools() {
+				return [...active];
+			},
+			setActiveTools(names) {
+				activations.push([...names]);
+				active.splice(0, active.length, ...names);
 			},
 		},
 	};
@@ -1873,6 +1898,23 @@ function toolsProse(tools) {
 
 const proseBytes = (text) => Buffer.byteLength(text, "utf8");
 
+/** The prose of the tools the model is declared on every request: the door.
+ * A deferred or hidden tool's definitions are not declared (rules 3 and 7),
+ * so what the model pays for is the `direct` tools it can actually call. */
+function declaredProse(tools) {
+	const parts = [];
+	for (const tool of tools.values()) {
+		if ((tool.exposure ?? "direct") !== "direct" || tool.defaultActive === false) {
+			continue;
+		}
+		parts.push(tool.description);
+		for (const property of Object.values(tool.parameters?.properties ?? {})) {
+			parts.push(property?.description ?? "");
+		}
+	}
+	return parts.join("");
+}
+
 test("the tools block states the seven kinds once", () => {
 	// S1: the enum was written three times (save, search, list) and the
 	// audit's 8 950 B bill counted all three. It is stated once, where a
@@ -1941,17 +1983,21 @@ test("the tools block states the same-title rule once", () => {
 	);
 });
 
-test("exactly one tool claims the first call of a session", () => {
+test("no description claims the first call: the start verb is a guideline (AB4)", () => {
 	const { tools, pi } = fakeHost();
 	mnexisMemory(pi);
 	const claiming = [...tools.values()]
 		.filter((tool) => /\bFIRST\b/.test(tool.description))
 		.map((tool) => tool.name);
 
-	assert.deepEqual(
-		claiming,
-		["mnexis_workspace"],
-		`only the workspace claims the first call: ${claiming}`,
+	// Two competing FIRSTs became one start verb, owned by the guideline the
+	// door carries: a description is paid on every request and cannot say
+	// "this one of two".
+	assert.deepEqual(claiming, [], `no description competes for the first call: ${claiming}`);
+	assert.match(
+		tools.get("mnexis_context").promptGuidelines?.[0] ?? "",
+		/At the start of a session in an existing project, call mnexis_context/,
+		"the door says it once, in the guideline",
 	);
 	assert.doesNotMatch(
 		tools.get("mnexis_context").description,
@@ -1960,18 +2006,153 @@ test("exactly one tool claims the first call of a session", () => {
 	);
 });
 
-test("the tools block costs less prose than the audit measured", () => {
+test("the declared tools block costs less prose than the audit measured", () => {
 	// S1: the block billed 8 950 B per call with the round-4 instrument
 	// (read the definitions the extension registers, not the source). The
 	// target is 5 500 B, the audit's halving, without losing a contract.
+	//
+	// T3 changed what the block IS: the long tail is deferred and the prompt
+	// writer is hidden (rules 3 and 7), so their descriptions are no longer
+	// declared on every request, and the taxonomy moved into mnexis_save's
+	// description (AB5). The instrument follows the block the model is
+	// declared: the door's definitions, and the same 5 500 B budget.
 	const { tools, pi } = fakeHost();
 	mnexisMemory(pi);
-	const total = proseBytes(toolsProse(tools));
+	const total = proseBytes(declaredProse(tools));
 
 	assert.ok(
 		total <= 5500,
-		`the tools block stays under the target: ${total} B (budget 5500 B)`,
+		`the declared tools block stays under the target: ${total} B (budget 5500 B)`,
 	);
+});
+
+// --- evidence-driven activation (odd/tasks/ext-ts-rewrite.md, AB2) ---
+//
+// The tail is deferred, so the model does not see it until something names
+// it. A door answer names it: the door hands back uuids and a left-out count,
+// and a search answer says to read the hit. So the tools an answer implies are
+// activated by the call that implied them, inside the execute — one delta on
+// the active set, no second `tool_search` round trip, and never on an answer
+// the engine did not give.
+
+/** The tool names the model is declared when the session starts: the door. */
+function declaredNames(tools) {
+	return [...tools.values()]
+		.filter((tool) => (tool.exposure ?? "direct") === "direct" && tool.defaultActive !== false)
+		.map((tool) => tool.name);
+}
+
+/**
+ * The host with one tool turned off, as `--tools` or a setting can turn it
+ * off: the extension must not assume an implied tool is already declared.
+ */
+function withoutActive(host, name) {
+	host.active.splice(0, host.active.length, ...host.active.filter((n) => n !== name));
+	return host;
+}
+
+test("a successful context answer activates the two tools its answer implies (AB2)", async () => {
+	setup();
+	const host = fakeHost();
+	mnexisMemory(host.pi);
+	const { tools, activations, active } = withoutActive(host, "mnexis_show");
+	const door = declaredNames(tools).filter((name) => name !== "mnexis_show");
+
+	const result = await tools
+		.get("mnexis_context")
+		.execute("ab2-context", { task: "el puerto" }, undefined, undefined, context());
+	assert.notEqual(result.isError, true, "the engine answered");
+	assert.deepEqual(
+		activations,
+		[[...door, "mnexis_show", "mnexis_history"]],
+		"the uuid and the left-out count imply the two tail tools that answer them",
+	);
+
+	// A second answer implies the same two: the set does not grow twice.
+	await tools
+		.get("mnexis_context")
+		.execute("ab2-context-2", { task: "el puerto" }, undefined, undefined, context());
+	assert.equal(activations.length, 1, `no duplicate activation: ${JSON.stringify(activations)}`);
+	assert.deepEqual(active, [...door, "mnexis_show", "mnexis_history"]);
+});
+
+test("a successful search answer activates mnexis_show, and nothing else (AB2)", async () => {
+	setup();
+	const host = fakeHost();
+	mnexisMemory(host.pi);
+	const { tools, activations, active } = withoutActive(host, "mnexis_show");
+	const door = declaredNames(tools).filter((name) => name !== "mnexis_show");
+
+	const result = await tools
+		.get("mnexis_search")
+		.execute("ab2-search", { query: "puerto" }, undefined, undefined, context());
+	assert.notEqual(result.isError, true, "the engine answered");
+	assert.deepEqual(activations, [[...door, "mnexis_show"]], "the hit is one mnexis_show away");
+	assert.deepEqual(active, [...door, "mnexis_show"]);
+});
+
+test("an implied tool the host already declares is never declared twice (AB2)", async () => {
+	setup();
+	const host = fakeHost();
+	mnexisMemory(host.pi);
+	const { tools, activations } = host;
+	const door = declaredNames(tools);
+
+	// `mnexis_show` is a door tool, so on the default loadout only the
+	// history is a delta; a search implies nothing that is not already on.
+	await tools
+		.get("mnexis_context")
+		.execute("ab2-dup-context", { task: "el puerto" }, undefined, undefined, context());
+	await tools
+		.get("mnexis_search")
+		.execute("ab2-dup-search", { query: "puerto" }, undefined, undefined, context());
+
+	assert.deepEqual(
+		activations,
+		[[...door, "mnexis_history"]],
+		`each name lands once, and only the missing one is activated: ${JSON.stringify(activations)}`,
+	);
+});
+
+test("a successful save activates nothing: its answer implies no tail tool (AB2)", async () => {
+	setup();
+	const { tools, pi, activations } = fakeHost();
+	mnexisMemory(pi);
+
+	const result = await tools
+		.get("mnexis_save")
+		.execute("ab2-save", { content: "el puerto es 8081" }, undefined, undefined, context());
+	assert.notEqual(result.isError, true, "the save landed");
+	assert.deepEqual(activations, [], "a save's answer is its own end");
+});
+
+test("an answer the engine did not give activates nothing (AB2)", async (t) => {
+	// No engine under the tools: every call fails before an answer exists.
+	const dir = mkdtempSync(join(tmpdir(), "mnexis-activation-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const previous = process.env.MNEXIS_BIN;
+	process.env.MNEXIS_BIN = join(dir, "missing-mnexis");
+	t.after(() => {
+		if (previous === undefined) {
+			delete process.env.MNEXIS_BIN;
+		} else {
+			process.env.MNEXIS_BIN = previous;
+		}
+	});
+
+	for (const [name, params] of [
+		["mnexis_context", { task: "el puerto" }],
+		["mnexis_search", { query: "puerto" }],
+		["mnexis_save", { content: "el puerto es 8081" }],
+	]) {
+		const { tools, pi, activations } = fakeHost();
+		mnexisMemory(pi);
+		const result = await tools
+			.get(name)
+			.execute(`ab2-${name}`, params, undefined, undefined, context());
+		assert.equal(result.isError, true, `${name}: a failed call says so`);
+		assert.deepEqual(activations, [], `${name}: a failure activates nothing`);
+	}
 });
 
 test("an explicit namespace still wins over the workspace's", async () => {

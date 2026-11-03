@@ -339,6 +339,115 @@ function fail(text, details) {
 	return { content: [{ type: "text", text }], details, isError: true };
 }
 
+// --- the loadout (odd/tasks/ext-ts-rewrite.md, rules 1-3) ---
+//
+// The model is declared five tools and reaches the other nine through
+// `tool_search`: `deferred` and `hidden` tools are registered but never
+// declared, and the two lifecycle tools are declared inactive because the
+// extension runs the lifecycle itself. What makes that safe is the pair of
+// helpers below — `tool_search` is activated for the deferred tail, and an
+// answer that implies a tail tool activates it.
+
+/** The built-in tool that loads a `deferred` tool (AB1). */
+const TOOL_SEARCH = "tool_search";
+
+/**
+ * The tail tools a successful answer implies (AB2).
+ *
+ * The door hands back uuids and the count of what it left out; a search
+ * answer says to read the hit. Both are useless unless the tool that reads
+ * them can be called, and the tail is deferred — so the call that implied it
+ * activates it: one delta on the active set, no `tool_search` round trip. A
+ * save's answer implies nothing, because the record is already written.
+ */
+const IMPLIED_TAIL_TOOLS = {
+	mnexis_context: ["mnexis_show", "mnexis_history"],
+	mnexis_search: ["mnexis_show"],
+	mnexis_save: [],
+};
+
+/**
+ * The names the host declares to the model right now, or null when it cannot
+ * say.
+ */
+function activeToolNames(pi) {
+	if (typeof pi?.getActiveTools !== "function") {
+		return null;
+	}
+	try {
+		const names = pi.getActiveTools();
+		if (!Array.isArray(names)) {
+			return null;
+		}
+		return names.filter((name) => typeof name === "string");
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Add tools to the host's active set (AB1, AB2).
+ *
+ * Additive and idempotent: the set pi holds is read and only the missing names
+ * are appended, so an active tool is never declared twice and nothing the
+ * human activated is dropped. A host that cannot report or change the set is
+ * left alone silently — the loadout is an improvement, never a precondition.
+ */
+function activateTools(pi, names) {
+	if (typeof pi?.setActiveTools !== "function") {
+		return false;
+	}
+	const wanted = Array.isArray(names)
+		? names.filter((name) => typeof name === "string" && name !== "")
+		: [];
+	const current = activeToolNames(pi);
+	if (current === null) {
+		return false;
+	}
+	const added = wanted.filter((name) => !current.includes(name));
+	if (added.length === 0) {
+		return false;
+	}
+	try {
+		pi.setActiveTools([...current, ...added]);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Activate the built-in `tool_search` when the host offers one that reaches
+ * the deferred tail (AB1).
+ *
+ * pi registers `tool_search` inactive and activates it for its own MCP tools;
+ * nothing does that for another extension's deferred tools, and without it the
+ * tail is seven dead ends that fail before any handler runs. The guard is
+ * pi's own: a tool of that name that declares no `reachesTools` belongs to
+ * someone else, and is never activated.
+ */
+function activateToolSearch(pi) {
+	if (typeof pi?.getAllTools !== "function") {
+		return false;
+	}
+	let tools;
+	try {
+		tools = pi.getAllTools();
+	} catch {
+		return false;
+	}
+	if (!Array.isArray(tools)) {
+		return false;
+	}
+	const search = tools.find(
+		(tool) => tool && tool.name === TOOL_SEARCH && Boolean(tool.reachesTools),
+	);
+	if (!search) {
+		return false;
+	}
+	return activateTools(pi, [TOOL_SEARCH]);
+}
+
 /**
  * Commands and file writes that would grant write permissions without the
  * human. The extension owns that decision, so a model-issued call that
@@ -443,32 +552,71 @@ export function sessionCloseContent(session) {
 }
 
 /**
- * The question the settle nudge asks (capture-discipline S4, nudge-enriched S4).
+ * The question the settle nudge asks (capture-discipline S4, AB5).
  *
  * The hooks capture the mechanical floor; whether a session deserved a
  * memory is judgment. This is the text the model reads when the session's
  * own events show unsaved work, and it is spent once per session: it asks
  * for the judgment, not for a quota.
  *
- * It carries the doctrine for that one moment rather than for every call: the
- * examples of what deserves to survive, and the seven record types one line
- * each so the save arrives typed. The budget is per fire (S5) — a call that
- * never needs the question never pays for it.
+ * It is one judgment line and a pointer: what deserves to survive, and the
+ * seven record types one line each, are stated by `mnexis_save`'s own
+ * description, where the model reads them as it writes (AB5). The budget is
+ * per fire (S5) — the nudge no longer pays for doctrine the tools block
+ * already carries.
  */
 export const SETTLE_NUDGE = [
 	"This session changed files but saved no memory. If a decision, preference, discovery or project-state change deserves to survive the session, save it now with one mnexis_save; otherwise reply that nothing deserves memory.",
 	"",
-	"What deserves to survive, for example: a decision an external change forced (a version pin, a constraint that moved); a discovery about how this repo actually works; a preference the user stated about how they want things done.",
-	"",
-	"Save it typed — pass the one that fits:",
-	"knowledge — a durable fact about the domain, the tools or the data.",
-	"decision — a choice made, and what it beat.",
-	"preference — how the user wants things done.",
-	"procedure — the steps that reliably achieve something.",
-	"project_state — where the work stands now.",
-	"episode — something that happened in a session.",
-	"fact — the neutral default when none of the others fit.",
+	"`mnexis_save` states what deserves to survive and the seven record types, one line each, so the save arrives typed.",
 ].join("\n");
+
+/**
+ * The longest gate refusal the nudge carries, in characters.
+ *
+ * The gate's messages are shorter than this; the bound exists so the nudge's
+ * per-fire budget cannot be spent on an answer the model could have read.
+ */
+const REFUSAL_CHARS = 400;
+
+/**
+ * The question, with the gate's own reason when a save was denied (AB6).
+ *
+ * A denied save is the one failure whose reason the model cannot read from
+ * the engine: the gate is the extension's decision, and the command a human
+ * must run is the only way the session's memory gets written.
+ */
+function settleNudgeText(refusal) {
+	const reason = typeof refusal === "string" ? refusal.trim() : "";
+	if (reason === "") {
+		return SETTLE_NUDGE;
+	}
+	const carried = reason.length > REFUSAL_CHARS ? `${reason.slice(0, REFUSAL_CHARS - 1)}…` : reason;
+	return `${SETTLE_NUDGE}\n\nThe last mnexis_save was refused: ${carried}`;
+}
+
+/**
+ * The reason a failed `mnexis_save` gave, when the write gate is what refused
+ * it (AB6).
+ *
+ * The gate is the extension's own decision, so `authorized: false` is how its
+ * refusal is told apart from an engine failure the model already read in the
+ * answer. The text is the message the model got: the command a human must run,
+ * or the namespace that was declined.
+ */
+function gateRefusalOf(event) {
+	const details = event?.result?.details;
+	if (!details || typeof details !== "object" || details.authorized !== false) {
+		return "";
+	}
+	const content = Array.isArray(event?.result?.content) ? event.result.content : [];
+	for (const part of content) {
+		if (part && part.type === "text" && typeof part.text === "string") {
+			return part.text.trim();
+		}
+	}
+	return "";
+}
 
 /** The tools whose successful run changed a file (capture-discipline S4). */
 const FILE_WRITING_TOOLS = new Set(["write", "edit"]);
@@ -868,7 +1016,12 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 	// settle nudges only when the session changed files and saved nothing,
 	// and only once per session; a fresh session starts with nothing here.
 	let sessionFilesChanged = false;
-	let sessionSaveCalls = 0;
+	// The evidence is the outcome, not the attempt (AB6): a save counts only
+	// once the engine answered it, so a save the gate denied or the engine
+	// failed leaves the question open. `sessionSaveRefusal` is why the gate
+	// said no, and the nudge is where the model reads it again.
+	let sessionSaved = false;
+	let sessionSaveRefusal = "";
 	let settleNudgeSent = false;
 	// The workspace's own state when the session started: the paths git sees
 	// as changed or untracked. A session that changes a file through `bash`
@@ -1744,8 +1897,14 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		// no spent question from the previous one. Reset before the engine
 		// call so a session the engine does not know yet still starts clean.
 		sessionFilesChanged = false;
-		sessionSaveCalls = 0;
+		sessionSaved = false;
+		sessionSaveRefusal = "";
 		settleNudgeSent = false;
+		// The deferred tail is only reachable while `tool_search` is active,
+		// and pi registers it inactive (AB1). The loadout is declared here,
+		// at the boundary the session starts on, and left alone on a host
+		// that cannot change it.
+		activateToolSearch(pi);
 		// What the workspace looked like when this session started: the
 		// state to compare the settle boundary against, so a change the
 		// tools did not report (a file written through `bash`) is still the
@@ -1891,8 +2050,9 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 	// the gap the dogfood measured. The extension does not put the question
 	// into the tools block (S3); it asks the model once, at the final
 	// actionable boundary, when the session's own events show unsaved work —
-	// a successful write/edit and no `mnexis_save` call. Read-only sessions
-	// and sessions that already saved pay nothing: no entry, no continuation.
+	// a successful write/edit and no save that landed (AB6). Read-only
+	// sessions and sessions that saved pay nothing: no entry, no
+	// continuation.
 	//
 	// The answer is the model's. `continue: true` is one more model request,
 	// so the question is spent as soon as it is asked: a second settle in
@@ -1901,18 +2061,24 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		// A tool that did not run, or ran and failed, changed no file: it is
 		// not evidence of unsaved work.
 		if (event?.isError === true) {
+			// A save that failed is not a save: the store was not written, so
+			// the question stays open, and a gate refusal carries the reason
+			// the model would otherwise never read (AB6).
+			if (event?.toolName === "mnexis_save") {
+				const refusal = gateRefusalOf(event);
+				if (refusal !== "") {
+					sessionSaveRefusal = refusal;
+				}
+			}
 			return;
 		}
 		if (FILE_WRITING_TOOLS.has(event?.toolName)) {
 			sessionFilesChanged = true;
 		}
-	});
-
-	pi.on("tool_call", (event) => {
-		// A call that is later refused still shows the model made the
-		// judgment: the nudge is about goodwill, not about success.
+		// The evidence is the outcome (AB6). pi reports an aborted call as a
+		// failed result, so `isError` is the whole test for "it landed".
 		if (event?.toolName === "mnexis_save") {
-			sessionSaveCalls += 1;
+			sessionSaved = true;
 		}
 	});
 
@@ -1928,7 +2094,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 				sessionFilesChanged = true;
 			}
 		}
-		if (settleNudgeSent || !sessionFilesChanged || sessionSaveCalls > 0) {
+		if (settleNudgeSent || !sessionFilesChanged || sessionSaved) {
 			return undefined;
 		}
 		settleNudgeSent = true;
@@ -1937,7 +2103,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 				{
 					type: "custom_message",
 					customType: "mnexis-settle-nudge",
-					content: SETTLE_NUDGE,
+					content: settleNudgeText(sessionSaveRefusal),
 					display: false,
 				},
 			],
@@ -2044,7 +2210,23 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 			"Store a durable memory of this project: content must stand alone months later; " +
 			"the namespace is this workspace's. The title is what the fact IS and picks the " +
 			"record — the same title always lands on the same record, so a changed fact " +
-			"updates it. Keywords are other languages' or teams' names for it, never a value.",
+			"updates it. Keywords are other languages' or teams' names for it, never a value." +
+			"\n\nWhat deserves to survive, for example: a decision an external change forced " +
+			"(a version pin, a constraint that moved); a discovery about how this repo " +
+			"actually works; a preference the user stated about how they want things done." +
+			"\n\nSave it typed — pass the one that fits:\n" +
+			"knowledge — a durable fact about the domain, the tools or the data.\n" +
+			"decision — a choice made, and what it beat.\n" +
+			"preference — how the user wants things done.\n" +
+			"procedure — the steps that reliably achieve something.\n" +
+			"project_state — where the work stands now.\n" +
+			"episode — something that happened in a session.\n" +
+			"fact — the neutral default when none of the others fit.",
+		promptGuidelines: [
+			"Before reporting the task done, record a durable decision, discovery or user " +
+				"preference with mnexis_save.",
+		],
+		executionMode: "sequential",
 		parameters: {
 			type: "object",
 			properties: {
@@ -2107,6 +2289,8 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 					namespace: workspace.namespace,
 				});
 			}
+			// The answer implies no tail tool: the record is written (AB2).
+			activateTools(pi, IMPLIED_TAIL_TOOLS.mnexis_save);
 			// The same title lands on the same record, so a save can update
 			// a fact instead of adding a second one. The model has to read
 			// that it happened.
@@ -2176,6 +2360,11 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_search",
 		label: "Search memories",
 		promptSnippet: "Recall what was recorded, across projects.",
+		annotations: { readOnlyHint: true },
+		promptGuidelines: [
+			"Before changing code that already exists, call mnexis_search to find what is " +
+				"already recorded about it, then mnexis_show the hit you need.",
+		],
 		description:
 			"Search stored memories (full-text, ranked) before answering from scratch. " +
 			"Reaches every project by default; `namespace` narrows it. Write the query as " +
@@ -2222,6 +2411,9 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 				// An engine that said nothing has not said "no memories" (S3).
 				return fail(engineSilence(result), { namespace: namespace ?? null });
 			}
+			// The answer names the hit and says to read it: the read tool is
+			// activated by the call that implied it (AB2).
+			activateTools(pi, IMPLIED_TAIL_TOOLS.mnexis_search);
 			const hits = readItems(result.data);
 			const relations = readRelations(result.data);
 			const scope = scopeLine(result.data);
@@ -2244,6 +2436,8 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_suggest_topic_key",
 		label: "Suggest the topic key",
 		promptSnippet: "Ask which topic key a fact is already recorded under.",
+		exposure: "deferred",
+		annotations: { readOnlyHint: true },
 		description:
 			"Ask which topic key a title yields and whether this project records it. Use " +
 			"it before saving an unsure fact: the answer names the record the title would " +
@@ -2301,6 +2495,8 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_list",
 		label: "List memories",
 		promptSnippet: "List the memories recorded, across projects.",
+		exposure: "deferred",
+		annotations: { readOnlyHint: true },
 		description:
 			"List the memories stored, with a preview of each. Reaches every project by " +
 			"default; `namespace` narrows it. Read one with `mnexis_show`; `full` gives " +
@@ -2374,6 +2570,11 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_show",
 		label: "Show a memory",
 		promptSnippet: "Read one stored memory by UUID.",
+		annotations: { readOnlyHint: true },
+		promptGuidelines: [
+			"Before changing code that already exists, call mnexis_search to find what is " +
+				"already recorded about it, then mnexis_show the hit you need.",
+		],
 		description: "Read one memory by its UUID, including its current revision and state.",
 		parameters: {
 			type: "object",
@@ -2401,6 +2602,8 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_history",
 		label: "The history of a memory",
 		promptSnippet: "Every revision of one memory, and why each happened.",
+		exposure: "deferred",
+		annotations: { readOnlyHint: true },
 		description:
 			"Return one memory's revision history: every revision in order with its state, " +
 			"content, who changed it and why. Use it before updating or superseding the fact.",
@@ -2440,6 +2643,8 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_session_start",
 		label: "Start the session",
 		promptSnippet: "Register the session you are running in.",
+		defaultActive: false,
+		executionMode: "sequential",
 		description:
 			"Register your session, so the engine knows its boundaries. Call it once with " +
 			"the session id you were given — never invented. The engine never ends a " +
@@ -2479,6 +2684,8 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_session_end",
 		label: "End the session",
 		promptSnippet: "End the session with a summary of what it did.",
+		defaultActive: false,
+		executionMode: "sequential",
 		description:
 			"End your session with a short summary of what it did. The next session reads it " +
 			"first, so it must stand alone.",
@@ -2517,6 +2724,11 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_save_prompt",
 		label: "Save what the user said",
 		promptSnippet: "Store a message from outside this session, so it survives.",
+		// AB7: the `input` hook already captures every message of this
+		// session, so a second writer would only duplicate rows. `hidden`
+		// withdraws it from the model in pi, and the MCP surface (another
+		// host, another decision) keeps its own copy.
+		exposure: "hidden",
 		description:
 			"Store a message verbatim for the one case automatic capture misses: something " +
 			"pasted from another conversation, or a statement that must be found by its " +
@@ -2553,6 +2765,8 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_search_prompts",
 		label: "Search what the user said",
 		promptSnippet: "Find what the user asked before, across sessions.",
+		exposure: "deferred",
+		annotations: { readOnlyHint: true },
 		description:
 			"Search what the user said before, across sessions: the request behind the " +
 			"work. Write the query as you would say it: every word counts, a hyphen is part " +
@@ -2597,6 +2811,8 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_recall",
 		label: "Recall a session",
 		promptSnippet: "What a session was, in one answer.",
+		exposure: "deferred",
+		annotations: { readOnlyHint: true },
 		description:
 			"Recall a session: the session, what the user said in order, and the namespace's " +
 			"memories in its window. `previous` is this workspace namespace's most recent " +
@@ -2661,12 +2877,13 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_workspace",
 		label: "This workspace, in one answer",
 		promptSnippet: "Where this session may write, and what is already there.",
+		annotations: { readOnlyHint: true },
 		description:
-			"Call this FIRST, at the start of every session and before changing code: " +
-			"the namespace this workspace writes into, the read and write allowlists, how " +
-			"many memories the scope can see, and the most recent — title and preview, never " +
-			"the whole record (open one with `mnexis_show`). The decisions live here, not in " +
-			"the files.",
+			"The state of this workspace in one answer: the namespace it writes into, the " +
+			"read and write allowlists, how many memories the scope can see, and the most " +
+			"recent — title and preview, never the whole record (open one with `mnexis_show`). " +
+			"The decisions live here, not in the files. `mnexis_context` is the door that asks " +
+			"about a task; this one answers about the workspace.",
 		parameters: {
 			type: "object",
 			properties: {},
@@ -2692,6 +2909,16 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_context",
 		label: "The context of this task",
 		promptSnippet: "Ask the project what it knows about this task, in one call.",
+		annotations: { readOnlyHint: true },
+		// The start verb (AB4, bullet 1) and the way to the deferred tail
+		// (bullet 4): the door is where a session begins, so it is where the
+		// fork in the road is named.
+		promptGuidelines: [
+			"At the start of a session in an existing project, call mnexis_context once with " +
+				"a one-line task summary before doing anything else.",
+			"The mnexis engine has more tools than these; use tool_search to find and enable " +
+				"the one a task needs.",
+		],
 		description:
 			"Ask the project about this task in one call: the facts that match the task, " +
 			"whole — the budget decides which facts fit, not how much of a fact you see — " +
@@ -2764,6 +2991,9 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 			if (result.no_answer) {
 				return fail(engineSilence(result), { namespace: namespace ?? null });
 			}
+			// The answer hands back uuids and a left-out count: the two tools
+			// that read them are activated by the call that implied them (AB2).
+			activateTools(pi, IMPLIED_TAIL_TOOLS.mnexis_context);
 			const items = readItems(result.data);
 			// What the answer did not include: the candidates the budget
 			// could not keep. Optional and additive: an engine that does
@@ -2815,6 +3045,8 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		name: "mnexis_supersede",
 		label: "Supersede a memory",
 		promptSnippet: "Replace an outdated memory with a newer one, keeping the history.",
+		exposure: "deferred",
+		executionMode: "sequential",
 		description:
 			"Replace an outdated memory with a newer one, keeping the history. Use it when a " +
 			"fact changed: save the new one first, then link both here. Both must live in " +
