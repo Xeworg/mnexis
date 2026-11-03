@@ -32,6 +32,26 @@ export const SHUTDOWN_BUDGET_MS = 5_000;
 export const PROMPT_CAPTURE_BUDGET_MS = 1_500;
 
 /**
+ * How long the `/mnexis` card may wait for its one engine call (UX3).
+ *
+ * The card is a command the human asked for, so it may pay a little more than
+ * a turn does — but not much: it is a status read of a local store, and a
+ * store that cannot answer it inside a second and a half is a store the card
+ * reports on instead of blocking on. The same budget the prompt capture has.
+ */
+export const STATUS_CARD_BUDGET_MS = 1_500;
+
+/**
+ * How long the session-start memory probe may take (AB3).
+ *
+ * The probe decides whether the prompt carries a `<mnexis_memory>` section,
+ * and it runs inside `session_start`, before the first turn: it is one cheap
+ * count, and a store that cannot answer it in a second and a half leaves the
+ * section out instead of delaying the session.
+ */
+export const MEMORY_PROBE_BUDGET_MS = 1_500;
+
+/**
  * A budget as the journal says it: `300 ms`, `1.5 s`, `5 s`.
  */
 export function budgetLabel(ms) {

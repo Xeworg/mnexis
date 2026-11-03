@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import mnexisMemory from "../index.ts";
 
@@ -414,14 +414,19 @@ async function emit(handlers, event, payload, ctx) {
 /** An interactive pi session, with a UI that records what it was asked. */
 function interactive(answer, cwd = process.cwd()) {
 	const prompts = [];
+	const titles = [];
 	return {
 		prompts,
+		titles,
 		ctx: {
 			cwd,
 			hasUI: true,
 			mode: "tui",
 			ui: {
-				confirm: async (message) => {
+				// pi's signature is confirm(title, message): the short label is
+				// the title and the whole question is the message.
+				confirm: async (title, message) => {
+					titles.push(title);
 					prompts.push(message);
 					return answer;
 				},
@@ -2690,14 +2695,17 @@ test("the save answer names the type with the article it reads with", async () =
 /** An interactive session whose dialog never answers until it is aborted. */
 function dialogsForever(mode = "tui", cwd = process.cwd()) {
 	const prompts = [];
+	const titles = [];
 	return {
 		prompts,
+		titles,
 		ctx: {
 			cwd,
 			hasUI: true,
 			mode,
 			ui: {
-				confirm: (message, _label, opts) => {
+				confirm: (title, message, opts) => {
+					titles.push(title);
 					prompts.push(message);
 					return new Promise((resolve) => {
 						opts.signal.addEventListener("abort", () => resolve(false), { once: true });
@@ -2765,5 +2773,85 @@ test("a dialog nobody answers is a timeout, not a decline, and the answer says s
 		delete process.env.MNEXIS_FAKE_NO_BINDING;
 		delete process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE;
 		delete process.env.MNEXIS_DIALOG_TIMEOUT_MS;
+	}
+});
+
+// --- the dialog's two arguments, in pi's order (L9's queued defect) ---
+//
+// pi's `ui.confirm(title, message)` takes the SHORT label as the title and
+// the whole question as the message. Both dialogs passed them swapped, so a
+// person was shown a five-line paragraph as the dialog's title and the short
+// label as the question under it.
+
+test("the workspace question is titled short and carries the whole question", async () => {
+	const { log } = setup();
+	process.env.MNEXIS_FAKE_NO_BINDING = "1";
+	process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE = "nodexar";
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+		const ui = interactive(false);
+
+		await save.execute("title-1", { content: "a fact" }, undefined, undefined, ui.ctx);
+
+		assert.equal(ui.titles.length, 1, "the human was asked once");
+		assert.equal(
+			ui.titles[0],
+			"mnexis: name this workspace",
+			`the title is the short label: ${ui.titles[0]}`,
+		);
+		assert.match(
+			ui.prompts[0],
+			/^Bind this workspace to the namespace 'nodexar'\?/,
+			`the message is the whole question: ${ui.prompts[0]}`,
+		);
+		assert.ok(
+			ui.prompts[0].includes(ui.ctx.cwd),
+			`the question still names the path: ${ui.prompts[0]}`,
+		);
+		assert.equal(calls(log).length > 0, true, "the engine was read");
+	} finally {
+		delete process.env.MNEXIS_FAKE_NO_BINDING;
+		delete process.env.MNEXIS_FAKE_CANDIDATE_NAMESPACE;
+	}
+});
+
+test("the authorization question is titled short too", async () => {
+	const { log } = setup();
+	// A bound workspace whose namespace is not in the write allowlist: the
+	// gate asks the human to authorize it.
+	const allowFile = join(dirname(log), "allow.json");
+	writeFileSync(allowFile, JSON.stringify({ write_namespaces: [] }));
+	process.env.MNEXIS_FAKE_ALLOW_FILE = allowFile;
+	try {
+		const { tools, pi } = fakeHost();
+		mnexisMemory(pi);
+		const save = tools.get("mnexis_save");
+		assert.ok(save, "mnexis_save is registered");
+		const ui = interactive(false);
+
+		const result = await save.execute("title-2", { content: "a fact" }, undefined, undefined, ui.ctx);
+
+		assert.equal(result.isError, true, "a declined authorization writes nothing");
+		assert.equal(ui.titles.length, 1, "the human was asked once");
+		assert.equal(
+			ui.titles[0],
+			"mnexis: authorize namespace",
+			`the title is the short label: ${ui.titles[0]}`,
+		);
+		assert.match(
+			ui.prompts[0],
+			/^Allow the mnexis agent to write memories in namespace 'mnexis'\?/,
+			`the message is the whole question: ${ui.prompts[0]}`,
+		);
+		assert.equal(
+			calls(log).find((args) => args[0] === "save"),
+			undefined,
+			"and nothing was written",
+		);
+	} finally {
+		delete process.env.MNEXIS_FAKE_ALLOW_FILE;
 	}
 });

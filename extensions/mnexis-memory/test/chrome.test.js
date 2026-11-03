@@ -14,6 +14,8 @@ import {
 	Panel,
 	callLines,
 	compactArg,
+	counterLine,
+	createFooter,
 	displayWidth,
 	humanToolName,
 	renderers,
@@ -416,8 +418,29 @@ test("an error answer is one marked line", () => {
 	assert.match(lines[0], /the query is empty/, `the reason reaches the human: ${lines[0]}`);
 });
 
-test("a partial answer is one ellipsis", () => {
-	assert.deepEqual(resultLines("mnexis_list", { details: { count: 1 } }, { isPartial: true }), ["…"]);
+// UX7: a partial answer used to replace the drawn call with one ellipsis.
+test("a partial answer keeps the call line and appends its state", () => {
+	const lines = resultLines(
+		"mnexis_list",
+		{ details: { count: 1 } },
+		{ isPartial: true, args: { namespace: "mnexis" } },
+	);
+	assert.equal(lines.length, 1, `a partial answer is still one line: ${JSON.stringify(lines)}`);
+	assert.match(lines[0], /list/, `the call line is kept: ${lines[0]}`);
+	assert.match(lines[0], /mnexis/, `and it carries its argument: ${lines[0]}`);
+	assert.match(lines[0], /…$/, `with the pending state appended: ${lines[0]}`);
+});
+
+test("the renderer keeps the call line while the call is running", () => {
+	const component = renderers("mnexis_show").renderResult(
+		{ details: {} },
+		{ expanded: false, isPartial: true },
+		undefined,
+		{ args: { uuid: "0123456789abcdef" } },
+	);
+	const lines = component.render(80);
+	assert.match(lines[0], /show/, `the drawn call is still there: ${JSON.stringify(lines)}`);
+	assert.match(lines[0], /#01234567/, `with its argument: ${lines[0]}`);
 });
 
 // --- the panel: the width pi gives it ---
@@ -519,11 +542,56 @@ test("a tool with no ui still runs", async () => {
 	assert.deepEqual(result, { content: [], details: {} });
 });
 
+// UX2: the counters ride the same footer key the tools already use: the
+// status the tool writes is the counter line plus what the tool is doing,
+// never a second key fighting the first one.
+test("the footer counters and the tool status share one line and one key", async () => {
+	const footer = createFooter();
+	const events = [];
+	const ctx = { ui: { setStatus: (key, text) => events.push({ key, text }) } };
+
+	footer.show(ctx.ui);
+	assert.deepEqual(events[0], {
+		key: "mnexis",
+		text: "🤖 mnexis · ctx 0 · search 0 · save 0",
+	});
+
+	footer.count("search", ctx.ui);
+	const wrapped = withStatus("mnexis_show", async () => ({ content: [], details: {} }), footer);
+	await wrapped("t1", { uuid: "0123456789abcdef" }, undefined, undefined, ctx);
+
+	assert.ok(
+		events.every((event) => event.key === "mnexis"),
+		`one footer key, never two: ${JSON.stringify(events)}`,
+	);
+	const last = events[events.length - 1].text;
+	assert.match(last, /search 1/, `the counters stay on the line: ${last}`);
+	assert.match(last, /show · ✓/, `and the tool's own status: ${last}`);
+});
+
+test("a footer counts only the columns it knows", () => {
+	const footer = createFooter();
+	footer.count("nonsense");
+	assert.deepEqual(footer.counts(), { ctx: 0, search: 0, save: 0 });
+	footer.count("ctx");
+	footer.count("save");
+	assert.deepEqual(footer.counts(), { ctx: 1, search: 0, save: 1 });
+	assert.equal(counterLine(footer.counts()), "🤖 mnexis · ctx 1 · search 0 · save 1");
+});
+
 // --- the renderers pi registers ---
 
-test("a tool is registered with its own shell of renderers", () => {
+// UX5: `renderShell: "self"` opted out of pi's shell — the error
+// background, the output padding and the expand keyHint. The Panel is the
+// result's content, and the default shell is pi's again. The manual visual
+// check is T7's (odd/tasks/ext-ts-rewrite.md).
+test("a tool is registered with renderers and pi's default shell", () => {
 	const chrome = renderers("mnexis_show");
-	assert.equal(chrome.renderShell, "self", "the tool draws its own shell");
+	assert.equal(
+		Object.hasOwn(chrome, "renderShell"),
+		false,
+		`the tool no longer opts out of pi's shell: ${JSON.stringify(Object.keys(chrome))}`,
+	);
 
 	const call = chrome.renderCall({ uuid: "0123456789abcdef" });
 	assert.equal(typeof call.render, "function", "a call is a component");

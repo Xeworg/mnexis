@@ -15,8 +15,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { createChildRegistry, createClient, defaultExec } from "./lib/cli.ts";
 import {
+	MEMORY_PROBE_BUDGET_MS,
 	PROMPT_CAPTURE_BUDGET_MS,
 	SHUTDOWN_BUDGET_MS,
+	STATUS_CARD_BUDGET_MS,
 	budgetOf,
 	createDeadline,
 } from "./lib/budget.ts";
@@ -41,6 +43,13 @@ import {
 	workspaceKey,
 } from "./lib/workspace.ts";
 import { renderers, withStatus } from "./lib/chrome.ts";
+import {
+	JOURNAL_KINDS,
+	counterLine,
+	createFooter,
+	journalRenderer,
+	nudgeRenderer,
+} from "./lib/chrome.ts";
 
 /**
  * Register a memory tool with the chrome pi draws: the call line, the panel
@@ -49,13 +58,64 @@ import { renderers, withStatus } from "./lib/chrome.ts";
  * The tool's own behaviour is untouched: the text the model reads is exactly
  * what the CLI answered, and the drawing is pi's, on the human's side.
  */
-function registerMemoryTool(pi, definition) {
+function registerMemoryTool(pi, definition, footer = null) {
 	pi.registerTool({
 		...definition,
 		...renderers(definition.name),
-		execute: withStatus(definition.name, definition.execute),
+		execute: withStatus(definition.name, definition.execute, footer),
 	});
 }
+
+/**
+ * Register the entry renderers the journal needs (UX1), guarded for older
+ * hosts: an entry with no renderer draws nothing, and a host without the
+ * renderer API still loads the tools.
+ */
+function registerJournalRenderers(pi) {
+	if (typeof pi?.registerEntryRenderer !== "function") {
+		return;
+	}
+	for (const kind of JOURNAL_KINDS) {
+		try {
+			pi.registerEntryRenderer(kind, journalRenderer(kind));
+		} catch {
+			// A host that refuses one renderer still gets the tools.
+		}
+	}
+}
+
+/**
+ * Register the renderer the settle nudge needs (UX4), guarded the same way:
+ * the message is `display: true`, so a host without renderers shows it with
+ * pi's own custom-message shell instead of not showing it at all.
+ */
+function registerNudgeRenderer(pi) {
+	if (typeof pi?.registerMessageRenderer !== "function") {
+		return;
+	}
+	try {
+		pi.registerMessageRenderer("mnexis-settle-nudge", nudgeRenderer());
+	} catch {
+		// The nudge is still sent; only its drawing is missing.
+	}
+}
+
+/**
+ * Which footer counter a call moves (UX2).
+ *
+ * The door and the workspace answer "what does this project know": they are
+ * the `ctx` counter. Search and show are the reads that end in a record, and
+ * they are `search`. Saves are counted from their outcome (AB6), not here.
+ */
+const FOOTER_COLUMNS = new Map([
+	["mnexis_context", "ctx"],
+	["mnexis_workspace", "ctx"],
+	["mnexis_search", "search"],
+	["mnexis_show", "search"],
+]);
+
+/** The prompt section a bound workspace with memories adds (AB3). */
+const MEMORY_SECTION_KEY = "mnexis-memory";
 
 /** Read the write allowlist out of `mnexis config show --json`. */
 export function readWriteNamespaces(configData) {
@@ -1068,6 +1128,27 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 	// evidence, and this is the state to compare it against. Null when the
 	// workspace is not a repository: no evidence is not a negative answer.
 	let sessionWorkspaceBaseline = null;
+	// UX2: the session's adoption counters, on the footer key the tools
+	// already write. Set at the session's start, so a session that reads
+	// nothing still says so.
+	const footer = createFooter();
+	// The messages the `input` hook captured in this session: a fact about
+	// the session, not about the store.
+	let sessionPromptsCaptured = 0;
+	// What the engine answered when the session was registered (R3): the
+	// `/mnexis` card reports it from here instead of asking again.
+	let sessionRegistration = { state: "unknown", ended_at: null, namespace: null };
+	// AB3: the cached truth of the conditional prompt section. Null means
+	// "add nothing": unbound, empty, or a store the probe could not read.
+	let memorySection = null;
+
+	/** Register one memory tool with this session's footer (UX2). */
+	const registerTool = (definition) => registerMemoryTool(pi, definition, footer);
+
+	// The journal's renderers (UX1) and the nudge's (UX4): registered once, at
+	// load, and guarded for a host that predates them.
+	registerJournalRenderers(pi);
+	registerNudgeRenderer(pi);
 
 	/**
 	 * The client a hook call uses (R8).
@@ -1235,6 +1316,242 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 	}
 
 	/**
+	 * The paragraph the conditional prompt section carries (AB3).
+	 *
+	 * One short English paragraph, and three facts: which namespace holds this
+	 * project's memories, roughly how many there are, and the two calls that
+	 * read them. It is only true when the workspace is bound and the namespace
+	 * is not empty, which is what the cached probe decides.
+	 */
+	function memorySectionText(section) {
+		const held = section.capped
+			? `at least ${section.count} memories`
+			: section.count === 1
+				? "one memory"
+				: `${section.count} memories`;
+		return (
+			`The namespace '${section.namespace}' holds ${held} recorded about this project: the ` +
+			"decisions and discoveries about this code live there. Call mnexis_context with a " +
+			"one-line task summary at the start of a session, and mnexis_search before changing " +
+			"code that already exists."
+		);
+	}
+
+	/**
+	 * Decide once, at the session's start, whether the prompt section is true
+	 * (AB3).
+	 *
+	 * One bounded engine call — a cheap count of the workspace's own namespace —
+	 * and the result is cached, so the handler that runs on every run touches no
+	 * engine at all. A probe that cannot answer is journaled and adds nothing:
+	 * the section is an improvement, never a precondition, and the prompt is
+	 * never told about memories nobody could read.
+	 */
+	async function cacheMemorySection(ctx) {
+		memorySection = null;
+		const deadline = createDeadline(
+			budgetOf(process.env.MNEXIS_MEMORY_PROBE_BUDGET_MS, MEMORY_PROBE_BUDGET_MS),
+			"memory probe",
+		);
+		try {
+			const workspace = await resolveWorkspace(hookClient(), ctx?.cwd);
+			// Only a bound workspace names a namespace that is a permission, and
+			// only a namespace with memories gives the section something to say.
+			if (workspace.failure || !workspace.bound || !workspace.namespace) {
+				return;
+			}
+			const namespace = workspace.namespace;
+			const step = await deadline.step("list", (left) =>
+				hookClient()
+					.withBudget(left)
+					.list({ namespace, limit: TWIN_SCAN_LIMIT }, ctx?.cwd),
+			);
+			if (step.abandoned) {
+				appendRecovery(ctx, {
+					action: "failed",
+					step: "memory-probe",
+					namespace,
+					error: step.abandoned,
+				});
+				return;
+			}
+			const answer = step.value;
+			if (answer.code !== 0) {
+				appendRecovery(ctx, {
+					action: "failed",
+					step: "memory-probe",
+					namespace,
+					exit_code: answer.code,
+					error: describeFailure({ ...answer, namespace }),
+				});
+				return;
+			}
+			if (answer.no_answer) {
+				appendRecovery(ctx, {
+					action: "failed",
+					step: "memory-probe",
+					namespace,
+					error: engineSilence(answer),
+				});
+				return;
+			}
+			const count = readItems(answer.data).length;
+			if (count === 0) {
+				return;
+			}
+			memorySection = { namespace, count, capped: count >= TWIN_SCAN_LIMIT };
+		} catch (error) {
+			appendRecovery(ctx, {
+				action: "failed",
+				step: "memory-probe",
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	/**
+	 * The `/mnexis` card (UX3): what the session may read, where it writes, and
+	 * how it has used the engine so far.
+	 *
+	 * Everything but the memory count is the extension's own cached state — the
+	 * workspace's resolution, the engine's answer to the session's start, the
+	 * captured messages, the footer's counters and the nudge's latch. The count
+	 * is one bounded engine call with the prompt capture's short budget: a
+	 * card that cannot be made inside it says why instead of blocking the
+	 * human's command.
+	 */
+	async function statusCard(ctx) {
+		const deadline = createDeadline(
+			budgetOf(process.env.MNEXIS_STATUS_BUDGET_MS, STATUS_CARD_BUDGET_MS),
+			"status card",
+		);
+		let answer = null;
+		let engine = null;
+		try {
+			const step = await deadline.step("status", (left) =>
+				hookClient().withBudget(left).status(ctx?.cwd),
+			);
+			if (step.abandoned) {
+				engine = { error: step.abandoned };
+			} else if (step.value.code !== 0) {
+				engine = { error: describeFailure({ ...step.value }) };
+			} else if (step.value.no_answer) {
+				engine = { error: engineSilence(step.value) };
+			} else {
+				answer =
+					step.value.data && typeof step.value.data === "object" ? step.value.data : null;
+			}
+		} catch (error) {
+			engine = { error: error instanceof Error ? error.message : String(error) };
+		}
+		const workspace =
+			answer?.workspace && typeof answer.workspace === "object" ? answer.workspace : {};
+		const scope = answer?.scope && typeof answer.scope === "object" ? answer.scope : {};
+		const namespace =
+			typeof workspace.namespace === "string" && workspace.namespace !== ""
+				? workspace.namespace
+				: null;
+		const counts = footer.counts();
+		return {
+			ts: new Date().toISOString(),
+			kind: "status",
+			workspace:
+				typeof workspace.key === "string" && workspace.key !== "" ? workspace.key : null,
+			namespace,
+			bound: namespace !== null,
+			read_namespaces: Array.isArray(scope.read_namespaces) ? scope.read_namespaces : [],
+			write_namespaces: Array.isArray(scope.write_namespaces) ? scope.write_namespaces : [],
+			memories: typeof answer?.memory_count === "number" ? answer.memory_count : null,
+			// The engine's count is what the profile's read scope sees: with reads
+			// open it reaches past the workspace, and the card says so instead of
+			// calling it the namespace's own count.
+			memories_read_all: answer?.scope?.allow_read_all === true,
+			session: sessionIdOf(ctx),
+			session_state: sessionRegistration.state,
+			session_ended_at: sessionRegistration.ended_at ?? null,
+			prompts_captured: sessionPromptsCaptured,
+			counters: counts,
+			footer: counterLine(counts),
+			nudge: settleNudgeSent ? "sent" : "open",
+			...(engine ? { engine } : {}),
+		};
+	}
+
+	/** The one line the `/mnexis` command says after writing its card. */
+	function statusSummaryLine(card) {
+		const namespace = card.namespace ?? "unbound";
+		const memories =
+			typeof card.memories === "number" ? `${card.memories} memories` : "memories unknown";
+		return (
+			`mnexis · ${namespace} · ${memories} · ` +
+			`ctx ${card.counters.ctx} · search ${card.counters.search} · save ${card.counters.save}`
+		);
+	}
+
+	/**
+	 * Register `/mnexis` (UX3).
+	 *
+	 * Read-only by design: the card reports the binding and the allowlists, and
+	 * the only subcommand there is, is `status`. Binding or granting a
+	 * namespace touches the permission surface, and that decision is the
+	 * human's — the design deferred any grant path to its own decision
+	 * (ext-ts-rewrite, UX3).
+	 */
+	function registerStatusCommand() {
+		if (typeof pi?.registerCommand !== "function") {
+			return;
+		}
+		try {
+			pi.registerCommand("mnexis", {
+				description:
+					"Show this session's mnexis memory state as a durable card (read-only): " +
+					"/mnexis status",
+				getArgumentCompletions(prefix) {
+					const typed = String(prefix ?? "").trim().toLowerCase();
+					const options = [
+						{
+							value: "status",
+							label: "status",
+							description:
+								"the workspace, the session and how this session used the engine",
+						},
+					];
+					const matching = options.filter((option) => option.value.startsWith(typed));
+					return matching.length === 0 ? null : matching;
+				},
+				async handler(args, ctx) {
+					const subcommand = String(args ?? "").trim().toLowerCase();
+					if (subcommand !== "" && subcommand !== "status") {
+						if (ctx?.ui && typeof ctx.ui.notify === "function") {
+							ctx.ui.notify(
+								`mnexis: '${subcommand}' is not a subcommand. Only 'status' exists: ` +
+									"/mnexis status shows the memory state of this session.",
+								"info",
+							);
+						}
+						return;
+					}
+					const card = await statusCard(ctx);
+					if (typeof pi.appendEntry === "function") {
+						try {
+							pi.appendEntry("mnexis-status", card);
+						} catch {
+							// The card is a report; the line below still says what it holds.
+						}
+					}
+					if (ctx?.ui && typeof ctx.ui.notify === "function") {
+						ctx.ui.notify(statusSummaryLine(card), "info");
+					}
+				},
+			});
+		} catch {
+			// A host that refuses the command still has the tools.
+		}
+	}
+
+	registerStatusCommand();
+
+	/**
 	 * Read the write allowlist from the engine, initializing the profile if
 	 * needed.
 	 *
@@ -1334,13 +1651,18 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		// R5: the dialog carries a timeout, and its three answers are told
 		// apart — a session without a UI, a no, and nobody answering are three
 		// different things and the model reads which one it met.
+		//
+		// pi's signature is confirm(title, message): the short label is the
+		// title and the whole question is the message. They were swapped here
+		// (L9's queued defect), so the dialog showed a five-line paragraph as
+		// its title.
 		const answer = await askConfirm(
 			ctx.ui,
+			"mnexis: authorize namespace",
 			`Allow the mnexis agent to write memories in namespace '${namespace}'?\n\n` +
 				"This grants write permission (save, update, supersede) for that namespace only, " +
 				"in the current mnexis profile. Other namespaces and global access stay untouched, " +
 				"and you can revoke it later by editing the profile allowlist.",
-			"mnexis: authorize namespace",
 			dialogTimeoutMs(),
 		);
 		if (answer === "timed_out") {
@@ -1459,10 +1781,12 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 				},
 			};
 		}
+		// The same order as the gate's authorization dialog: the short label is
+		// pi's confirm title, the whole question is its message.
 		const answer = await askConfirm(
 			ctx.ui,
-			bindingPrompt(workspace),
 			"mnexis: name this workspace",
+			bindingPrompt(workspace),
 			dialogTimeoutMs(),
 		);
 		if (answer === "timed_out") {
@@ -2001,6 +2325,16 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		// The evidence trio and the workspace baseline: the same reset a branch
 		// switch makes (R6).
 		await resetEvidence(ctx);
+		// UX2: the adoption counters are the session's, so a new session starts
+		// them at zero and shows the line before the first call — a session that
+		// reads nothing still says so.
+		footer.reset();
+		footer.show(ctx?.ui);
+		sessionPromptsCaptured = 0;
+		sessionRegistration = { state: "unknown", ended_at: null, namespace: null };
+		// AB3: the conditional prompt section is decided once, here, from one
+		// bounded engine call, and never inside the handler that runs every run.
+		await cacheMemorySection(ctx);
 		const id = sessionIdOf(ctx);
 		if (!id) {
 			return;
@@ -2023,6 +2357,12 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 				ctx.cwd,
 			);
 			if (started.code !== 0) {
+				sessionRegistration = {
+					state: "failed",
+					exit_code: started.code,
+					ended_at: null,
+					namespace: null,
+				};
 				journalSessionClose(ctx, {
 					step: "start",
 					exit_code: started.code,
@@ -2031,7 +2371,18 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 				return;
 			}
 			const session = started.data && typeof started.data === "object" ? started.data : null;
-			if (session && typeof session.ended_at === "string" && session.ended_at !== "") {
+			const endedAt =
+				session && typeof session.ended_at === "string" && session.ended_at !== ""
+					? session.ended_at
+					: null;
+			// What the engine holds about this session, for the `/mnexis` card.
+			sessionRegistration = {
+				state: endedAt === null ? "started" : "ended",
+				ended_at: endedAt,
+				namespace:
+					session && typeof session.namespace === "string" ? session.namespace : null,
+			};
+			if (endedAt !== null) {
 				// The human is in a session the engine has already closed: a
 				// resume of a quit-closed id, or a start on one. No engine call
 				// reopens it, so the honest thing is to say so — the memories
@@ -2040,19 +2391,44 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 					action: "noted",
 					step: "start",
 					already_ended: true,
-					ended_at: session.ended_at,
+					ended_at: endedAt,
 					reason:
-						`the engine holds session '${id}' as ended (${session.ended_at}) and a start ` +
+						`the engine holds session '${id}' as ended (${endedAt}) and a start ` +
 						"never reopens it: this session's memories are written and its close revises " +
 						"the estado al cierre, but the engine's session window keeps the earlier end",
 				});
 			}
 		} catch (error) {
+			sessionRegistration = {
+				state: "failed",
+				ended_at: null,
+				namespace: null,
+			};
 			journalSessionClose(ctx, {
 				step: "start",
 				error: error instanceof Error ? error.message : String(error),
 			});
 		}
+	});
+
+	// AB3: the conditional prompt section.
+	//
+	// One section, mutated in place into the host's own structured prompt
+	// options, and only when the session's cached fact says it is true — the
+	// workspace is bound and its namespace holds memories. The handler never
+	// returns `systemPrompt` (and never calls the engine): pi diffs the sections
+	// and appends what changed, while a replaced prompt busts the cache on every
+	// run.
+	pi.on("before_agent_start", (event) => {
+		if (!memorySection) {
+			return undefined;
+		}
+		const sections = event?.systemPromptOptions?.sections;
+		if (!sections || typeof sections !== "object" || Array.isArray(sections)) {
+			return undefined;
+		}
+		sections[MEMORY_SECTION_KEY] = memorySectionText(memorySection);
+		return undefined;
 	});
 
 	// A branch switch inside the session (R6).
@@ -2247,7 +2623,10 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 				bytes,
 				exit_code: result.code,
 			});
+			return;
 		}
+		// The message landed: what `/mnexis` reports as captured this session.
+		sessionPromptsCaptured += 1;
 	});
 
 	// --- S4: judgment, asked once and only when the evidence says so ---
@@ -2264,7 +2643,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 	// The answer is the model's. `continue: true` is one more model request,
 	// so the question is spent as soon as it is asked: a second settle in
 	// the same session never opens it again.
-	pi.on("tool_execution_end", (event) => {
+	pi.on("tool_execution_end", (event, ctx) => {
 		// A tool that did not run, or ran and failed, changed no file: it is
 		// not evidence of unsaved work.
 		if (event?.isError === true) {
@@ -2286,6 +2665,9 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		// failed result, so `isError` is the whole test for "it landed".
 		if (event?.toolName === "mnexis_save") {
 			sessionSaved = true;
+			// UX2: the footer counts the saves that landed, exactly as the
+			// question does — a refused save is not a save.
+			footer.count("save", ctx?.ui);
 		}
 	});
 
@@ -2311,7 +2693,9 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 					type: "custom_message",
 					customType: "mnexis-settle-nudge",
 					content: settleNudgeText(sessionSaveRefusal),
-					display: false,
+					// UX4: the human can see that the extension asked — it used to
+					// be `display: false`, indistinguishable from agent spontaneity.
+					display: true,
 				},
 			],
 			continue: true,
@@ -2424,7 +2808,14 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 	// The gate lives in this extension, so a model-issued call must not
 	// grant the permissions behind its back. The human's own commands are
 	// untouched: only model tool calls are inspected here.
-	pi.on("tool_call", async (event) => {
+	pi.on("tool_call", async (event, ctx) => {
+		// UX2: the adoption counters move on the call, in the column the tool
+		// belongs to. A save is counted from its outcome instead (see
+		// `tool_execution_end`), because an attempt is not a write.
+		const column = FOOTER_COLUMNS.get(event?.toolName);
+		if (column) {
+			footer.count(column, ctx?.ui);
+		}
 		if (event.toolName === "bash" && isPermissionGrantCommand(event.input?.command)) {
 			return {
 				block: true,
@@ -2445,7 +2836,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		return undefined;
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_save",
 		label: "Save a project memory",
 		promptSnippet: "Store a durable memory of this project in the local mnexis engine.",
@@ -2599,7 +2990,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_search",
 		label: "Search memories",
 		promptSnippet: "Recall what was recorded, across projects.",
@@ -2675,7 +3066,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_suggest_topic_key",
 		label: "Suggest the topic key",
 		promptSnippet: "Ask which topic key a fact is already recorded under.",
@@ -2734,7 +3125,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_list",
 		label: "List memories",
 		promptSnippet: "List the memories recorded, across projects.",
@@ -2809,7 +3200,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_show",
 		label: "Show a memory",
 		promptSnippet: "Read one stored memory by UUID.",
@@ -2841,7 +3232,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_history",
 		label: "The history of a memory",
 		promptSnippet: "Every revision of one memory, and why each happened.",
@@ -2882,7 +3273,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_session_start",
 		label: "Start the session",
 		promptSnippet: "Register the session you are running in.",
@@ -2923,7 +3314,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_session_end",
 		label: "End the session",
 		promptSnippet: "End the session with a summary of what it did.",
@@ -2963,7 +3354,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_save_prompt",
 		label: "Save what the user said",
 		promptSnippet: "Store a message from outside this session, so it survives.",
@@ -3004,7 +3395,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_search_prompts",
 		label: "Search what the user said",
 		promptSnippet: "Find what the user asked before, across sessions.",
@@ -3050,7 +3441,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_recall",
 		label: "Recall a session",
 		promptSnippet: "What a session was, in one answer.",
@@ -3116,7 +3507,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_workspace",
 		label: "This workspace, in one answer",
 		promptSnippet: "Where this session may write, and what is already there.",
@@ -3148,7 +3539,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_context",
 		label: "The context of this task",
 		promptSnippet: "Ask the project what it knows about this task, in one call.",
@@ -3284,7 +3675,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	registerMemoryTool(pi, {
+	registerTool({
 		name: "mnexis_supersede",
 		label: "Supersede a memory",
 		promptSnippet: "Replace an outdated memory with a newer one, keeping the history.",

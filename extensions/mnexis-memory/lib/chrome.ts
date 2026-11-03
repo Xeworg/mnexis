@@ -255,7 +255,16 @@ export function summaryLine(toolName, result) {
 
 /** The lines pi draws when the answer comes back, expanded. */
 export function resultLines(toolName, result, options = {}) {
-	if (options.isPartial) return ["…"];
+	if (options.isPartial) {
+		// UX7: a partial answer used to replace the whole drawing with one
+		// ellipsis, so the call the human was waiting on vanished. The call
+		// line stays and the pending state is appended to it. pi draws its own
+		// call line above this one under the default shell (UX5), so the two
+		// agree; the argument is repeated on purpose, because a host that draws
+		// only the result must still say what is running. T7's visual check is
+		// where the double line is judged.
+		return [`${callLines(toolName, options.args ?? {})[0]} …`];
+	}
 	if (result?.isError || options.isError) {
 		return [`↳ ✗ ${truncate(errorText(result), 200)}`];
 	}
@@ -292,29 +301,42 @@ export function resultLines(toolName, result, options = {}) {
 	return lines;
 }
 
+/** The footer's own words for what a tool is doing: `show…`, `show · ✓`. */
+export function statusLabel(toolName, result) {
+	const label = humanToolName(toolName);
+	if (result === undefined) return `${label}…`;
+	if (result?.isError) return `${label} · ✗`;
+	return `${label} · ✓`;
+}
+
 /** The status the footer carries while the tool runs, and after. */
 export function statusText(toolName, result) {
-	const label = humanToolName(toolName);
-	if (result === undefined) return `${ENGINE_ICON} mnexis · ${label}…`;
-	if (result?.isError) return `${ENGINE_ICON} mnexis · ${label} · ✗`;
-	return `${ENGINE_ICON} mnexis · ${label} · ✓`;
+	return `${ENGINE_ICON} mnexis · ${statusLabel(toolName, result)}`;
 }
 
 /** The renderers pi draws a tool with. */
 export function renderers(toolName) {
+	// UX5: no `renderShell`. The tool used to opt out of pi's shell, which is
+	// what draws the error background, the output padding and the expand
+	// keyHint; the Panel is the result's content and the shell is pi's. The
+	// Panel draws text and nothing else — no background, no padding — so the
+	// default shell applies cleanly. The visual confirmation is T7's
+	// (odd/tasks/ext-ts-rewrite.md, UX5).
 	return {
-		renderShell: "self",
 		renderCall(args) {
 			return new Panel(callLines(toolName, args));
 		},
 		renderResult(result, options, _theme, context) {
 			// pi hands the renderer the content and the details, never the
 			// error flag: that lives in the render context, the fourth
-			// argument. Without it a failed call would draw a tick.
+			// argument. Without it a failed call would draw a tick. The render
+			// context also carries the call's own `args`, which is what the
+			// partial line needs to keep naming the call.
 			const isError = Boolean(options?.isError || context?.isError);
-			return new Panel(resultLines(toolName, result, { ...options, isError }), {
-				maxLines: PANEL_MAX_LINES,
-			});
+			return new Panel(
+				resultLines(toolName, result, { ...options, isError, args: context?.args }),
+				{ maxLines: PANEL_MAX_LINES },
+			);
 		},
 	};
 }
@@ -322,18 +344,30 @@ export function renderers(toolName) {
 /**
  * Wrap a tool's `execute` so the footer carries the memory engine's status
  * while it runs and what it answered after.
+ *
+ * `footer` is the session's own footer (UX2): when the session has one, the
+ * status is written through it, so the adoption counters and the running call
+ * share the one `mnexis` key instead of overwriting each other.
  */
-export function withStatus(toolName, execute) {
+export function withStatus(toolName, execute, footer = null) {
 	return async function wrapped(toolCallId, params, signal, onUpdate, ctx) {
 		const ui = ctx && ctx.ui;
 		const setStatus = ui && typeof ui.setStatus === "function" ? ui.setStatus.bind(ui) : null;
-		if (setStatus) setStatus("mnexis", statusText(toolName));
+		const write = (result) => {
+			if (!setStatus) return;
+			if (footer && typeof footer.line === "function") {
+				setStatus("mnexis", footer.line(statusLabel(toolName, result)));
+				return;
+			}
+			setStatus("mnexis", statusText(toolName, result));
+		};
+		write(undefined);
 		try {
 			const result = await execute(toolCallId, params, signal, onUpdate, ctx);
-			if (setStatus) setStatus("mnexis", statusText(toolName, result));
+			write(result);
 			return result;
 		} catch (error) {
-			if (setStatus) setStatus("mnexis", statusText(toolName, { isError: true }));
+			write({ isError: true });
 			throw error;
 		}
 	};
@@ -348,17 +382,23 @@ export class Panel {
 	constructor(lines, options = {}) {
 		this.lines = Array.isArray(lines) ? lines.map((line) => String(line ?? "")) : [String(lines ?? "")];
 		this.maxLines = Number(options.maxLines) > 0 ? Number(options.maxLines) : null;
+		// A style is applied AFTER the line is wrapped, so the width math
+		// stays on the plain text and a terminal's escape codes never count
+		// as columns.
+		this.style = typeof options.style === "function" ? options.style : null;
 	}
 
 	render(width) {
 		const limit = Math.max(1, Number(width) || 80);
 		const rendered = this.lines.flatMap((line) => wrapLine(line, limit));
+		let kept;
 		if (this.maxLines === null || rendered.length <= this.maxLines) {
-			return rendered.length === 0 ? [""] : rendered;
+			kept = rendered.length === 0 ? [""] : rendered;
+		} else {
+			kept = rendered.slice(0, this.maxLines - 1);
+			kept.push(`… ${rendered.length - (this.maxLines - 1)} more lines`);
 		}
-		const kept = rendered.slice(0, this.maxLines - 1);
-		kept.push(`… ${rendered.length - (this.maxLines - 1)} more lines`);
-		return kept;
+		return this.style ? kept.map((line) => String(this.style(line))) : kept;
 	}
 
 	invalidate() {}
@@ -652,4 +692,376 @@ function errorText(result) {
 	return text.trim() || String(result?.details?.error ?? "error");
 }
 
-/** Keep a panel within its lines, saying what did not fit. */
+/**
+ * The journal the human reads (ext-ts-rewrite UX1, UX3, UX4).
+ *
+ * The extension writes four kinds of session entry and one status card. An
+ * entry with no registered renderer draws nothing in the chat (it still lives
+ * in the session file), so every kind this extension writes has a renderer
+ * here: one dim line naming the kind and the fact it holds when collapsed,
+ * and the entry's own data when expanded. The line is built from the entry's
+ * `action` and `step` — the variants the reliability work added — and never
+ * from an assumed `skipped`: a close that was abandoned, a start the engine
+ * refused, and an end the engine never knew are three different facts.
+ */
+
+/** The entry kinds the extension writes, each with a renderer. */
+export const JOURNAL_KINDS = [
+	"mnexis-store-recovery",
+	"mnexis-prompt-capture",
+	"mnexis-session-close",
+	"mnexis-compaction",
+	"mnexis-status",
+];
+
+/** How each journal kind is said in one word. */
+const JOURNAL_LABELS = {
+	"mnexis-store-recovery": "store recovery",
+	"mnexis-prompt-capture": "prompt capture",
+	"mnexis-session-close": "session close",
+	"mnexis-compaction": "compaction",
+	"mnexis-status": "status",
+};
+
+/** A count with its noun, in the journal's own words. */
+function journalCount(count, singular, plural = `${singular}s`) {
+	return `${count} ${count === 1 ? singular : plural}`;
+}
+
+/** The head of every journal line: the engine and the kind. */
+function journalHead(customType) {
+	const label = Object.hasOwn(JOURNAL_LABELS, customType)
+		? JOURNAL_LABELS[customType]
+		: String(customType ?? "journal").replace(/^mnexis-/, "").replace(/-/g, " ");
+	return `${ENGINE_ICON} mnexis · ${label}`;
+}
+
+/** What a store-recovery entry did: the repair, or the step it could not finish. */
+function recoveryFact(data) {
+	const action = typeof data.action === "string" ? data.action : "";
+	if (action === "supersede") {
+		const value = data.value === undefined || data.value === null ? "" : ` (value ${data.value})`;
+		return `repaired a duplicate${value}`;
+	}
+	if (action === "failed") {
+		const step = typeof data.step === "string" && data.step !== "" ? data.step : "the repair";
+		return `could not finish at ${step}${said(data.error)}`;
+	}
+	return action === "" ? "noted" : action;
+}
+
+/** What a prompt-capture entry did, and how large the message was. */
+function captureFact(data) {
+	const action = typeof data.action === "string" && data.action !== "" ? data.action : "noted";
+	const size = typeof data.bytes === "number" ? ` · ${data.bytes} B` : "";
+	const code = typeof data.exit_code === "number" ? ` · exit ${data.exit_code}` : "";
+	return `${action}${size}${code}`;
+}
+
+/**
+ * What a session-close entry says.
+ *
+ * The journal carries `action` (`noted` or `abandoned`) and `step` (`start`,
+ * `end`, `save`, `hook`), plus the engine answers worth naming (`not_registered`
+ * for exit 3, `already_ended` for a resume of a closed session). The line
+ * reads those variants; it never assumes the old `skipped`.
+ */
+function closeFact(data) {
+	const action = typeof data.action === "string" ? data.action : "";
+	const step = typeof data.step === "string" ? data.step : "";
+	if (action === "abandoned") {
+		return `${step === "" ? "the close" : step} was abandoned${said(data.reason)}`;
+	}
+	if (step === "start") {
+		if (data.already_ended === true) {
+			return "the engine holds this session as already ended";
+		}
+		return `the start was refused${exit(data.exit_code)}${said(data.error)}`;
+	}
+	if (step === "end") {
+		if (data.not_registered === true) {
+			return "the engine never registered this session";
+		}
+		return `the end was refused${exit(data.exit_code)}${said(data.error)}`;
+	}
+	if (step === "save") {
+		return `the estado al cierre was not saved${exit(data.exit_code)}${said(data.error)}`;
+	}
+	if (step === "hook") {
+		return `the close failed${said(data.error)}`;
+	}
+	return action === "" ? "noted" : action;
+}
+
+/** What a compaction entry says: the host failed, or the store refused it. */
+function compactionFact(data) {
+	const action = typeof data.action === "string" ? data.action : "";
+	if (action === "failed") {
+		const retry = data.will_retry === true ? " (it will retry)" : "";
+		return `the host could not compact${retry}${said(data.error)}`;
+	}
+	return `the summary was not stored${exit(data.exit_code)}${said(data.error)}`;
+}
+
+/** What the `/mnexis` card says when collapsed: where, and how much. */
+function statusFact(data) {
+	const namespace =
+		typeof data.namespace === "string" && data.namespace !== "" ? data.namespace : "unbound";
+	const memories =
+		typeof data.memories === "number" ? journalCount(data.memories, "memory", "memories") : "memories unknown";
+	return `${namespace} · ${memories}`;
+}
+
+/** `:` and a short reason, when the entry carries one. */
+function said(value) {
+	const text = typeof value === "string" ? value.trim() : "";
+	return text === "" ? "" : `: ${truncate(text, 80)}`;
+}
+
+/** ` (exit N)`, when the entry carries one. */
+function exit(code) {
+	return typeof code === "number" ? ` (exit ${code})` : "";
+}
+
+/** The one line a journal entry shows while it is collapsed. */
+export function journalSummary(customType, data = {}) {
+	const head = journalHead(customType);
+	switch (customType) {
+		case "mnexis-store-recovery":
+			return `${head} · ${recoveryFact(data)}`;
+		case "mnexis-prompt-capture":
+			return `${head} · ${captureFact(data)}`;
+		case "mnexis-session-close":
+			return `${head} · ${closeFact(data)}`;
+		case "mnexis-compaction":
+			return `${head} · ${compactionFact(data)}`;
+		case "mnexis-status":
+			return `${head} · ${statusFact(data)}`;
+		default:
+			return head;
+	}
+}
+
+/** The entry's data as the card draws it: one aligned label per field. */
+function journalField(label, value) {
+	return `${label.padEnd(14)}${value}`;
+}
+
+/** A value as one line: text is kept, anything structured is its JSON. */
+function detailValue(value) {
+	if (value === null || value === undefined || value === "") return "";
+	if (typeof value === "string") return truncate(value, 200);
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	return truncate(JSON.stringify(value), 200);
+}
+
+/** The data of a journal entry, one field per line. */
+function genericDetail(data) {
+	const lines = [];
+	for (const [key, value] of Object.entries(data ?? {})) {
+		// The timestamp and the internal kind are not facts the human reads.
+		if (key === "ts" || key === "kind") continue;
+		const text = detailValue(value);
+		if (text === "") continue;
+		lines.push(journalField(key, text));
+	}
+	return lines.length === 0 ? ["(no detail)"] : lines;
+}
+
+/** A list of names, as the card writes it. */
+function nameList(value) {
+	if (!Array.isArray(value) || value.length === 0) return "(none)";
+	return value.map((name) => String(name)).join(", ");
+}
+
+/**
+ * The `/mnexis` card, expanded: every field the command gathered, in the
+ * order the question is asked — where, what may be read and written, who the
+ * session is, how much is there, how the session used it, whether the
+ * question was asked.
+ */
+function statusCardDetail(data) {
+	const counters = data.counters && typeof data.counters === "object" ? data.counters : {};
+	const lines = [
+		journalField("workspace", data.workspace ? String(data.workspace) : "(unknown)"),
+		journalField("namespace", data.namespace ? String(data.namespace) : "(unbound)"),
+		journalField("bound", data.bound === true ? "yes" : "no"),
+		journalField("read", nameList(data.read_namespaces)),
+		journalField("write", nameList(data.write_namespaces)),
+		journalField("session", data.session ? String(data.session) : "(none)"),
+		journalField("session state", data.session_state ? String(data.session_state) : "unknown"),
+	];
+	if (typeof data.session_ended_at === "string" && data.session_ended_at !== "") {
+		lines.push(journalField("ended", data.session_ended_at));
+	}
+	lines.push(
+		journalField(
+			"memories",
+			typeof data.memories === "number"
+				? `${data.memories}${data.memories_read_all === true ? " (profile scope)" : ""}`
+				: "(unknown)",
+		),
+		journalField(
+			"prompts",
+			`${typeof data.prompts_captured === "number" ? data.prompts_captured : 0} captured this session`,
+		),
+		journalField("counters", countersText(counters)),
+		journalField("nudge", data.nudge === "sent" ? "sent" : "open"),
+	);
+	const engine = data.engine && typeof data.engine === "object" ? data.engine.error : "";
+	if (typeof engine === "string" && engine !== "") {
+		lines.push(journalField("engine", truncate(engine, 200)));
+	}
+	return lines;
+}
+
+/** The expanded lines of a journal entry: its own data, in its own shape. */
+export function journalDetail(customType, data = {}) {
+	return customType === "mnexis-status" ? statusCardDetail(data) : genericDetail(data);
+}
+
+/**
+ * The data a journal entry carries, however the caller held it: the renderer
+ * is handed the whole entry, and a test may hand the data itself.
+ */
+function journalData(entry) {
+	if (entry && typeof entry === "object" && entry.data && typeof entry.data === "object") {
+		return entry.data;
+	}
+	return entry && typeof entry === "object" ? entry : {};
+}
+
+/** The lines of one journal entry: one when collapsed, its data when expanded. */
+export function journalLines(customType, entry, options = {}) {
+	const data = journalData(entry);
+	const summary = journalSummary(customType, data);
+	if (!options.expanded) return [summary];
+	return [summary, "", ...journalDetail(customType, data)];
+}
+
+/** A dim line, when the theme can say so. */
+function dim(theme, text) {
+	return theme && typeof theme.fg === "function" ? theme.fg("dim", text) : text;
+}
+
+/**
+ * The renderer pi calls for one journal kind.
+ *
+ * Collapsed, the line is dim: it is the engine's own record, not the
+ * conversation. Expanded, the entry's data is the card.
+ */
+export function journalRenderer(customType, theme = null) {
+	return (entry, options, callTheme = theme) => {
+		const expanded = Boolean(options?.expanded);
+		return new Panel(journalLines(customType, entry, { expanded }), {
+			style: expanded ? null : (text) => dim(callTheme, text),
+		});
+	};
+}
+
+/** The one line the settle nudge collapses to (UX4). */
+export const NUDGE_HEADLINE = `${ENGINE_ICON} mnexis · asked the agent to save — once per session`;
+
+/** The text a custom message carries, as lines. */
+function messageLines(message) {
+	const content = message?.content;
+	if (typeof content === "string") return content.split("\n");
+	if (Array.isArray(content)) {
+		return content
+			.filter((part) => part && part.type === "text" && typeof part.text === "string")
+			.flatMap((part) => part.text.split("\n"));
+	}
+	return [""];
+}
+
+/** The lines of the settle nudge: one when collapsed, the question when expanded. */
+export function nudgeLines(message, options = {}) {
+	if (!options.expanded) return [NUDGE_HEADLINE];
+	return [NUDGE_HEADLINE, "", ...messageLines(message)];
+}
+
+/**
+ * The renderer pi calls for the settle nudge (UX4).
+ *
+ * The nudge used to be `display: false`, so the human could not tell the
+ * extension's own question from something the agent made up. Now it is drawn,
+ * collapsed to the fact that it was asked, and expanded to its text.
+ */
+export function nudgeRenderer(theme = null) {
+	return (message, options, callTheme = theme) => {
+		const expanded = Boolean(options?.expanded);
+		return new Panel(nudgeLines(message, { expanded }), {
+			style: expanded ? null : (text) => dim(callTheme, text),
+		});
+	};
+}
+
+/** The counter columns, as one phrase: `ctx 1 · search 2 · save 1`. */
+export function countersText(counts = {}) {
+	const count = (value) => (Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0);
+	return `ctx ${count(counts.ctx)} · search ${count(counts.search)} · save ${count(counts.save)}`;
+}
+
+/**
+ * The footer's counter line (UX2): always visible, for the whole session.
+ *
+ * `ctx` is a call to the door or to the workspace, `search` a call to search
+ * or show, and `save` a save that landed. The line is the instrument the
+ * adoption question never had: a session that read nothing said nothing at
+ * all before it.
+ */
+export function counterLine(counts = {}) {
+	return `${ENGINE_ICON} mnexis · ${countersText(counts)}`;
+}
+
+/**
+ * The session's footer (UX2): the counters, plus whatever the running tool is
+ * doing, on the one key the tools already write.
+ *
+ * One key on purpose: pi's footer holds one line per key, so a second key
+ * would either overwrite this one or hide beside it. `line(status)` composes
+ * the status into the counter line, which is how a tool run and a session's
+ * adoption stay visible at the same time.
+ */
+export function createFooter() {
+	const counts = { ctx: 0, search: 0, save: 0 };
+	let status = "";
+
+	const text = () => (status === "" ? counterLine(counts) : `${counterLine(counts)} · ${status}`);
+
+	const write = (ui) => {
+		if (ui && typeof ui.setStatus === "function") {
+			ui.setStatus("mnexis", text());
+		}
+	};
+
+	return {
+		/** The counters as they stand. */
+		counts: () => ({ ...counts }),
+		/** The line as it would be written now. */
+		text,
+		/** Count one call, and show the line. */
+		count(family, ui = null) {
+			if (!Object.hasOwn(counts, family)) return;
+			counts[family] += 1;
+			write(ui);
+		},
+		/** Start the counters again, for the session that is starting. */
+		reset() {
+			counts.ctx = 0;
+			counts.search = 0;
+			counts.save = 0;
+			status = "";
+		},
+		/** Show the line, with no tool status on it. */
+		show(ui) {
+			status = "";
+			write(ui);
+		},
+		/** Compose a tool status into the line, and answer it. */
+		line(nextStatus) {
+			status = typeof nextStatus === "string" ? nextStatus : "";
+			return text();
+		},
+	};
+}
