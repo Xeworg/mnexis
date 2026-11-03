@@ -2,6 +2,13 @@
 
 The host-side half of the mnexis integration for [opencode](https://opencode.ai).
 
+**The supported host is opencode 2.x, verified on 2.2.5** (the npm `latest` as of
+2026-11-03). The plugin still ships an opencode 1.x entry, but that generation is not
+supported for now: its event seats and its session lifecycle were never measured against
+a live 1.x host, and everything this plugin claims below was measured on 2.x. A 1.x host
+gets the plugin's old behavior — the seats that generation publishes — and nothing more
+is promised.
+
 opencode gets the **memory tools** from the engine's MCP server — seventeen tools, one
 shape, shared with every other host. This plugin adds the things MCP and the CLI cannot
 do, because they belong to the host:

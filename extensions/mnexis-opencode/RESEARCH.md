@@ -41,6 +41,11 @@ must be ported.
 
 **Measured on this host (V2.2.2), not assumed:**
 
+- **The supported host is opencode 2.x** (verified on 2.2.5, the npm `latest` as of
+  2026-11-03). The V1 entry is still shipped, so a 1.x host is not left without the
+  plugin, but **1.x is not supported for now**: its seats were never measured against a
+  live 1.x host, and every verdict in this document was measured on 2.x. The V1 sections
+  below say what the published types say — they are not measurements.
 - `opencode --version` → `2.2.2` (V2), so the host a user runs today is very often V2.
 - The engine's existing MCP entry — the V1 shape `{"mcp":{"mnexis":{"type":"local","command":[…],"enabled":true}}}`
   that `src/application/opencode_config.rs` writes — is **read and normalized by V2**:
@@ -375,9 +380,24 @@ Nothing in this list prevents the plugin from working today.
 
 Two things could not be checked here and are named rather than guessed: a live **V1**
 binary (none installed; V1 behaviour is read from the 1.19.5 source and type declarations),
-and a live **V2 session** with a model (no model credentials in this worktree), so the
-prompt/context/compaction hooks are exercised by unit tests against the documented event
-shapes, not by a real turn.
+and — at the time this section was written — a live **V2 session** with a model.
+
+That second gap is closed since (2026-11-03): the plugin was exercised against a real
+opencode v2.2.5 in a container, with a real model and a real engine store. What that
+run measured, and what it changed:
+
+- the **event bus** — 25 types in one headless run, and **not** `session.created` nor
+  `session.deleted` (the names this plugin used): the seat is `experimental.idle` plus
+  the `session.execution.*` events (§1);
+- the **pause and the end** — the state record lands at the pause, and the engine's
+  session ends for real when the plugin's teardown runs (§1);
+- the **MCP round trip** — seventeen tools, a write refused by the workspace's scope and
+  then accepted with the namespace, a recall in a fresh session with no files;
+- the **plugin's journal** — `ctx.storage` persists, and the reports it carries are a
+  journal of failures, so a healthy run writes none.
+
+What is still unmeasured: the **V1** population, and the visual behavior of the TUI
+(unchanged by this work).
 
 ---
 
