@@ -102,3 +102,59 @@ makes the test harness able to catch a dead seat in the first place.
 - L5: The human's decision (2026-11-03, "Híbrido: refrescar el estado al
   pausar"): refresh the closing state at the pause, end the engine session
   for real only when the host goes away or another session starts.
+- L6: T1 done (the harness can fail on a dead seat). The fake host's
+  `subscribe` now honors `types` — an event the plugin did not name never
+  reaches it, as on the real host — and the engine's `session` answer carries
+  the namespace and `ended_at` the real binary answers. The fixtures are the
+  payloads the host really sends: `experimental.idle` (the idle hook's own
+  `{ sessionID, background }`), `session.execution.succeeded` and
+  `session.execution.failed`, all recorded live on v2.2.5 on 2026-11-03.
+  New: `test/harness.test.js` (two tests: the filter drops what was not
+  named; a subscription with no filter receives the whole stream).
+- L7: T2 done (the seats v2.2.5 publishes). The V2 entry registers
+  `experimental.idle` and subscribes to `session.execution.started`,
+  `.succeeded`, `.failed` and `.interrupted` beside the V1 names it keeps for
+  a host that publishes them. The pause refreshes the state: the same
+  "estado al cierre" record (the title is the identity, so the write
+  revises it), saying the session is OPEN — `sessionPauseContent` in
+  `src/render.js`, beside pi's shape. A refresh whose content is unchanged
+  writes nothing, so the idle seat and the execution event do not double the
+  write.
+- L8: T3 done (the end where the host gives one). A new session ends the
+  previous one — `session.execution.started` with another id — and the
+  plugin's teardown ends the sessions it opened. The engine's tolerance
+  (measured: a prompt on an ended session is accepted; a re-register answers
+  the ended row) makes an early end harmless, and a session the engine
+  already ended is not refreshed — the close wrote the truth about it.
+- L9: T4 done (the guard). The behavior change re-freezes the baseline in
+  the same commit, as the guard's own rule says: 1247 canonical lines and
+  421 payloads, `node src/build.js --check` green, and the guard still
+  names a lost line when one is lost.
+- L10: T5 done (the docs). RESEARCH §1 now carries what v2.2.5 really
+  publishes (the 25 types measured, `session.idle` deprecated in the schema,
+  `session.deleted` = an explicit removal), the two meanings of "the
+  session is over", and the fact that the V1 population's `session.idle`
+  behavior is unmeasured — the follow-up. The README says the same in the
+  terms a reader needs.
+- L11: The verification on the real host (podman `bench-oc:verify2`,
+  opencode v2.2.5, fixture `payments`/`example/payments-api`, 2026-11-03):
+  a headless `opencode run` registers the session and writes the record —
+  "Session ses_… is still open; it paused." (revision 1, one write, the
+  dedupe at work); the session stays open (`ended_at: null`), as the hybrid
+  says for headless. In server mode, stopping the service runs the unload:
+  the session's `ended_at` becomes real ("2026-11-03T16:46:53Z") and the
+  record is revised to "Session ses_… ended at …" (revision 3). The older
+  headless session stays open, which is what the hybrid says.
+- L12: Suites: the opencode plugin 81 tests (80 pass, 1 opt-in skip, 0
+  fail); `cargo test` 314 + 184 + 60 + … all green; the pi extension has 2
+  PRE-EXISTING failures ("an unbound workspace asks once…" and one more),
+  proven unrelated: the pi tree is byte-identical to HEAD, and the same
+  code fails the same set when run from another path (they are
+  path-dependent).
+- L13: The slice boundary: three commits on `feat/opencode-v2-session-lifecycle`
+  over `main` — `432f6af` (the spec), `5082ac2` (the harness, ~104 authored
+  lines), `85b65a2` (the lifecycle, the docs and the generated artifacts).
+  The generated `index.js` (2010 lines) and `src/baseline.canonical.txt`
+  (1247 lines) are build outputs of the sources in the same commit, so the
+  repository's authored change is ~538 lines over the three commits; the
+  generated pair must travel with the sources that produce them.
