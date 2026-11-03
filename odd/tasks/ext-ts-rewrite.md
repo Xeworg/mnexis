@@ -157,7 +157,8 @@ installed pi dist. Verdicts:
 - T5 (S2/S3): the human set — UX1 entry renderer (4 kinds), UX2 footer counters,
   UX3 /mnexis durable card + completion, UX4 nudge visible, UX5 default shell,
   UX7 partial line, AB3 conditional `<mnexis_memory>` section. Route: parent
-  inline. Risk: none.
+  inline (worker-executed under the context backstop). Risk: none. Commit:
+  4e292e8.
 - T6 (S2/S3): docs — README truth fixes (journal visibility claims), decision
   table completeness, the pi skill's overlap note. Route: parent inline. Risk:
   none.
@@ -235,3 +236,14 @@ installed pi dist. Verdicts:
   deliberately untouched): ensureWritable and bindOnConfirmation pass the long
   question as ui.confirm's TITLE and the short label as MESSAGE — swapped
   against pi's confirm(title, message) signature.
+- L10: T5 evidence (327/327, +39; opencode 47/0; cargo agents green): five
+  journal kinds render (the four original + mnexis-status) reading T4's
+  action/step variants; the footer carries live ctx/search/save counters from
+  session_start; /mnexis offers `status` with completions, writes a durable
+  mnexis-status entry plus a one-line notify summary, and has NO grant path;
+  the settle nudge is display:true with a registered message renderer;
+  renderShell "self" is gone (visual check deferred to T7); isPartial keeps
+  the call line; the conditional section keys on state cached at session_start
+  (bound + has memories), mutates systemPromptOptions.sections in place and
+  never returns a systemPrompt; the confirm-args swap is fixed with the reason
+  in a comment at the call site.
