@@ -148,7 +148,9 @@ pub enum Command {
         /// Initial state: active (default) or proposed
         #[arg(long)]
         state: Option<String>,
-        /// Memory content (positional)
+        /// Memory content (positional). The profile admits 16 KiB by default
+        /// (`max_content_bytes`); a longer one is refused and the answer
+        /// names the limit in effect.
         content: String,
     },
 
@@ -203,6 +205,9 @@ pub enum Command {
         /// How the query's words are matched: any (default) | all | phrase
         #[arg(long = "match", default_value = "any", value_name = "MODE")]
         match_mode: String,
+        /// The query (positional). The profile admits 8 KiB by default
+        /// (`max_query_bytes`); a longer one is refused and the answer
+        /// names the limit in effect.
         query: String,
     },
 
@@ -282,7 +287,8 @@ pub enum Command {
 
     /// Store what the user said
     Prompt {
-        /// What the user said (positional)
+        /// What the user said (positional). The profile admits 16 KiB by
+        /// default (`max_content_bytes`).
         content: String,
         /// The session it belongs to, when there is one
         #[arg(long, value_name = "ID")]
