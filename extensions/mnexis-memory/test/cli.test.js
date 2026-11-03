@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { READ_TIMEOUT_MS, WRITE_TIMEOUT_MS, createClient, parseJson } from "../lib/cli.js";
+import { READ_TIMEOUT_MS, WRITE_TIMEOUT_MS, createClient, parseJson } from "../lib/cli.ts";
 
 /** Fake exec: records calls and replays scripted answers. */
 function fakeExec(answers = []) {

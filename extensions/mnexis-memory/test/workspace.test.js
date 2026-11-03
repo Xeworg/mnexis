@@ -6,7 +6,7 @@ import {
 	normalizeRemoteUrl,
 	selectNamespace,
 	workspaceKey,
-} from "../lib/workspace.js";
+} from "../lib/workspace.ts";
 
 test("normalizeRemoteUrl strips https protocol, .git suffix and lowercases", () => {
 	assert.equal(

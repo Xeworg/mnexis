@@ -6,7 +6,7 @@
 //! to it in the project registry (`projects.toml`).
 //!
 //! The key must be byte-identical to the one the agent extension computes
-//! (`extensions/mnexis-memory/lib/workspace.js`), otherwise the extension
+//! (`extensions/mnexis-memory/lib/workspace.ts`), otherwise the extension
 //! and the CLI disagree about which project a directory is and the guard
 //! refuses writes the agent believes are allowed. The rules, in the order
 //! the extension applies them:

@@ -11,7 +11,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import mnexisMemory from "../index.js";
+import mnexisMemory from "../index.ts";
 
 /** A fake `mnexis` that records its arguments and answers envelopes. */
 const FAKE_BINARY = `#!/usr/bin/env node

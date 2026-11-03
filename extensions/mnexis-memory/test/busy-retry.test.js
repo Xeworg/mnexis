@@ -20,7 +20,7 @@ import {
 	BUSY_RETRY_DELAYS_MS,
 	WRITE_TIMEOUT_MS,
 	createClient,
-} from "../lib/cli.js";
+} from "../lib/cli.ts";
 
 /** The engine's answer when the store was locked. */
 const BUSY = { code: BUSY_EXIT_CODE, stdout: "", stderr: "busy: sql: database is locked" };

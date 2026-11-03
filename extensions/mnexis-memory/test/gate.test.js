@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decideAuthorization, describeFailure, allowNamespaceCommand } from "../lib/gate.js";
+import { decideAuthorization, describeFailure, allowNamespaceCommand } from "../lib/gate.ts";
 
 test("an already authorized namespace is allowed without asking", () => {
 	const decision = decideAuthorization({
