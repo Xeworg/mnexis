@@ -1,3 +1,7 @@
+// GENERATED FILE — do not edit: `node src/build.js` rewrites this file from
+// the ordered sections in src/. The shipped artifact is one file, and it
+// imports nothing of its own.
+
 /**
  * mnexis for opencode — one file, both plugin models.
  *
@@ -42,6 +46,8 @@
 
 import { execFile as nodeExecFile } from "node:child_process";
 
+// === src/constants.js ===
+
 /** The plugin's stable id, in both models. */
 export const PLUGIN_ID = "mnexis";
 
@@ -56,6 +62,8 @@ export const STATE_CHARS = 3000;
 
 /** How much of the previous session's summary the pointer may carry. */
 export const SUMMARY_CHARS = 240;
+
+// === src/budget.js ===
 
 // --- the budgets and the retry (odd/tasks/opencode-parity.md, S3) ---------
 //
@@ -265,6 +273,8 @@ export function createChildRegistry() {
 	};
 }
 
+// === src/cli.js ===
+
 // --- the CLI ---------------------------------------------------------------
 
 /** Default exec: resolves with `{ code, stdout, stderr }` and never rejects. */
@@ -448,6 +458,8 @@ export function createClient({ exec = defaultExec, binary, env = process.env, re
 	return make();
 }
 
+// === src/gate.js ===
+
 // --- pure decisions (every one of them is pinned by a test) ----------------
 
 /**
@@ -510,6 +522,8 @@ export function gateViolation(tool, input) {
 	}
 	return null;
 }
+
+// === src/adapters.js ===
 
 /**
  * The text a submitted user message carries, from its parts (V1's
@@ -590,6 +604,8 @@ export function directoryOfEvent(event) {
 	}
 	return null;
 }
+
+// === src/render.js ===
 
 /**
  * Render the engine's live state records as the block a compaction keeps.
@@ -745,6 +761,8 @@ function previousSummary(previous) {
 	const when = started.length >= 10 ? started.slice(0, 10) : "date unknown";
 	return { when, text };
 }
+
+// === src/catalog.js ===
 
 // --- the curated definitions (odd/tasks/opencode-polish.md, S2-S5) --------
 //
@@ -935,37 +953,21 @@ function curateCatalog(editor) {
 	}
 }
 
-// --- the behaviour every host shares --------------------------------------
+// === src/settle.js ===
+
+// --- the session's own outcomes (odd/tasks/opencode-parity.md, S3) ----------
+//
+// Moved out of `createCore` by the reorganization: each lifetime of one plugin
+// instance lives in its own section and takes the state the instance minted.
 
 /**
- * The plugin's engine-facing behaviour, shared by both plugin models.
+ * What the session's own tool outcomes say, and the question they may earn.
  *
- * Every method is best effort: a host hook must never fail a turn because the
- * memory engine could not be reached, and it must never fail silently either —
- * a refusal reaches `logger`, which each adapter wires to whatever the host
- * offers (V1 has `client.app.log`; V2 has no logger, so its `ctx.storage` is
- * the journal — see `storageLogger`).
+ * The evidence is the outcome, never the attempt: a tool that did not run, or
+ * ran and failed, changed no file and saved nothing. `evidence` is the
+ * instance's map, minted by `createCore` and read by the close.
  */
-function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
-	const children = registry ?? createChildRegistry();
-	const cli = client ?? createClient({ env, registry: children });
-	const sessions = new Map();
-	const pointed = new Set();
-	// The session's own outcomes: work that may have changed a file, and the
-	// saves that landed. It is what the settle question is decided on.
-	const evidence = new Map();
-
-	function report(kind, data) {
-		if (typeof logger !== "function") {
-			return;
-		}
-		try {
-			logger({ kind, ...data });
-		} catch {
-			// The journal is a report, never a precondition.
-		}
-	}
-
+function createSettle({ evidence }) {
 	function evidenceOf(sessionID) {
 		let state = evidence.get(sessionID);
 		if (!state) {
@@ -1046,7 +1048,25 @@ function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 		state.asked = true;
 		return SETTLE_NUDGE;
 	}
+	return { observeTool, settle };
+}
 
+// === src/session.js ===
+
+// --- what a session is (odd/tasks/opencode-parity.md, S3) -------------------
+//
+// Moved out of `createCore` by the reorganization. The maps (`sessions`,
+// `evidence`) and the journal stay the instance's: these functions only act on
+// them.
+
+/**
+ * The three things a session is to this plugin: registered once, closed on the
+ * host's own end signal, and captured message by message.
+ *
+ * `sessions`, `evidence` and `report` are the instance's, minted by
+ * `createCore`; `cwd` is where the host placed it and `cli` is its client.
+ */
+function createSession({ sessions, evidence, cwd, cli, env, report }) {
 	/** Register a session once, in the directory the host gave. */
 	async function startSession(sessionID, directory) {
 		if (typeof sessionID !== "string" || sessionID === "") {
@@ -1254,7 +1274,24 @@ function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 			report("capture", { session: sessionID, bytes, error: String(error) });
 		}
 	}
+	return { startSession, closeSession, capture };
+}
 
+// === src/pointer.js ===
+
+// --- what a session is told once (odd/tasks/opencode-parity.md, S3) ---------
+//
+// Moved out of `createCore` by the reorganization. Both members run on the
+// model-request path, so both are bounded by a deadline of their own.
+
+/**
+ * The two projections this plugin puts in front of the model: the one-shot
+ * pointer to the door, and the live state a compaction keeps.
+ *
+ * `pointed` is the instance's set of sessions already pointed at, minted by
+ * `createCore`, so a second model request in one session reads nothing.
+ */
+function createPointer({ pointed, cwd, cli, env, report }) {
 	/**
 	 * The pointer for this session, delivered once.
 	 *
@@ -1323,6 +1360,48 @@ function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 			return null;
 		}
 	}
+	return { pointer, compaction };
+}
+
+// === src/core.js ===
+
+// --- the behaviour every host shares --------------------------------------
+
+/**
+ * The plugin's engine-facing behaviour, shared by both plugin models.
+ *
+ * Every method is best effort: a host hook must never fail a turn because the
+ * memory engine could not be reached, and it must never fail silently either —
+ * a refusal reaches `logger`, which each adapter wires to whatever the host
+ * offers (V1 has `client.app.log`; V2 has no logger, so its `ctx.storage` is
+ * the journal — see `storageLogger`).
+ */
+function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
+	const children = registry ?? createChildRegistry();
+	const cli = client ?? createClient({ env, registry: children });
+	const sessions = new Map();
+	const pointed = new Set();
+	// The session's own outcomes: work that may have changed a file, and the
+	// saves that landed. It is what the settle question is decided on.
+	const evidence = new Map();
+
+	function report(kind, data) {
+		if (typeof logger !== "function") {
+			return;
+		}
+		try {
+			logger({ kind, ...data });
+		} catch {
+			// The journal is a report, never a precondition.
+		}
+	}
+
+	// The three lifetimes of one instance, each in its own section: what the
+	// session's outcomes say, what a session is, and what a session is told
+	// once. The state above is the instance's, and it is all they share.
+	const { observeTool, settle } = createSettle({ evidence });
+	const { startSession, closeSession, capture } = createSession({ sessions, evidence, cwd, cli, env, report });
+	const { pointer, compaction } = createPointer({ pointed, cwd, cli, env, report });
 
 	/**
 	 * The end of this plugin instance: the calls still in flight die first, so a
@@ -1355,7 +1434,12 @@ function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 	};
 }
 
-// --- the plugin, in both shapes -------------------------------------------
+// === src/entry-v2.js ===
+
+// --- opencode 2.x (odd/tasks/opencode-parity.md, S3) -----------------------
+//
+// Moved out of `createPlugin` by the reorganization: the assembly composes the
+// two entry points, and each model's adapter lives with the model it serves.
 
 /**
  * The journal this host has.
@@ -1388,25 +1472,12 @@ export function storageLogger(storage) {
 }
 
 /**
- * Build the plugin.
+ * The V2 entry: the hooks this model's domains own, registered on them.
  *
- * `exec`/`binary`/`env`/`logger`/`registry` are injectable so the tests never
- * need the binary, a profile or a host.
+ * `coreFor(cwd, logger)` builds one core for the instance, and everything else
+ * here is the host's shape.
  */
-export function createPlugin({ exec, binary, env = process.env, logger, registry } = {}) {
-	// One registry per plugin instance: the client spawns the children, and the
-	// shutdown is the one that kills what is still in flight.
-	const children = registry ?? createChildRegistry();
-	const coreFor = (cwd, hostLogger) =>
-		createCore({
-			cwd,
-			env,
-			client: createClient({ exec, binary, env, registry: children }),
-			logger: logger ?? hostLogger,
-			registry: children,
-		});
-
-	/** opencode 2.x: `setup(ctx)` registers hooks on the domains that own them. */
+function createV2Entry(coreFor) {
 	async function setup(ctx = {}) {
 		const cwd = typeof ctx.location?.directory === "string" ? ctx.location.directory : process.cwd();
 		// V2 has no logger: the host's storage is where a report survives.
@@ -1544,7 +1615,20 @@ export function createPlugin({ exec, binary, env = process.env, logger, registry
 		};
 	}
 
-	/** opencode 1.x: the plugin function returns one hooks object. */
+	return setup;
+}
+
+// === src/entry-v1.js ===
+
+// --- opencode 1.x (odd/tasks/opencode-parity.md, S3) -----------------------
+
+/**
+ * The V1 entry: the plugin function returns one hooks object.
+ *
+ * `coreFor(cwd, logger)` builds one core for the instance; the rest is the
+ * host's shape.
+ */
+function createV1Entry(coreFor) {
 	async function server(input = {}) {
 		const cwd =
 			typeof input.directory === "string"
@@ -1634,6 +1718,34 @@ export function createPlugin({ exec, binary, env = process.env, logger, registry
 			},
 		};
 	}
+
+	return server;
+}
+
+// === src/plugin.js ===
+
+// --- the plugin, in both shapes -------------------------------------------
+
+/**
+ * Build the plugin.
+ *
+ * `exec`/`binary`/`env`/`logger`/`registry` are injectable so the tests never
+ * need the binary, a profile or a host.
+ */
+export function createPlugin({ exec, binary, env = process.env, logger, registry } = {}) {
+	// One registry per plugin instance: the client spawns the children, and the
+	// shutdown is the one that kills what is still in flight.
+	const children = registry ?? createChildRegistry();
+	const coreFor = (cwd, hostLogger) =>
+		createCore({
+			cwd,
+			env,
+			client: createClient({ exec, binary, env, registry: children }),
+			logger: logger ?? hostLogger,
+			registry: children,
+		});
+	const setup = createV2Entry(coreFor);
+	const server = createV1Entry(coreFor);
 
 	return { id: PLUGIN_ID, setup, server };
 }

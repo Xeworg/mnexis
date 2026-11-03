@@ -1,0 +1,42 @@
+{
+	"$source": "RESEARCH.md §1 (`chat.message` fires with `{ message: UserMessage, parts: Part[] }`, and a part the host wrote carries `synthetic: true`)",
+	"input": { "sessionID": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB" },
+	"output": {
+		"message": {
+			"id": "msg_01J8Z3KA2B3C4D5E6F7G8H9J0K",
+			"sessionID": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB",
+			"role": "user",
+			"time": { "created": 1762254001234 },
+			"summary": { "title": "the parity work", "diffs": [] },
+			"agent": "build",
+			"model": { "providerID": "anthropic", "modelID": "claude-sonnet-4-5" }
+		},
+		"parts": [
+			{
+				"id": "prt_01J8Z3KA2B3C4D5E6F7G8H9J0L",
+				"sessionID": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB",
+				"messageID": "msg_01J8Z3KA2B3C4D5E6F7G8H9J0K",
+				"type": "text",
+				"text": "es importante hacer que la extension sea de calidad",
+				"time": { "start": 1762254001234, "end": 1762254001300 }
+			},
+			{
+				"id": "prt_01J8Z3KA2B3C4D5E6F7G8H9J0M",
+				"sessionID": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB",
+				"messageID": "msg_01J8Z3KA2B3C4D5E6F7G8H9J0K",
+				"type": "file",
+				"mime": "image/png",
+				"filename": "screenshot.png",
+				"url": "data:image/png;base64,iVBORw0KGgo="
+			},
+			{
+				"id": "prt_01J8Z3KA2B3C4D5E6F7G8H9J0N",
+				"sessionID": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB",
+				"messageID": "msg_01J8Z3KA2B3C4D5E6F7G8H9J0K",
+				"type": "text",
+				"text": "continue",
+				"synthetic": true
+			}
+		]
+	}
+}

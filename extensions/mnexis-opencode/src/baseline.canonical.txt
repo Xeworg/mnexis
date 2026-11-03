@@ -1,0 +1,1428 @@
+# The pre-reorganization plugin (index.js), frozen for the build's own guard.
+# Comments stripped, blank lines dropped, the remaining lines collapsed and sorted.
+# Re-record with: git show <rev>:extensions/mnexis-opencode/index.js | node src/build.js --freeze
+" — so pick the one that fits.",
+"",
+"",
+"(from the memory engine, newest first):",
+"Ask which topic key a title yields and whether this project records it. Use it " +
+"Call the door — `mnexis_memory_context`, or `tools.mnexis.memory_context` under " +
+"Call this FIRST when you are about to work: give it the task in one line and it " +
+"Call this FIRST, at the start of every session and before changing code: the " +
+"Code Mode — with the task in one line before you read or change code: it answers " +
+"End your session with a short summary of what it did. The next session reads it " +
+"Granting a namespace is the human's decision, and this host cannot ask them from " +
+"List the memories this project already holds, with a preview of each. Reaches " +
+"Read one memory whole, by its UUID: its content, its current revision and its " +
+"Recall a session: the session, what the user said in order, and the namespace's " +
+"Register your session, so the engine knows its boundaries. Call it once with the " +
+"Replace an outdated memory with a newer one, keeping the history. Use it when a " +
+"Restore a soft-deleted memory: it rejoins the live records and the search " +
+"Return one memory's revision history: every revision in order with its state, " +
+"Search the stored memories (full-text, ranked) before answering from scratch or " +
+"Search what the user said before, across sessions: the request behind the work. " +
+"Soft-delete a memory: it leaves the live records and the search index, and its " +
+"Store a durable memory of this project: content must stand alone months later, " +
+"Store a message verbatim for the one case automatic capture misses: something " +
+"The mnexis profile files are managed by the mnexis CLI, never edited by hand. " +
+"This session changed files but saved no memory. If a decision, preference, " +
+"Update a memory's content, kind, state or tags, and say why. It takes the revision " +
+"Use `mnexis init`, `mnexis project bind` or `mnexis config allow-namespace` instead.";
+"What the user says is already stored verbatim: never copy the conversation into " +
+"Write the query as you would say it: every word counts, and a hyphen is part of a " +
+"`memory_save_prompt`.",
+"`memory_type` you name replaces the record's kind, and omitting it keeps the one " +
+"`mnexis config allow-namespace <namespace>` once — the grant persists in the " +
+"`mnexis_memory_get` when it is the one you need), the session state of this " +
+"`mnexis_memory_get`.",
+"`mnexis_memory_get`; `full` gives every memory whole.",
+"`mnexis_memory_save` carries the vocabulary: `memory_type` is the engine's closed " +
+"and the answer names the namespace it searched. `mnexis_memory_search` is the " +
+"and the namespace is this workspace's. The title is what the fact IS and it " +
+"answer also carries the branch state the session was anchored to, checked at " +
+"answers the context in one call — the memories that match the task, best first, " +
+"before saving an unsure fact: the answer names the record the title would update.",
+"budget, the index of the records that did not fit, and the previous session's " +
+"changed fact updates it. Keywords are other languages' or teams' names for " +
+"changing existing code. Reaches every namespace you may read; `namespace` narrows " +
+"content, who changed it and why. Use it before updating or superseding the fact.",
+"conversation here.",
+"could not keep. It reads this workspace's namespace — the one a save lands in — " +
+"decision — a choice made, and what it beat.",
+"discovery or project-state change deserves to survive the session, save it now " +
+"each with its identity and a preview of at most 160 characters (open one with " +
+"episode — something that happened in a session.",
+"every namespace you may read; `namespace` narrows it. Read one with " +
+"exact query.",
+"fact changed: save the new one first, then link both here with the revision each " +
+"fact — the neutral default when none of the others fit.",
+"finished session; `session` takes an id. Memories are read by time, not by " +
+"first, so it must stand alone.",
+"for a workspace with no namespace yet.";
+"history keeps it. `mnexis_memory_restore` brings it back.",
+"index, with its history intact.",
+"inside a plugin: nothing was granted. Ask the human to run " +
+"is refused.",
+"it has.",
+"it, never a value.",
+"it. Write the query as you would say it: every word counts, and a hyphen is part " +
+"knowledge — a durable fact about the domain, the tools or the data.",
+"memories in its window. `previous` is this workspace namespace's most recent " +
+"memories the scope can see, and the most recent — title and preview, never the " +
+"mnexis — the live state of this project, which the summary above does not replace " +
+"namespace this workspace writes into, the read and write allowlists, how many " +
+"of a word (`staging-eu`). Each hit is identity and kind — open one with " +
+"one is at. Both must live in this project's namespace; another project's memory " +
+"pasted from another conversation, or a statement that must be found by its exact " +
+"picks the record — the same title always lands on the same record, so a " +
+"preference — how the user wants things done.",
+"procedure — the steps that reliably achieve something.",
+"profile and the retry works — or `mnexis project bind <namespace> --key <key>` " +
+"project (the live project_state and decision records that fit the block's own " +
+"project_state — where the work stands now.",
+"prompt capture",
+"read them with `mnexis show <uuid>`.",
+"read time and never stored: `merged`, `not_merged` or `unknown`.",
+"session id you were given — never invented; this plugin already registers the " +
+"session, each with identity and a preview; `full` gives whole records. The " +
+"sessions the host opens. The engine never ends a session for you.",
+"set — " +
+"shutdown",
+"so no session is ended here";
+"state. Every other read answers previews; this is the record itself.",
+"summary), and what the answer did not include: how many candidates the budget " +
+"the files.",
+"the matching memories, the live project state and the previous session's summary.",
+"the unload carries no reason on this host: a reload and a quit look the same, " +
+"whole record (open one with `mnexis_memory_get`). The decisions live here, not in " +
+"with one `mnexis_memory_save`; otherwise reply that nothing deserves memory.",
+"word.",
+"words. This session's messages are already stored, so do not copy the " +
+"you believe is current, so two writers cannot overwrite each other silently; a " +
+(error, stdout, stderr) => {
+) {
+),
+).catch(() => {
+);
+);
+);
+);
+);
+);
+);
+);
+);
+);
+);
+...TYPE_GLOSSES,
+...data,
+...result,
+/\bmnexis\s+config\s+allow-namespace\b|\bmnexis\s+project\s+bind\b/;
+: "";
+: "";
+: "";
+: [];
+: null;
+: null;
+: null;
+: null;
+: process.cwd();
+: typeof event.session_id === "string"
+: typeof event.toolName === "string"
+: typeof input.worktree === "string"
+: typeof input?.path === "string"
+: undefined;
+? (record) =>
+? event.sessionID
+? event.session_id
+? event.tool
+? event.toolName
+? input.directory
+? input.filePath
+? input.path
+? input.worktree
+? listData.items
+? session.ended_at
+? session.ended_at
+? status.memory_count
+? workspace.namespace
+SAVE_GLOSS_HEADER,
+TYPE_NAMES.join(", ") +
+["list", "--type", "project_state,decision", "--full", "--limit", String(limit)],
+].join("\n"),
+].join("\n");
+];
+];
+];
+`${count === null ? "" : ` (${count} memories)`}.`,
+`\n… ${left} more live record${left === 1 ? "" : "s"} did not fit; ` +
+`mnexis memory: this workspace writes into namespace \`${namespace}\`` +
+abandoned: [],
+abandoned: [],
+abandoned: `${step} did not finish within the ${budget} ms ${name} budget and was abandoned`,
+abandoned: `${step} was abandoned: the ${budget} ms ${name} budget was already spent`,
+action: "skipped",
+action: "skipped",
+action: close.action,
+already_ended: true,
+args,
+args.push("--directory", directory);
+args.push("--session", sessionId);
+args.push("--title", title);
+args.push("--type", type);
+args.push(content);
+async "chat.message"(hookInput, output) {
+async "experimental.chat.system.transform"(hookInput, output) {
+async "experimental.session.compacting"(_hookInput, output) {
+async "tool.execute.after"(hookInput, output) {
+async "tool.execute.before"(hookInput, output) {
+async dispose() {
+async event({ event }) {
+async function capture(sessionID, text) {
+async function closeSession(sessionID) {
+async function compaction() {
+async function pointer(sessionID) {
+async function run(args, { json = false, cwd, timeout: override = null } = {}) {
+async function server(input = {}) {
+async function setup(ctx = {}) {
+async function shutdown() {
+async function startSession(sessionID, directory) {
+async previousSession(cwd) {
+async saveMemory({ namespace, title, type, content }, cwd) {
+async savePrompt({ content, sessionId }, cwd) {
+async sessionEnd({ sessionId }, cwd) {
+async sessionStart({ sessionId, directory }, cwd) {
+async stateRecords(cwd, limit = STATE_LIMIT) {
+async status(cwd) {
+async step(step, work) {
+await core.capture(event?.sessionID, event?.prompt?.text);
+await core.capture(hookInput?.sessionID, promptTextFromParts(output?.parts));
+await core.closeSession(sessionID);
+await core.startSession(sessionID, directoryOfEvent(event) ?? cwd);
+await core.startSession(sessionIDOfEvent(event), directoryOfEvent(event) ?? cwd);
+await ctx.session.hook("compaction", async (event) => {
+await ctx.session.hook("context", async (event) => {
+await ctx.session.hook("prompt", async (event) => {
+await ctx.tool.hook("execute.after", (event) => {
+await ctx.tool.hook("execute.before", (event) => {
+await ctx.tool.transform((editor) => {
+await sleep(delay);
+await startSession(sessionID, cwd);
+body: { service: PLUGIN_ID, level: "warn", message: "mnexis", extra: record },
+break;
+break;
+budgetOf(env[CAPTURE_BUDGET_ENV], PROMPT_CAPTURE_BUDGET_MS),
+budgetOf(env[SHUTDOWN_BUDGET_ENV], SHUTDOWN_BUDGET_MS),
+busyRetries += 1;
+busyRetries < BUSY_RETRY_DELAYS_MS.length
+busy_retries: busyRetries,
+busy_retries: result.busy_retries,
+bytes,
+capture,
+carried += 1;
+child.kill("SIGTERM");
+child.once("exit", () => children.delete(child));
+children.add(child);
+children.clear();
+children.killAll();
+clearTimeout(timer);
+cli,
+cli.withBudget(left).previousSession(cwd),
+cli.withBudget(left).saveMemory(
+cli.withBudget(left).savePrompt({ content: text, sessionId: sessionID }, cwd),
+cli.withBudget(left).sessionEnd({ sessionId: sessionID }, where),
+cli.withBudget(left).status(cwd),
+client: createClient({ exec, binary, env, registry: children }),
+close.abandoned.push(reason);
+close.action = "abandoned";
+close.action = "closed";
+close.action = "failed";
+close.action = "failed";
+close.action = "failed";
+close.action = "failed";
+close.action = "partial";
+close.ended_at =
+close.error = "the engine ended the session but answered no namespace";
+close.error = String(error);
+close.exit_code = ended.code;
+close.exit_code = saved.value.code;
+close.namespace = namespace;
+close.not_registered = true;
+close.reason = "not opened by this plugin";
+close.reason = "the host named no session";
+close.steps.push("end");
+close.steps.push("save");
+closeSession,
+code = 127;
+code = typeof error.code === "number" ? error.code : 1;
+command,
+command,
+command: name,
+compaction,
+const ABANDONED = Symbol("abandoned");
+const EDIT_TOOLS = new Set(["edit", "write", "patch"]);
+const MCP_TOOL_PREFIX = "mnexis_";
+const PERMISSION_GRANT_PATTERN =
+const PROFILE_FILE_PATTERN = /(?:^|[\\/])(mnexis|projects)\.toml$/;
+const RETRY_COMMANDS = new Set(["session", "end", "prompt", "save"]);
+const SAVE_GLOSS_HEADER = "Save it typed — `memory_type` is the one that fits:";
+const SAVE_TOOL_ID = "mnexis_memory_save";
+const SHELL_TOOLS = new Set(["bash", "shell"]);
+const TYPE_NAMES = TYPE_GLOSSES.map((gloss) => gloss.split(" — ")[0]);
+const WRITE_COMMANDS = new Set(["session", "end", "prompt", "save"]);
+const abandon = (step, reason) => {
+const answer = await Promise.race([work(left), expiry]);
+const args = ["prompt", content];
+const args = ["save", "--namespace", namespace];
+const args = ["session", "--id", sessionId];
+const at = branchSha ? ` at ${branchSha}` : "";
+const block = await core.compaction();
+const block = await core.compaction();
+const body = `\n ${content.split("\n").join("\n ")}`;
+const branch = text(data.branch);
+const branchRemote = text(data.branch_remote);
+const branchSha = text(data.branch_sha);
+const budget = Number.isFinite(budgetMs) && budgetMs > 0 ? budgetMs : 0;
+const budget = createDeadline(
+const budget = createDeadline(
+const budget = createDeadline(budgetOf(env[POINTER_BUDGET_ENV], POINTER_BUDGET_MS), "pointer");
+const bytes = Buffer.byteLength(text, "utf8");
+const call = (args, options = {}) => run(args, { ...binding, ...options });
+const call = (budgetMs) => exec(command, fullArgs, { cwd, env, registry, timeout: budgetMs });
+const captured = await budget.step("capture", (left) =>
+const child = nodeExecFile(
+const children = new Set();
+const children = registry ?? createChildRegistry();
+const children = registry ?? createChildRegistry();
+const cli = client ?? createClient({ env, registry: children });
+const close = {
+const command = binary || env.MNEXIS_BIN || "mnexis";
+const command = typeof input?.command === "string" ? input.command : "";
+const content = typeof item.content === "string" ? item.content.trim() : "";
+const controller = new AbortController();
+const controllers = [];
+const core = coreFor(cwd, hostLogger);
+const core = coreFor(cwd, storageLogger(ctx.storage));
+const coreFor = (cwd, hostLogger) =>
+const count =
+const cwd =
+const cwd = typeof ctx.location?.directory === "string" ? ctx.location.directory : process.cwd();
+const data = json ? parseJson(result.stdout) : null;
+const data = session && typeof session === "object" ? session : {};
+const deadline = Date.now() + budget;
+const deadline = Date.now() + timeout;
+const delay = BUSY_RETRY_DELAYS_MS[busyRetries];
+const description = CURATED_DESCRIPTIONS[id];
+const directory = text(data.directory);
+const end = text.lastIndexOf("}");
+const endStep = await budget.step("end", (left) =>
+const ended = endStep.value;
+const endedAt =
+const endedAt = text(data.ended_at);
+const evidence = new Map();
+const expiry = new Promise((resolve) => {
+const failed =
+const firstLine = raw.split("\n")[0].trim();
+const fromData = event.data && typeof event.data.sessionID === "string" ? event.data.sessionID : null;
+const fullArgs = json ? [...args, "--json"] : args;
+const head = `\n- [${type}] ${title} (${uuid}${revision})`;
+const hostLogger =
+const id = text(data.id) || "unknown";
+const id = tool && typeof tool.id === "string" ? tool.id : "";
+const info = event.properties && event.properties.info;
+const info = properties && properties.info;
+const items = listData && typeof listData === "object" && Array.isArray(listData.items)
+const journal = (data) =>
+const kind = typeof record?.kind === "string" && record.kind !== "" ? record.kind : "report";
+const left = deadline - Date.now();
+const left = kept - carried;
+const left = this.remaining();
+const lines = [
+const lines = [
+const lines = [`Session ${id} ended${endedAt ? ` at ${endedAt}` : ""}.`];
+const list = editor && typeof editor.list === "function" ? editor.list() : [];
+const live = [...children];
+const location = event.location;
+const name = String(args[0] ?? "");
+const name = typeof label === "string" && label !== "" ? label : "the work";
+const name = typeof tool === "string" ? tool : "";
+const namespace =
+const namespace =
+const plugin = createPlugin();
+const pointed = new Set();
+const pointer = await core.pointer(event?.sessionID);
+const pointer = await core.pointer(hookInput?.sessionID);
+const properties = event.properties && typeof event.properties === "object" ? event.properties : null;
+const raw = typeof session.summary === "string" ? session.summary.trim() : "";
+const recallStep = await budget.step("recall", (left) =>
+const refusal = gateViolation(event?.tool, event?.input);
+const refusal = gateViolation(hookInput?.tool, output?.args);
+const remote = branchRemote ? ` (${branchRemote})` : "";
+const result = await cli.sessionStart({ sessionId: sessionID, directory: where }, cwd);
+const result = await cli.stateRecords(cwd, STATE_LIMIT);
+const result = captured.value;
+const retry = RETRY_COMMANDS.has(name);
+const revision = Number.isFinite(item.revision) ? `, rev ${item.revision}` : "";
+const saved = await budget.step("save", (left) =>
+const session = ended.data && typeof ended.data === "object" ? ended.data : null;
+const session = previous && typeof previous === "object" ? previous.session : null;
+const session = result.data && typeof result.data === "object" ? result.data : null;
+const sessionID =
+const sessionID = sessionIDOfEvent(event);
+const sessions = new Map();
+const settle = core.settle(event?.sessionID);
+const settle = core.settle(hookInput?.sessionID);
+const start = text.indexOf("{");
+const started = typeof session.started_at === "string" ? session.started_at : "";
+const startedAt = text(data.started_at);
+const state = evidence.get(sessionID);
+const state = evidenceOf(sessionID);
+const status = statusStep.value;
+const statusStep = await budget.step("status", (left) =>
+const stream = ctx.event.subscribe({
+const summary = previousSummary(previous);
+const target =
+const text =
+const text = (value) => (typeof value === "string" ? value.trim() : "");
+const text = String(stdout ?? "").trim();
+const text = pointerText({ status: status.data, previous });
+const text = stateBlockText(result.data);
+const texts = [];
+const timeout = Number.isFinite(override) && override > 0 ? override : timeoutFor(name);
+const title = typeof item.title === "string" && item.title !== "" ? item.title : "(untitled)";
+const tool =
+const type = typeof item.memory_type === "string" && item.memory_type !== "" ? item.memory_type : "fact";
+const uuid = typeof item.uuid === "string" ? item.uuid : "?";
+const value = Number.parseInt(String(override ?? ""), 10);
+const when = started.length >= 10 ? started.slice(0, 10) : "date unknown";
+const where = directory || cwd;
+const where = sessions.get(sessionID) ?? cwd;
+const workspace = status && typeof status === "object" ? status.workspace : null;
+const { registry, ...spawnOptions } = options;
+content: sessionCloseContent({ id: sessionID, ...(session ?? {}) }),
+continue;
+continue;
+controller.abort();
+controllers.push(controller);
+core.observeTool(event);
+core.observeTool({
+createCore({
+curateCatalog(editor);
+cwd,
+data,
+editor.update(id, (target) => {
+ended_at: close.ended_at,
+ended_at: endedAt,
+env,
+error: output?.error,
+event.error != null ||
+event.isError === true ||
+event.output?.isError === true;
+event.result?.isError === true ||
+event.system.push({ type: "text", text: block });
+event.system.push({ type: "text", text: pointer });
+event.system.push({ type: "text", text: settle });
+evidence.delete(sessionID);
+evidence.delete(sessionID);
+evidence.set(sessionID, state);
+exit_code: result.code,
+export const BUSY_EXIT_CODE = 10;
+export const BUSY_RETRY_DELAYS_MS = [250, 750];
+export const CAPTURE_BUDGET_ENV = "MNEXIS_OPENCODE_CAPTURE_BUDGET_MS";
+export const CURATED_DESCRIPTIONS = {
+export const GRANT_REFUSAL =
+export const PLUGIN_ID = "mnexis";
+export const POINTER_BUDGET_ENV = "MNEXIS_OPENCODE_POINTER_BUDGET_MS";
+export const POINTER_BUDGET_MS = 1_500;
+export const POINTER_ENV = "MNEXIS_OPENCODE_POINTER";
+export const PROFILE_REFUSAL =
+export const PROMPT_CAPTURE_BUDGET_MS = 1_500;
+export const READ_TIMEOUT_MS = 10_000;
+export const RELOAD_SKIP_REASON =
+export const SESSION_CLOSE_TITLE = "estado al cierre";
+export const SETTLE_NUDGE = [
+export const SHUTDOWN_BUDGET_ENV = "MNEXIS_OPENCODE_SHUTDOWN_BUDGET_MS";
+export const SHUTDOWN_BUDGET_MS = 5_000;
+export const STATE_CHARS = 3000;
+export const STATE_LIMIT = 8;
+export const SUMMARY_CHARS = 240;
+export const TYPE_GLOSSES = [
+export const WRITE_TIMEOUT_MS = 30_000;
+export default plugin;
+export function budgetOf(override, fallback) {
+export function createChildRegistry() {
+export function createClient({ exec = defaultExec, binary, env = process.env, registry = null } = {}) {
+export function createDeadline(budgetMs, label) {
+export function createPlugin({ exec, binary, env = process.env, logger, registry } = {}) {
+export function defaultExec(command, args, options = {}) {
+export function directoryOfEvent(event) {
+export function gateViolation(tool, input) {
+export function isHumanMessage(message) {
+export function parseJson(stdout) {
+export function pointerText({ status, previous } = {}) {
+export function promptTextFromParts(parts) {
+export function sessionCloseContent(session) {
+export function sessionIDOfEvent(event) {
+export function stateBlockText(listData) {
+export function storageLogger(storage) {
+firstLine.length > SUMMARY_CHARS ? `${firstLine.slice(0, SUMMARY_CHARS - 1)}…` : firstLine;
+for (const child of live) {
+for (const controller of controllers) {
+for (const item of items) {
+for (const part of parts) {
+for (const tool of list) {
+for await (const event of stream) {
+function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
+function curateCatalog(editor) {
+function evidenceOf(sessionID) {
+function make(binding = {}) {
+function observeTool(event) {
+function previousSummary(previous) {
+function report(kind, data) {
+function settle(sessionID) {
+function sleep(ms) {
+function timeoutFor(name) {
+if (!Array.isArray(event?.system)) {
+if (!Array.isArray(list)) {
+if (!Array.isArray(output?.system)) {
+if (!Array.isArray(parts)) {
+if (!child || typeof child.once !== "function" || typeof child.kill !== "function") {
+if (!event || typeof event !== "object") {
+if (!event || typeof event !== "object") {
+if (!event || typeof event !== "object") {
+if (!event) {
+if (!id.startsWith(MCP_TOOL_PREFIX)) {
+if (!isHumanMessage(output?.message)) {
+if (!item || typeof item !== "object") continue;
+if (!message || typeof message !== "object") {
+if (!namespace) {
+if (!part || typeof part !== "object") continue;
+if (!recallStep.abandoned && recallStep.value.code === 0) {
+if (!session || typeof session !== "object") {
+if (!sessions.has(sessionID)) {
+if (!state || !state.files || state.saves > 0 || state.asked) {
+if (!state) {
+if (!storage || typeof storage.set !== "function") {
+if (EDIT_TOOLS.has(name)) {
+if (SHELL_TOOLS.has(name)) {
+if (SHELL_TOOLS.has(tool) || EDIT_TOOLS.has(tool)) {
+if (answer === ABANDONED) {
+if (block && Array.isArray(event?.system)) {
+if (block && Array.isArray(output?.context)) {
+if (branch) {
+if (captured.abandoned) {
+if (carried === 0) {
+if (content === "") continue;
+if (ctx.event && typeof ctx.event.subscribe === "function") {
+if (ctx.session && typeof ctx.session.hook === "function") {
+if (ctx.tool && typeof ctx.tool.hook === "function") {
+if (ctx.tool && typeof ctx.tool.transform === "function") {
+if (deadline - Date.now() <= delay) {
+if (directory) {
+if (directory) {
+if (endStep.abandoned) {
+if (ended.code !== 0) {
+if (ended.code === 3) {
+if (endedAt !== null) {
+if (env[POINTER_ENV] === "0") {
+if (error) {
+if (error.code === "ENOENT") {
+if (event.type === "session.created") {
+if (event.type === "session.deleted") {
+if (event?.type === "session.deleted") {
+if (failed) {
+if (fromData) {
+if (info && typeof info.directory === "string" && info.directory !== "") {
+if (info && typeof info.id === "string" && info.id !== "") {
+if (left <= 0) {
+if (left <= 0) {
+if (left > 0) {
+if (location && typeof location.directory === "string" && location.directory !== "") {
+if (namespace === "") {
+if (part.synthetic === true) continue;
+if (part.type !== "text") continue;
+if (pointed.has(sessionID)) {
+if (pointer) {
+if (pointer) {
+if (properties && typeof properties.sessionID === "string" && properties.sessionID !== "") {
+if (raw === "") {
+if (refusal) {
+if (refusal) {
+if (registry && typeof registry.track === "function") {
+if (result.code !== 0) {
+if (result.code !== 0) {
+if (result.code !== 0) {
+if (saved.abandoned) {
+if (saved.value.code !== 0) {
+if (sessionID === "") {
+if (sessionId) {
+if (sessions.has(sessionID)) {
+if (settle) {
+if (settle) {
+if (start >= 0 && end > start) {
+if (startedAt) {
+if (status.code !== 0) {
+if (statusStep.abandoned) {
+if (summary) {
+if (text === "") {
+if (timer !== null) {
+if (tool === "") {
+if (tool === SAVE_TOOL_ID) {
+if (typeof description === "string") {
+if (typeof logger !== "function") {
+if (typeof part.text !== "string") continue;
+if (typeof sessionID !== "string" || sessionID === "") {
+if (typeof sessionID !== "string" || sessionID === "") {
+if (typeof sessionID !== "string" || sessionID === "") {
+if (typeof sessionID !== "string" || sessionID === "") {
+if (typeof text !== "string" || text.trim() === "") {
+if (typeof title === "string" && title !== "") {
+if (typeof type === "string" && type !== "") {
+if (used + head.length + body.length > STATE_CHARS) continue;
+import { execFile as nodeExecFile } from "node:child_process";
+input.client && input.client.app && typeof input.client.app.log === "function"
+isError: output?.isError ?? hookInput?.isError,
+journal({ step, reason });
+journal({ step: "end" });
+journal({ step: "end", exit_code: 3, not_registered: true });
+journal({ step: "end", exit_code: ended.code });
+journal({ step: "hook" });
+journal({ step: "save", exit_code: saved.value.code });
+kept += 1;
+killAll() {
+let busyRetries = 0;
+let carried = 0;
+let code = 0;
+let kept = 0;
+let previous = null;
+let result = await call(timeout);
+let state = evidence.get(sessionID);
+let timer = null;
+let used = lines[0].length;
+lines.push(
+lines.push(
+lines.push(`Branch: ${branch}${at}${remote}.`);
+lines.push(`Directory: ${directory}.`);
+lines.push(`It started at ${startedAt}.`);
+lines.push(`Previous session (${summary.when}): ${summary.text}`);
+lines.push(head + body);
+logger({ kind, ...data });
+logger: logger ?? hostLogger,
+mnexis_memory_context:
+mnexis_memory_delete:
+mnexis_memory_get:
+mnexis_memory_history:
+mnexis_memory_list:
+mnexis_memory_recall:
+mnexis_memory_restore:
+mnexis_memory_save: [
+mnexis_memory_save_prompt:
+mnexis_memory_search:
+mnexis_memory_search_prompts:
+mnexis_memory_session_end:
+mnexis_memory_session_start:
+mnexis_memory_suggest_topic_key:
+mnexis_memory_supersede:
+mnexis_memory_update:
+mnexis_memory_workspace:
+namespace,
+namespace: close.namespace,
+namespace: null,
+observeTool,
+output.context.push(block);
+output.system.push(pointer);
+output.system.push(settle);
+pointed.add(sessionID);
+pointer,
+previous = recallStep.value.data;
+reason: RELOAD_SKIP_REASON,
+registry.track(child);
+registry: children,
+remaining() {
+report("capture", {
+report("capture", { session: sessionID, bytes, abandoned: captured.abandoned });
+report("capture", { session: sessionID, bytes, error: String(error) });
+report("compaction", { error: String(error) });
+report("compaction", { exit_code: result.code });
+report("pointer", { session: sessionID, abandoned: statusStep.abandoned });
+report("pointer", { session: sessionID, error: String(error) });
+report("pointer", { session: sessionID, exit_code: status.code });
+report("session-end", {
+report("session-start", {
+report("session-start", { session: sessionID, error: String(error) });
+report("session-start", { session: sessionID, exit_code: result.code });
+resolve({ code, stdout: stdout ?? "", stderr: stderr ?? "" });
+result = await call(left);
+result.code === BUSY_EXIT_CODE &&
+result: output?.result,
+retry &&
+return "";
+return "";
+return "";
+return (record) => {
+return JSON.parse(text);
+return JSON.parse(text.slice(start, end + 1));
+return Math.max(0, deadline - Date.now());
+return Number.isFinite(value) && value > 0 ? value : fallback;
+return PERMISSION_GRANT_PATTERN.test(command) ? GRANT_REFUSAL : null;
+return PROFILE_FILE_PATTERN.test(target) ? PROFILE_REFUSAL : null;
+return SETTLE_NUDGE;
+return WRITE_COMMANDS.has(name) ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS;
+return abandon("end", endStep.abandoned);
+return abandon("save", saved.abandoned);
+return async () => {
+return call(
+return call(["end", "--id", sessionId], { json: true, cwd });
+return call(["recall", "--previous"], { json: true, cwd });
+return call(["status"], { json: true, cwd });
+return call(args, { json: true, cwd });
+return call(args, { json: true, cwd });
+return call(args, { json: true, cwd });
+return child;
+return child;
+return close;
+return close;
+return close;
+return close;
+return close;
+return close;
+return close;
+return close;
+return close;
+return core.closeSession(sessionIDOfEvent(event));
+return core.shutdown();
+return core.shutdown();
+return fromData;
+return info.directory;
+return info.id;
+return lines.join("");
+return lines.join("\n");
+return lines.join("\n");
+return location.directory;
+return make();
+return make({ ...binding, timeout: ms });
+return message.role === undefined || message.role === "user";
+return new Promise((resolve) => setTimeout(resolve, ms));
+return new Promise((resolve) => {
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return null;
+return properties.sessionID;
+return state;
+return text === "" ? null : text;
+return text === "" ? null : text;
+return texts.join("\n").trim() === "" ? "" : texts.join("\n");
+return true;
+return undefined;
+return {
+return {
+return {
+return {
+return {
+return {
+return {
+return {
+return {
+return { id: PLUGIN_ID, setup, server };
+return { value: answer };
+return { when, text };
+return;
+return;
+return;
+return;
+return;
+return;
+return;
+return;
+return;
+return;
+return;
+return;
+return;
+return;
+return;
+return;
+return;
+run: call,
+session && typeof session.ended_at === "string" && session.ended_at !== ""
+session && typeof session.ended_at === "string" && session.ended_at !== ""
+session && typeof session.namespace === "string" ? session.namespace : "";
+session: sessionID,
+session: sessionID,
+session: sessionID,
+session: sessionID,
+sessionID: hookInput?.sessionID,
+sessions.delete(sessionID);
+sessions.delete(sessionID);
+sessions.set(sessionID, where);
+sessions: [...sessions.keys()],
+settle,
+shutdown,
+signal: controller.signal,
+startSession,
+state = { files: false, saves: 0, asked: false };
+state.asked = true;
+state.files = true;
+state.saves += 1;
+status && typeof status === "object" && Number.isFinite(status.memory_count)
+steps: [...close.steps],
+steps: [],
+steps: [],
+storage.set(`mnexis.report.${kind}`, { at: new Date().toISOString(), ...record }),
+target.description = description;
+target.options = { ...(target.options ?? {}), codemode: false };
+texts.push(part.text);
+throw new Error(refusal);
+throw new Error(refusal);
+timeout_ms: timeout,
+timer = setTimeout(() => resolve(ABANDONED), left);
+title: SESSION_CLOSE_TITLE,
+tool: hookInput?.tool,
+track(child) {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+try {
+type: "project_state",
+typeof event.sessionID === "string" && event.sessionID !== ""
+typeof event.tool === "string"
+typeof input.directory === "string"
+typeof input?.filePath === "string"
+types: ["session.created", "session.deleted"],
+used += head.length + body.length;
+void (async () => {
+void Promise.resolve(
+void input.client.app.log({
+where,
+while (
+withBudget(ms) {
+workspace && typeof workspace.namespace === "string" && workspace.namespace !== ""
+{
+{ encoding: "utf8", maxBuffer: 8 * 1024 * 1024, ...spawnOptions },
+{ json: true, cwd },
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+} catch (error) {
+} catch (error) {
+} catch (error) {
+} catch (error) {
+} catch (error) {
+} catch {
+} catch {
+} catch {
+} catch {
+} catch {
+} catch {
+} catch {
+} catch {
+} catch {
+} catch {
+} catch {
+} catch {
+} catch {
+} catch {
+} catch {
+} finally {
+})
+})();
+});
+});
+});
+});
+});
+});
+});
+});
+});
+});
+});
+});
+});
+});
+});
+});
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+},
+};
+};
+};
+};
+};
+};
+};
+};
+};
+};
+};
+};
+};
+};
+# payloads (one JSON string per line)
+"\" — \""
+"\" — so pick the one that fits.\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"(from the memory engine, newest first):\""
+"\"(untitled)\""
+"\", \""
+"\"--directory\""
+"\"--full\""
+"\"--id\""
+"\"--id\""
+"\"--json\""
+"\"--limit\""
+"\"--namespace\""
+"\"--previous\""
+"\"--session\""
+"\"--title\""
+"\"--type\""
+"\"--type\""
+"\"0\""
+"\"?\""
+"\"Ask which topic key a title yields and whether this project records it. Use it \""
+"\"Call the door — `mnexis_memory_context`, or `tools.mnexis.memory_context` under \""
+"\"Call this FIRST when you are about to work: give it the task in one line and it \""
+"\"Call this FIRST, at the start of every session and before changing code: the \""
+"\"Code Mode — with the task in one line before you read or change code: it answers \""
+"\"ENOENT\""
+"\"End your session with a short summary of what it did. The next session reads it \""
+"\"Granting a namespace is the human's decision, and this host cannot ask them from \""
+"\"List the memories this project already holds, with a preview of each. Reaches \""
+"\"MNEXIS_OPENCODE_CAPTURE_BUDGET_MS\""
+"\"MNEXIS_OPENCODE_POINTER\""
+"\"MNEXIS_OPENCODE_POINTER_BUDGET_MS\""
+"\"MNEXIS_OPENCODE_SHUTDOWN_BUDGET_MS\""
+"\"Read one memory whole, by its UUID: its content, its current revision and its \""
+"\"Recall a session: the session, what the user said in order, and the namespace's \""
+"\"Register your session, so the engine knows its boundaries. Call it once with the \""
+"\"Replace an outdated memory with a newer one, keeping the history. Use it when a \""
+"\"Restore a soft-deleted memory: it rejoins the live records and the search \""
+"\"Return one memory's revision history: every revision in order with its state, \""
+"\"SIGTERM\""
+"\"Save it typed — `memory_type` is the one that fits:\""
+"\"Search the stored memories (full-text, ranked) before answering from scratch or \""
+"\"Search what the user said before, across sessions: the request behind the work. \""
+"\"Soft-delete a memory: it leaves the live records and the search index, and its \""
+"\"Store a durable memory of this project: content must stand alone months later, \""
+"\"Store a message verbatim for the one case automatic capture misses: something \""
+"\"The mnexis profile files are managed by the mnexis CLI, never edited by hand. \""
+"\"This session changed files but saved no memory. If a decision, preference, \""
+"\"Update a memory's content, kind, state or tags, and say why. It takes the revision \""
+"\"Use `mnexis init`, `mnexis project bind` or `mnexis config allow-namespace` instead.\""
+"\"What the user says is already stored verbatim: never copy the conversation into \""
+"\"Write the query as you would say it: every word counts, and a hyphen is part of a \""
+"\"\\n\""
+"\"\\n\""
+"\"\\n\""
+"\"\\n\""
+"\"\\n\""
+"\"\\n\""
+"\"\\n\""
+"\"`memory_save_prompt`.\""
+"\"`memory_type` you name replaces the record's kind, and omitting it keeps the one \""
+"\"`mnexis config allow-namespace <namespace>` once — the grant persists in the \""
+"\"`mnexis_memory_get` when it is the one you need), the session state of this \""
+"\"`mnexis_memory_get`.\""
+"\"`mnexis_memory_get`; `full` gives every memory whole.\""
+"\"`mnexis_memory_save` carries the vocabulary: `memory_type` is the engine's closed \""
+"\"abandoned\""
+"\"abandoned\""
+"\"and the answer names the namespace it searched. `mnexis_memory_search` is the \""
+"\"and the namespace is this workspace's. The title is what the fact IS and it \""
+"\"answer also carries the branch state the session was anchored to, checked at \""
+"\"answers the context in one call — the memories that match the task, best first, \""
+"\"bash\""
+"\"before saving an unsure fact: the answer names the record the title would update.\""
+"\"budget, the index of the records that did not fit, and the previous session's \""
+"\"capture\""
+"\"capture\""
+"\"capture\""
+"\"capture\""
+"\"changed fact updates it. Keywords are other languages' or teams' names for \""
+"\"changing existing code. Reaches every namespace you may read; `namespace` narrows \""
+"\"chat.message\""
+"\"closed\""
+"\"compaction\""
+"\"compaction\""
+"\"compaction\""
+"\"content, who changed it and why. Use it before updating or superseding the fact.\""
+"\"context\""
+"\"conversation here.\""
+"\"could not keep. It reads this workspace's namespace — the one a save lands in — \""
+"\"date unknown\""
+"\"decision — a choice made, and what it beat.\""
+"\"discovery or project-state change deserves to survive the session, save it now \""
+"\"each with its identity and a preview of at most 160 characters (open one with \""
+"\"edit\""
+"\"end\""
+"\"end\""
+"\"end\""
+"\"end\""
+"\"end\""
+"\"end\""
+"\"end\""
+"\"end\""
+"\"end\""
+"\"episode — something that happened in a session.\""
+"\"estado al cierre\""
+"\"every namespace you may read; `namespace` narrows it. Read one with \""
+"\"exact query.\""
+"\"execute.after\""
+"\"execute.before\""
+"\"exit\""
+"\"experimental.chat.system.transform\""
+"\"experimental.session.compacting\""
+"\"fact changed: save the new one first, then link both here with the revision each \""
+"\"fact — the neutral default when none of the others fit.\""
+"\"fact\""
+"\"failed\""
+"\"failed\""
+"\"failed\""
+"\"failed\""
+"\"finished session; `session` takes an id. Memories are read by time, not by \""
+"\"first, so it must stand alone.\""
+"\"for a workspace with no namespace yet.\""
+"\"function\""
+"\"function\""
+"\"function\""
+"\"function\""
+"\"function\""
+"\"function\""
+"\"function\""
+"\"function\""
+"\"function\""
+"\"function\""
+"\"function\""
+"\"history keeps it. `mnexis_memory_restore` brings it back.\""
+"\"hook\""
+"\"index, with its history intact.\""
+"\"inside a plugin: nothing was granted. Ask the human to run \""
+"\"is refused.\""
+"\"it has.\""
+"\"it, never a value.\""
+"\"it. Write the query as you would say it: every word counts, and a hyphen is part \""
+"\"knowledge — a durable fact about the domain, the tools or the data.\""
+"\"list\""
+"\"memories in its window. `previous` is this workspace namespace's most recent \""
+"\"memories the scope can see, and the most recent — title and preview, never the \""
+"\"mnexis — the live state of this project, which the summary above does not replace \""
+"\"mnexis\""
+"\"mnexis\""
+"\"mnexis\""
+"\"mnexis_\""
+"\"mnexis_memory_save\""
+"\"namespace this workspace writes into, the read and write allowlists, how many \""
+"\"node:child_process\""
+"\"not opened by this plugin\""
+"\"number\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"object\""
+"\"of a word (`staging-eu`). Each hit is identity and kind — open one with \""
+"\"one is at. Both must live in this project's namespace; another project's memory \""
+"\"partial\""
+"\"pasted from another conversation, or a statement that must be found by its exact \""
+"\"patch\""
+"\"picks the record — the same title always lands on the same record, so a \""
+"\"pointer\""
+"\"pointer\""
+"\"pointer\""
+"\"pointer\""
+"\"preference — how the user wants things done.\""
+"\"procedure — the steps that reliably achieve something.\""
+"\"profile and the retry works — or `mnexis project bind <namespace> --key <key>` \""
+"\"project (the live project_state and decision records that fit the block's own \""
+"\"project_state — where the work stands now.\""
+"\"project_state\""
+"\"project_state,decision\""
+"\"prompt capture\""
+"\"prompt\""
+"\"prompt\""
+"\"prompt\""
+"\"prompt\""
+"\"read them with `mnexis show <uuid>`.\""
+"\"read time and never stored: `merged`, `not_merged` or `unknown`.\""
+"\"recall\""
+"\"recall\""
+"\"report\""
+"\"save\""
+"\"save\""
+"\"save\""
+"\"save\""
+"\"save\""
+"\"save\""
+"\"save\""
+"\"session id you were given — never invented; this plugin already registers the \""
+"\"session\""
+"\"session\""
+"\"session\""
+"\"session, each with identity and a preview; `full` gives whole records. The \""
+"\"session-end\""
+"\"session-start\""
+"\"session-start\""
+"\"session-start\""
+"\"session.created\""
+"\"session.created\""
+"\"session.deleted\""
+"\"session.deleted\""
+"\"session.deleted\""
+"\"sessions the host opens. The engine never ends a session for you.\""
+"\"set — \""
+"\"shell\""
+"\"shutdown\""
+"\"skipped\""
+"\"skipped\""
+"\"so no session is ended here\""
+"\"state. Every other read answers previews; this is the record itself.\""
+"\"status\""
+"\"status\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"summary), and what the answer did not include: how many candidates the budget \""
+"\"text\""
+"\"text\""
+"\"text\""
+"\"text\""
+"\"the engine ended the session but answered no namespace\""
+"\"the files.\""
+"\"the host named no session\""
+"\"the matching memories, the live project state and the previous session's summary.\""
+"\"the unload carries no reason on this host: a reload and a quit look the same, \""
+"\"the work\""
+"\"tool.execute.after\""
+"\"tool.execute.before\""
+"\"unknown\""
+"\"user\""
+"\"utf8\""
+"\"utf8\""
+"\"warn\""
+"\"whole record (open one with `mnexis_memory_get`). The decisions live here, not in \""
+"\"with one `mnexis_memory_save`; otherwise reply that nothing deserves memory.\""
+"\"word.\""
+"\"words. This session's messages are already stored, so do not copy the \""
+"\"write\""
+"\"you believe is current, so two writers cannot overwrite each other silently; a \""
+"\"{\""
+"\"}\""
+"` (${branchRemote})`"
+"` at ${branchSha}`"
+"`${count === null ? \"\" : ` (${count} memories)`}.`"
+"`${firstLine.slice(0, SUMMARY_CHARS - 1)}…`"
+"`${step} did not finish within the ${budget} ms ${name} budget and was abandoned`"
+"`${step} was abandoned: the ${budget} ms ${name} budget was already spent`"
+"`, rev ${item.revision}`"
+"`Branch: ${branch}${at}${remote}.`"
+"`Directory: ${directory}.`"
+"`It started at ${startedAt}.`"
+"`Previous session (${summary.when}): ${summary.text}`"
+"`Session ${id} ended${endedAt ? ` at ${endedAt}` : \"\"}.`"
+"`\\n  ${content.split(\"\\n\").join(\"\\n  \")}`"
+"`\\n- [${type}] ${title} (${uuid}${revision})`"
+"`\\n… ${left} more live record${left === 1 ? \"\" : \"s\"} did not fit; `"
+"`mnexis memory: this workspace writes into namespace \\`${namespace}\\``"
+"`mnexis.report.${kind}`"

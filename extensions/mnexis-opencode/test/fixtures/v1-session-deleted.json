@@ -1,0 +1,16 @@
+{
+	"$source": "RESEARCH.md §4 (the event that names a whole session carries `properties.info`; §1 lists `session.deleted` among the V1 events and as the only end signal V1 gives a plugin)",
+	"type": "session.deleted",
+	"properties": {
+		"info": {
+			"id": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB",
+			"slug": "quiet-otter",
+			"projectID": "prj_01J8Z3K9QX4YV7N2M5P6R8T1WC",
+			"directory": "/home/u/acme",
+			"parentID": null,
+			"title": "the parity work",
+			"version": "1.19.5",
+			"time": { "created": 1762254000000, "updated": 1762254010000 }
+		}
+	}
+}
