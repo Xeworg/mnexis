@@ -201,11 +201,12 @@ test("v1: a refused capture never fails the turn and never swallows the refusal"
 // The unload path carries no reason on either model — V2's setup cleanup is
 // `Cleanup = () => Promise<void> | void` and V1's `dispose()` takes no argument
 // (`@opencode/plugin`'s `plugin.d.ts`; RESEARCH §1) — so a reload and a quit are
-// the same event there. A V2 hot reload replaces the plugin, not the session,
-// and the engine never reopens an ended session, so ending from the unload would
-// kill a live one. The unload therefore kills what is in flight and stops; the
-// close runs on the host's own end signal (`session.deleted`).
-test("v1: unloading never ends a session: a reload replaces the plugin, not the session", async () => {
+// the same event there. The plugin ends the sessions it opened anyway: V1's own
+// end signal (`session.deleted`) does not fire in a run — measured live on
+// 1.19.5, 2026-11-03 — so waiting for it left every V1 session open forever,
+// with no closing record. The engine tolerates a session ended early: a prompt
+// on it is still accepted.
+test("v1: unloading ends the sessions it opened, with the state they leave", async () => {
 	const { exec, calls } = recordingExec(engine());
 	const hooks = await createPlugin({ exec, env: {} }).server({ directory: "/repo" });
 
@@ -213,10 +214,16 @@ test("v1: unloading never ends a session: a reload replaces the plugin, not the 
 	await hooks.event({ event: { type: "session.created", properties: { info: { id: "s2" } } } });
 	const report = await hooks.dispose();
 
-	assert.deepEqual(callsWith(calls, "end"), [], "no end: the host gave the unload no reason");
-	assert.deepEqual(callsWith(calls, "save"), [], "no closing record either");
-	assert.equal(report.action, "skipped");
-	assert.match(report.reason, /reload/);
+	const ends = callsWith(calls, "end");
+	assert.equal(ends.length, 2, `both sessions are ended: ${JSON.stringify(ends)}`);
+	assert.deepEqual(
+		ends.map((call) => call.args[call.args.indexOf("--id") + 1]).sort(),
+		["s1", "s2"],
+		`each end names its own session: ${JSON.stringify(ends)}`,
+	);
+	assert.equal(callsWith(calls, "save").length > 0, true, "the closing record is written");
+	assert.equal(report.action, "closed");
+	assert.deepEqual(report.closed.sort(), ["s1", "s2"]);
 });
 
 // --- the settle question (odd/tasks/opencode-parity.md, S3) ----------------

@@ -1411,11 +1411,16 @@ function createSession({ sessions, evidence, cwd, cli, env, report }) {
 			if (keep && sessionID === keep) {
 				continue;
 			}
-			const closed = await budget.step("end", () => closeSession(sessionID));
-			if (closed.abandoned) {
-				sweep.abandoned.push(closed.abandoned);
+			// The step wraps the close's own report: the action and the reason
+			// live on the value, never on the wrapper, so reading them off the
+			// wrapper reported every close as a failure while the sessions were
+			// closed.
+			const step = await budget.step("end", () => closeSession(sessionID));
+			if (step.abandoned) {
+				sweep.abandoned.push(step.abandoned);
 				continue;
 			}
+			const closed = step.value;
 			if (closed.action === "closed") {
 				sweep.closed.push(sessionID);
 				continue;
@@ -1961,8 +1966,22 @@ function createV1Entry(coreFor) {
 				}
 			},
 
+			// The host is going away: the sessions this plugin opened are ended for
+			// real, with the state they leave behind. V1's own end signal —
+			// `session.deleted` — does not fire in a run (measured live on 1.19.5,
+			// 2026-11-03), so waiting for it left every V1 session open forever and
+			// its closing record unwritten. The host still cannot say whether this
+			// is a quit or a reload, and the engine tolerates a session ended
+			// early: a prompt on it is still accepted.
 			async dispose() {
-				return core.shutdown();
+				const sweep = await core.closeOpenSessions();
+				const shutdown = await core.shutdown();
+				return {
+					...shutdown,
+					action: sweep.action,
+					closed: sweep.closed,
+					abandoned: sweep.abandoned,
+				};
 			},
 		};
 	}
