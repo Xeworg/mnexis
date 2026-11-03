@@ -48,7 +48,8 @@ fn resolve_filter(requested: Option<&String>) -> Result<AssetFilter, MnexisError
 }
 
 /// An environment that cannot host a kind of asset is an error, not a
-/// silent no-op: asking for an extension in opencode must say so.
+/// silent no-op: asking for an extension in opencode, or a plugin in pi,
+/// must say so.
 fn ensure_applicable(
     environment: AgentEnvironment,
     filter: AssetFilter,
@@ -57,7 +58,14 @@ fn ensure_applicable(
         return Err(MnexisError::invalid_argument(
             "only",
             "opencode has no extension directory in the mnexis registry; \
-             install the skill instead (--only skill)",
+             install the skill, or the plugin (--only plugin)",
+        ));
+    }
+    if filter == AssetFilter::Plugin && environment == AgentEnvironment::Pi {
+        return Err(MnexisError::invalid_argument(
+            "only",
+            "pi has no plugin directory in the mnexis registry; \
+             install the skill or the extension (--only skill, --only extension)",
         ));
     }
     Ok(())

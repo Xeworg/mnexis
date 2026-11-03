@@ -21,7 +21,7 @@ The TUI opens on a **menu** with the available actions:
 │  Browse and edit your memories               │
 │                                              │
 │▸ Install for agents                         │
-│  Install the mnexis skill and extension      │
+│  Install the mnexis skill, extension and plugin │
 │                                              │
 │  Quit                                        │
 │  Close the TUI                               │

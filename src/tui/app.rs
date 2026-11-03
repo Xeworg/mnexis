@@ -156,7 +156,7 @@ impl MenuOption {
     pub fn description(self) -> &'static str {
         match self {
             MenuOption::Memories => "Browse and edit your memories",
-            MenuOption::Agents => "Install the mnexis skill and extension",
+            MenuOption::Agents => "Install the mnexis skill, extension and plugin",
             MenuOption::Quit => "Close the TUI",
         }
     }
@@ -1273,8 +1273,8 @@ mod tests {
         );
         assert_eq!(
             app.agent_status[1].assets.len(),
-            1,
-            "opencode gets the skill only"
+            2,
+            "opencode gets the skill and the plugin"
         );
         assert!(
             app.agent_status
