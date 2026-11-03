@@ -19,7 +19,7 @@ mkdir -p "$TREE"
 tar -cf - -C "$REPO_ROOT" --exclude=./.git --exclude=./target --exclude=./tmp . |
   tar -xf - -C "$TREE"
 printf '\n<!-- %s -->\n' "$MARKER" >>"$TREE/skills/mnexis-memory/SKILL.md"
-printf '\n// %s\n' "$MARKER" >>"$TREE/extensions/mnexis-memory/index.js"
+printf '\n// %s\n' "$MARKER" >>"$TREE/extensions/mnexis-memory/index.ts"
 
 run_tree() { # args...
   # The tree builds into its own target directory: building into the suite's
@@ -48,7 +48,7 @@ run_tree extensions --env pi
 assert_status "a stale binary: extensions --env pi still exits 0" 0
 assert_contains "the extension path announces its rebuild too" \
   "older than the working tree"
-if grep -q "$MARKER" "$PI_EXTENSIONS/mnexis-memory/index.js"; then
+if grep -q "$MARKER" "$PI_EXTENSIONS/mnexis-memory/index.ts"; then
   ok "the installed extension carries the working tree's content"
 else
   not_ok "the installed extension is the stale snapshot (marker missing)"

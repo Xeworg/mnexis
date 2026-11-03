@@ -53,7 +53,7 @@ assert_contains "stale binary: extensions explains the rebuild" \
 assert_contains "stale binary: extensions rebuilds with cargo" \
   "Building mnexis with cargo"
 assert_file "stale binary: the extension still lands" \
-  "$PI_EXTENSIONS/mnexis-memory/index.js"
+  "$PI_EXTENSIONS/mnexis-memory/index.ts"
 
 # --- standalone (piped) mode never rebuilds ----------------------------------
 
