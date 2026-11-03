@@ -114,6 +114,16 @@ experimental) and `session.deleted`; the setup cleanup runs on unload. So "sessi
 is a best-effort, not an event with a promised seat — the same shape the pi extension has
 with `session_shutdown`.
 
+**The unload carries no reason, on either model** (measured against the published types,
+2026-11-03). V2's `setup` returns `Cleanup = () => Promise<void> | void`
+(`@opencode/plugin@2.0.4`, `dist/promise/plugin.d.ts`), and V1's `dispose()` takes no
+argument (`Hooks` above). pi skips its close when the shutdown reason is `reload`
+(`extensions/mnexis-memory/index.ts:2524`); opencode has no such reason to skip on, and a
+V2 hot reload runs the old plugin's cleanup on the way out (§3). A reload and a quit are
+therefore the same event at the unload, and — because the engine never reopens an ended
+session — ending there would kill a live session on every reload. The plugin ends nothing
+at unload; the close runs on `session.deleted`.
+
 ### What cannot be done
 
 - **No plugin-initiated consent dialog.** V1 exposes `permission.ask` (a plugin may answer
@@ -128,9 +138,12 @@ with `session_shutdown`.
   transcript). The portable part of the chrome — the shape, not the decoration — is
   therefore already what the CLI prints.
 - **No structured logger in the V2 plugin context** (`ctx.app` is `{name, version, channel}`).
-  V1 has `client.app.log({ body: { service, level, message, extra } })`. A V2 plugin that
-  needs to report a swallowed failure has to use `ctx.storage` or stay silent; this
-  integration stays silent and says so (§5).
+  V1 has `client.app.log({ body: { service, level, message, extra } })`. V2 has no logger at
+  all, and its `ctx.storage` is a key/value store — `StorageDomain`:
+  `get(key)`, `set(key, value)`, `remove(key)`, `scan(options)` with `Schema.Json` values
+  (`@opencode/plugin@2.0.4`, `dist/promise/storage.d.ts`) — so a V2 plugin that needs to
+  report a swallowed failure writes it there. The plugin journals one key per kind,
+  `mnexis.report.<kind>`.
 - **V1 cannot see a produced compaction summary.** `session.compacted` carries
   `{ properties: { sessionID } }` and `experimental.session.compacting` is called *before*
   the summary exists (it hands `{ context, prompt? }`). V2's `session.compaction.ended`
@@ -254,7 +267,7 @@ engine's own rule forbids. So the plugin adds only what MCP and the CLI cannot d
 | --- | --- | --- | --- |
 | **capture** — store what the person typed, verbatim | the only writer today is a tool the model must be asked to call (capture gap) | `chat.message` → text parts, `synthetic` skipped | `session.hook("prompt")` (host already excludes synthetic) |
 | **session start** — register the session with the engine | the session must land in the namespace its memories land in | `event: session.created` (`properties.info.id`) | `event.subscribe({types:["session.created"]})` (`data.sessionID`) |
-| **session end** — end what the plugin opened | best effort, no promised seat in either model | `event: session.deleted`, `dispose()` over the sessions seen | `event.subscribe({types:["session.deleted"]})`, cleanup returned by `setup` |
+| **session end** — end what the plugin opened, and leave the state it closed with | best effort, no promised seat in either model; the unload carries no reason, so a reload and a quit look the same there (§1) | `event: session.deleted` → `mnexis end` + the "estado al cierre" record; `dispose()` kills the in-flight children and ends nothing | `event.subscribe({types:["session.deleted"]})` → the same close; the cleanup returned by `setup` kills and ends nothing |
 | **the pointer** — point at the door, once per session | a session that never hears about the door never calls it | `experimental.chat.system.transform` | `session.hook("context")` |
 | **the settle question** — ask once when work changed files and nothing was saved | the judgment is the model's; a session that is never asked never considers it | `tool.execute.after` + the system transform | `tool.hook("execute.after")` + the context hook |
 | **compaction** — keep the project state in the summary | the state must survive the context that held it | `experimental.session.compacting` (`output.context`) | `session.hook("compaction")` (`event.system`) |
@@ -274,14 +287,16 @@ Composition rules, taken from the engine's own discipline:
   `mnexis list --type project_state,decision --full --limit 8 --json`, bounded, with the
   count of what did not fit. No invented selection rule, no second store.
 - **Every call is bounded, and the writes retry a locked store.** A read gets ten
-  seconds and a write thirty; `session`, `end` and `prompt` are idempotent by construction,
-  so a busy exit (10) is tried again with the waits 250 ms and 750 ms inside the call's own
-  budget, while a read pays one report. The capture has a 1.5 s deadline of its own, the
-  pointer's two reads share one, and the shutdown kills the children still in flight before
-  it ends the sessions.
+  seconds and a write thirty; `session`, `end`, `prompt` and the closing `save` are
+  idempotent by construction, so a busy exit (10) is tried again with the waits 250 ms and
+  750 ms inside the call's own budget, while a read pays one report. The capture has a 1.5 s
+  deadline of its own, the pointer's two reads share one, and the close shares one 5 s
+  budget (`SHUTDOWN_BUDGET_MS`, pi's R1) between the end and the estado al cierre; the
+  unload kills the children still in flight and ends nothing (§1).
 - **Every hook is best effort and never fails the turn.** A capture the store refuses is
-  swallowed (V1 journals it through `client.app.log`; V2 has no logger — §1) and never
-  stops the human's message.
+  swallowed and journaled — V1 through `client.app.log`, V2 through `ctx.storage`
+  (`mnexis.report.<kind>`), the only journal that host has (§1) — and never stops the
+  human's message.
 - **The gate mirrors the pi extension's two rules exactly** — the grant-command pattern and
   the profile-file pattern — with one wording change: opencode cannot ask the human from a
   plugin, so the refusal names the command the human must run instead of promising a
@@ -320,7 +335,9 @@ Nothing in this list prevents the plugin from working today.
 | `chat.message` fires for every submitted prompt and marks synthetic parts | medium-high | V1 source (`prompt.ts`) + V1 docs; not exercised on a live V1 binary here |
 | `session.hook("prompt")` excludes synthetic messages | high | V2 docs state it |
 | V1 has no plugin-side consent dialog | high | V1 type declarations: only `permission.ask` and tool `ctx.ask` |
-| V2 has no structured logger in the plugin context | high | `@opencode/plugin@2.2.5` `Context` type (`app` = name/version/channel) |
+| V2 has no structured logger in the plugin context | high | `@opencode/plugin@2.0.4` `Context` type (`app` = name/version/channel) |
+| V2's setup cleanup receives no arguments, so the unload has no reason | high | `@opencode/plugin@2.0.4` `dist/promise/plugin.d.ts` (`Cleanup = () => Promise<void> | void`) |
+| `ctx.storage` is a key/value journal | high | `@opencode/plugin@2.0.4` `dist/promise/storage.d.ts` (`get`/`set`/`remove`/`scan`) |
 | `session.compaction.ended` carries the summary text | medium | schema field `data.text`; semantics unverified at runtime, so nothing writes it |
 
 Two things could not be checked here and are named rather than guessed: a live **V1**
@@ -347,12 +364,13 @@ T3 ported the pi feature set where this host can express it. The verdicts:
 | pi capability | Verdict | Evidence |
 | --- | --- | --- |
 | Outcome-based settle nudge | **PORTED** | `tool.execute.after` (V1) / `ctx.tool.hook("execute.after")` (V2) feeds the session's outcomes; the ask rides `experimental.chat.system.transform` / `ctx.session.hook("context")`, once per session, only when a successful shell/edit call exists and no `mnexis_memory_save` landed (a failed attempt does not count). The text names the save and the seven `memory_type` names. opencode has no before-settle boundary, so the ask is delivered on the next model request instead of at the settle. |
-| Taxonomy in the save description | **PORTED (V2) / N-A (V1)** | `ctx.tool.transform` rewrites `mnexis_memory_save`'s description with the glosses (the engine's names, this host's wording). V1 has no catalog seat, so a V1 model reads the engine's description. |
+| Taxonomy in the save description | **PORTED (V2) / NOT IMPLEMENTED (V1)** | `ctx.tool.transform` rewrites `mnexis_memory_save`'s description with the glosses (the engine's names, this host's wording). **V1 is a gap, not a host limit:** `tool.definition` is a V1 hook (§1), so the same curated descriptions can reach a V1 model; the plugin does not register it yet (follow-up, `odd/tasks/opencode-parity.md` L7), so a V1 model keeps reading the engine's description. |
 | 5-tool loadout + deferred + `tool_search` + evidence activation | **N-A** | The tools are the MCP server's; the host exposes all of them. V2's `tool.transform` can rewrite a definition and its options (`codemode`), never its exposure — there is no seat to defer, hide or activate one. |
-| `promptGuidelines` / conditional `<mnexis-memory>` section | **PORTED as the pointer** | `experimental.chat.system.transform` / `session.hook("context")`: one bounded block per session, only when the engine names a namespace. One difference kept: pi also requires `memory_count > 0`; here a bound namespace with zero memories still gets the pointer, because it teaches the door and the capture rule. |
+| Conditional `<mnexis-memory>` prompt section | **PORTED as the pointer** | `experimental.chat.system.transform` / `session.hook("context")`: one bounded block per session, only when the engine names a namespace. One difference kept: pi also requires `memory_count > 0`; here a bound namespace with zero memories still gets the pointer, because it teaches the door and the capture rule. |
+| Per-tool `promptGuidelines` | **N-A** | pi's guidelines are a field of pi's own tool definition and pi renders them into its system prompt; opencode's catalog entries carry a description, the input schema and options (`tool.transform`) or a description and parameters (V1 `tool.definition`) — no guidelines field the host renders. The vocabulary rides the save's description (V2) and the settle ask (both) instead. |
 | Prompt capture by the host | **PORTED (already present)** | `chat.message` / `session.hook("prompt")`; the host excludes synthetic messages. Now under a 1.5 s deadline and the busy retry. |
-| Reliability: budgets, per-command busy retry, child registry | **PORTED** | Per-call ceilings (read 10 s, write 30 s), busy exit 10 retried on `session`/`end`/`prompt` with 250/750 ms inside the call budget, `createDeadline` on the capture and pointer, `createChildRegistry` kills in-flight children before the close. The plugin does spawn the CLI, so the registry applies. |
-| Session lifecycle (registered start/end, idempotent close) | **PORTED** | Both models register `session.created` and end on `session.deleted` and on unload. The engine's verified semantics are read, not guessed: a second start is a no-op, a start after an end is reported as `already_ended` and never reopens, an unknown end (exit 3) is reported as `not_registered`, never thrown. Not ported: pi's "estado al cierre" `project_state` record — the unload path is not a promised seat (§1), so the engine keeps the session row and its summary. |
+| Reliability: budgets, per-command busy retry, child registry, close deadline (R1) | **PORTED** | Per-call ceilings (read 10 s, write 30 s), busy exit 10 retried on `session`/`end`/`prompt`/`save` with 250/750 ms inside the call budget, `createDeadline` on the capture, the pointer and — R1 — the whole close (end + estado al cierre share one 5 s budget), `createChildRegistry` kills in-flight children before the unload. The plugin does spawn the CLI, so the registry applies. R1 was missing when the audit read this table and is implemented now. |
+| Session lifecycle (registered start/end, idempotent close, the state a session closes with) | **PORTED** | Both models register `session.created` and close on the host's own end signal, `session.deleted`: `mnexis end --json`, then the workspace's one "estado al cierre" `project_state` built from that answer (pi's title and shape, so a second close revises the record). The engine's verified semantics are read, not guessed: a second start is a no-op, a start after an end is reported as `already_ended` and never reopens, an unknown end (exit 3) is reported as `not_registered`, never thrown. The unload ends nothing (§1): a reload is not an end. |
 | Journal renderers, footer counters, `/mnexis` card | **N-A** | opencode hardcodes transcript rendering per tool id; a plugin cannot restyle an MCP tool or draw a card (§1). V1's `client.app.log` is the only notification surface and the plugin already journals refusals there; V2 has no logger. A plugin TUI part, if the host ever exposes one for the transcript, is the future option. |
 | Gate with timeout / tri-state | **N-A** | There is no dialog to time out: the gate refuses synchronously in the before-tool hook and names the human's command. The plugin keeps its inverted model (the human grants out of band). |
 | Compaction summary stored as an episode (pi's `session_compact`) | **N-A** | Only V2's `session.compaction.ended` carries `data.text`, and its runtime semantics are unverified (§1, §6.4); an unverified write into the store is worse than a missing one. Follow-up when the field is verified. |

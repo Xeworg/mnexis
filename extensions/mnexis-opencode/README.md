@@ -13,10 +13,13 @@ do, because they belong to the host:
 - **it asks once for the judgment** when a session changed files and saved nothing,
   with a pointer to the vocabulary the save carries;
 - **it keeps the project state alive through a compaction**;
+- **it closes a session with the state it left** — `mnexis end`, then the workspace's one
+  "estado al cierre" `project_state` the next session resumes from — when the host deletes
+  the session; a plugin reload is not an end and closes nothing;
 - **it guards the human's permissions**: a model-issued `mnexis config allow-namespace`
   or an edit of the mnexis profile is refused, with the command the human must run;
-- **it curates the definitions the model reads** (opencode 2 only): the seventeen tools
-  carry the engine's vocabulary restated for this host, and `codemode` is off.
+- **it curates the definitions the model reads** (opencode 2 only, so far): the seventeen
+  tools carry the engine's vocabulary restated for this host, and `codemode` is off.
 
 It registers no tools and draws nothing: the tools are the MCP server's, and opencode's
 TUI does not let a plugin restyle an MCP tool (RESEARCH.md §1).
@@ -84,7 +87,7 @@ the plugin imports nothing from another extension and no test reads another exte
 tree. `test/core.test.js` extracts the seven names from the engine's own `memory_type` docs
 (`src/mcp/tools.rs`) and fails when the plugin drifts from them.
 
-### The curated definitions (opencode 2 only)
+### The curated definitions (opencode 2 today)
 
 The engine's MCP descriptions say what a tool does. In `ctx.tool.transform` — the one seat
 that can rewrite a model-facing definition — the plugin replaces them with the curated ones,
@@ -106,8 +109,11 @@ Two pins keep the copy honest, and both read the engine — never another host's
 map's keys to the engine's tool inventory (`src/mcp/server.rs`). The gloss wording itself is
 this plugin's, and it may change without touching another surface.
 
-**opencode 1 has no equivalent seat.** It keeps the engine's own descriptions, as it always
-did — the transform is registered only where the host offers it.
+**opencode 1 is a gap, not a limit.** V1 *does* have a catalog seat — `tool.definition`,
+listed among V1's hooks in RESEARCH.md §1 — so the same curated descriptions could reach a
+V1 model. The plugin does not register that hook yet: on opencode 1 the model keeps reading
+the engine's own descriptions. That is a recorded follow-up (RESEARCH.md §8,
+`odd/tasks/opencode-parity.md` L7), not something the host makes impossible.
 
 ### One file, both opencode generations
 
@@ -126,19 +132,31 @@ The plugin is a single file with a default export both plugin models read:
 | Rule | What it does | opencode 1 | opencode 2 |
 | --- | --- | --- | --- |
 | capture | every prompt you type, byte for byte, in the workspace's namespace | `chat.message` | `session.hook("prompt")` |
-| session | `mnexis session --id … --directory …`, and `mnexis end` when the host deletes the session or the plugin unloads | `session.created`, `session.deleted`, `dispose` | `session.created`, `session.deleted`, setup cleanup |
+| session | `mnexis session --id … --directory …`; when the host deletes the session, `mnexis end` and the workspace's one "estado al cierre" record. A plugin unload (including a hot reload) ends nothing | `session.created`, `session.deleted`, `dispose` | `session.created`, `session.deleted`, setup cleanup |
 | pointer | one system-prompt line per session: the namespace, the memory count, the door, the previous session's summary | `experimental.chat.system.transform` | `session.hook("context")` |
 | settle | one question per session when a tool succeeded and no `mnexis_memory_save` landed; the ask names the save and its `memory_type` vocabulary | `tool.execute.after` + the system transform | `tool.hook("execute.after")` + the context hook |
 | compaction | the live `project_state` and `decision` records, from `mnexis list --type … --full`, bounded and counted | `experimental.session.compacting` | `session.hook("compaction")` |
 | gate | refuses a model-issued namespace grant and any edit of `mnexis.toml`/`projects.toml` | `tool.execute.before` | `tool.hook("execute.before")` |
-| definitions | the curated description of every `mnexis_*` tool, and `codemode: false` | — (no seat) | `tool.transform` |
+| definitions | the curated description of every `mnexis_*` tool, and `codemode: false` | not yet registered — V1 has `tool.definition` (a gap, RESEARCH.md §8) | `tool.transform` |
 
 Everything is best effort: a memory engine that cannot answer never fails a turn. A
-capture the store refuses keeps its size and exit code in the host's log (opencode 1) and
-never keeps the message text. Each call carries a ceiling — ten seconds for a read, thirty
-for a write — and the three commands whose identity the engine owns (`session`, `end`,
-`prompt`) try a locked store again before giving up. The capture has a 1.5 s budget of its
-own, so a store that cannot take the message costs the message, never the turn.
+capture the store refuses keeps its size and exit code in the journal the host has —
+`client.app.log` on opencode 1, and `ctx.storage` (`mnexis.report.<kind>`) on opencode 2,
+which has no logger — and never keeps the message text. Each call carries a ceiling — ten
+seconds for a read, thirty for a write — and the commands whose identity the engine owns
+(`session`, `end`, `prompt`, and the closing `save`) try a locked store again before giving
+up. The capture has a 1.5 s budget of its own, so a store that cannot take the message
+costs the message, never the turn; the close has a 5 s one for all of its steps, so a store
+that hangs cannot hold the turn past it.
+
+A **reload is not an end**. opencode gives a plugin no reason at unload — opencode 2's
+setup cleanup takes no argument and neither does opencode 1's `dispose()` — so a hot reload
+and a quit look identical there. Ending a session on that signal would mark a live session
+over (the engine never reopens one), so the plugin only kills the calls still in flight and
+closes a session where the host says the session is over: `session.deleted`. The cost,
+stated: a quit that never deletes its session leaves the engine's row live. The engine's
+verified semantics make that harmless — a second start of the same id is a no-op, and a
+start after an end never reopens — and the next session's close writes the record.
 
 The settle question is outcome-based, not quota-based: a tool that failed changed no file
 and saved nothing, a save that was attempted and failed is not a save, and the question is
@@ -171,6 +189,7 @@ refuses, and names the command you must run.
 | `MNEXIS_OPENCODE_POINTER` | Set to `0` to stop the plugin from pointing at the door. |
 | `MNEXIS_OPENCODE_CAPTURE_BUDGET_MS` | The capture's budget (default `1500`). |
 | `MNEXIS_OPENCODE_POINTER_BUDGET_MS` | The pointer's two reads' shared budget (default `1500`). |
+| `MNEXIS_OPENCODE_SHUTDOWN_BUDGET_MS` | The close's budget: the end and the estado al cierre share it (default `5000`). |
 
 ## Tests
 
@@ -196,10 +215,21 @@ OPENCODE_BIN="$(command -v opencode)" node --test "extensions/mnexis-opencode/te
 - The settle question rides the next model request: opencode exposes no equivalent of the
   final settle boundary, so a session that ends immediately after its last tool call is
   never asked.
+- **A quit does not close its session.** The unload carries no reason on either model, so
+  the plugin cannot tell a reload from a quit there; closing on that signal would kill a
+  live session on every hot reload. The close runs on `session.deleted` instead. A quit
+  that never deletes its session leaves the row live — harmless under the engine's
+  start-after-end semantics, but that session's "estado al cierre" waits for the next
+  close.
+- **opencode 1 keeps the engine's own descriptions.** `tool.definition` is a V1 hook, so the
+  curated descriptions could reach it; the plugin does not register it yet (RESEARCH.md §8).
+- **Per-tool `promptGuidelines` are not ported.** pi renders each tool's guidelines into its
+  system prompt; opencode's catalog entries have no guidelines field to render. The
+  vocabulary rides the save's description (opencode 2) and the settle ask (both) instead.
 - On opencode 1 the model sees the engine's own `memory_save` description, which names no
   types; the seven names are in the argument schema, the glosses are not. Carrying the
   taxonomy examples in the engine's `memory_save` description is an engine-side change
-  (RESEARCH.md §8), not something a plugin can do on opencode 1.
+  (RESEARCH.md §8), and registering V1's `tool.definition` is a plugin-side follow-up.
 - The pointer costs about 127 tokens (508 characters, by the chars/4 estimate), once per
   session. It is off with `MNEXIS_OPENCODE_POINTER=0`.
 - `mnexis agent install --env opencode` does not install this plugin yet: the engine only

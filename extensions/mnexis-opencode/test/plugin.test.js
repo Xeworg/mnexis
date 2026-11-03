@@ -17,6 +17,7 @@ import plugin, {
 	POINTER_ENV,
 	PROFILE_REFUSAL,
 	SETTLE_NUDGE,
+	SHUTDOWN_BUDGET_ENV,
 	TYPE_GLOSSES,
 	createPlugin,
 } from "../index.js";
@@ -29,6 +30,15 @@ const STATUS_JSON = JSON.stringify({
 const PREVIOUS_JSON = JSON.stringify({
 	session: { id: "sess-previous", started_at: "2026-10-30T22:04:11Z", summary: "Wired the budget." },
 });
+
+const ENDED_JSON = (id) =>
+	JSON.stringify({
+		id,
+		namespace: "acme",
+		directory: "/repo",
+		started_at: "2026-11-03T10:00:00Z",
+		ended_at: "2026-11-03T10:30:00Z",
+	});
 
 const STATE_JSON = JSON.stringify({
 	count: 1,
@@ -45,12 +55,17 @@ const STATE_JSON = JSON.stringify({
 
 // --- helpers ---------------------------------------------------------------
 
-/** An exec that records every call and answers from `responder`. */
+/**
+ * An exec that records every call and answers from `responder`.
+ *
+ * The answer is awaited, so a responder may hold a call open — the one shape a
+ * budget is tested with.
+ */
 function recordingExec(responder = () => undefined) {
 	const calls = [];
 	const exec = async (command, args, options) => {
 		calls.push({ command, args, cwd: options?.cwd });
-		const answer = responder(args, options) ?? {};
+		const answer = (await responder(args, options)) ?? {};
 		return { code: answer.code ?? 0, stdout: answer.stdout ?? "", stderr: answer.stderr ?? "" };
 	};
 	return { exec, calls };
@@ -84,7 +99,14 @@ function engine(overrides = {}) {
 		if (key === "list") return { stdout: STATE_JSON, ...overrides.list };
 		if (key === "prompt") return { stdout: "{}", ...overrides.prompt };
 		if (key === "session") return { stdout: "{}", ...overrides.session };
-		if (key === "end") return { stdout: "{}", ...overrides.end };
+		if (key === "end") {
+			// The engine answers the session it ended: `end --json` carries the
+			// namespace the closing record is written into (`src/cli/commands.rs`).
+			const at = args.indexOf("--id");
+			const id = at >= 0 ? args[at + 1] : "s1";
+			return { stdout: ENDED_JSON(id), ...overrides.end };
+		}
+		if (key === "save") return { stdout: "{}", ...overrides.save };
 		return undefined;
 	};
 }
@@ -267,17 +289,25 @@ test("v1: a refused capture never fails the turn and never swallows the refusal"
 	assert.equal(JSON.stringify(journal[0]).includes("hola"), false);
 });
 
-test("v1: unloading ends every session the plugin opened, once", async () => {
+// The unload path carries no reason on either model — V2's setup cleanup is
+// `Cleanup = () => Promise<void> | void` and V1's `dispose()` takes no argument
+// (`@opencode/plugin`'s `plugin.d.ts`; RESEARCH §1) — so a reload and a quit are
+// the same event there. A V2 hot reload replaces the plugin, not the session,
+// and the engine never reopens an ended session, so ending from the unload would
+// kill a live one. The unload therefore kills what is in flight and stops; the
+// close runs on the host's own end signal (`session.deleted`).
+test("v1: unloading never ends a session: a reload replaces the plugin, not the session", async () => {
 	const { exec, calls } = recordingExec(engine());
 	const hooks = await createPlugin({ exec, env: {} }).server({ directory: "/repo" });
 
 	await hooks.event({ event: { type: "session.created", properties: { info: { id: "s1" } } } });
 	await hooks.event({ event: { type: "session.created", properties: { info: { id: "s2" } } } });
-	await hooks.event({ event: { type: "session.created", properties: { info: { id: "s2" } } } });
-	await hooks.dispose();
+	const report = await hooks.dispose();
 
-	const ends = callsWith(calls, "end").map(argv);
-	assert.deepEqual(ends, ["mnexis end --id s1 --json", "mnexis end --id s2 --json"]);
+	assert.deepEqual(callsWith(calls, "end"), [], "no end: the host gave the unload no reason");
+	assert.deepEqual(callsWith(calls, "save"), [], "no closing record either");
+	assert.equal(report.action, "skipped");
+	assert.match(report.reason, /reload/);
 });
 
 // --- opencode 2.x ---------------------------------------------------------
@@ -306,17 +336,29 @@ function fakeEditor(tools) {
 /**
  * A V2 host: the domains record the hooks the plugin registers, the catalog
  * transforms it registers, and the event stream is a queue the test can push
- * into.
+ * into. `storage` is the journal this host has instead of a logger
+ * (`StorageDomain`: `get`/`set`/`remove`/`scan`).
  */
 function fakeHost({ directory = "/repo" } = {}) {
 	const hooks = new Map();
 	const transforms = [];
 	const queue = [];
+	const journal = new Map();
 	let wake = null;
 	let closed = false;
 
 	const ctx = {
 		location: { directory },
+		storage: {
+			get: async (key) => journal.get(key),
+			set: async (key, value) => {
+				journal.set(key, value);
+			},
+			remove: async (key) => {
+				journal.delete(key);
+			},
+			scan: async () => ({ entries: [...journal.keys()] }),
+		},
 		session: {
 			hook: async (name, callback) => {
 				hooks.set(`session:${name}`, callback);
@@ -357,6 +399,7 @@ function fakeHost({ directory = "/repo" } = {}) {
 		ctx,
 		hooks,
 		transforms,
+		journal,
 		/** Run every registered transform over a fresh catalog of `tools`. */
 		transform(tools) {
 			const editor = fakeEditor(tools);
@@ -540,33 +583,24 @@ test("v2: a host missing one seat still gets the other rules", async () => {
 	await cleanup();
 });
 
-test("v2: the cleanup kills the calls still in flight before it ends the sessions", async () => {
+test("v2: the cleanup kills the calls still in flight and never ends the session", async () => {
 	const events = [];
 	const registry = { killAll: () => events.push("kill") };
-	const { exec } = recordingExec((args) => {
+	const { exec, calls } = recordingExec((args) => {
 		events.push(args[0]);
-		return {};
+		return engine()(args);
 	});
 	const host = fakeHost();
 	const cleanup = await createPlugin({ exec, env: {}, registry }).setup(host.ctx);
 
 	await host.hooks.get("session:prompt")({ sessionID: "s1", prompt: { text: "hola" } });
 	host.close();
-	await cleanup();
+	const report = await cleanup();
 
-	assert.deepEqual(events, ["session", "prompt", "kill", "end"]);
-});
-
-test("v2: the cleanup ends every session the plugin opened", async () => {
-	const { exec, calls } = recordingExec(engine());
-	const host = fakeHost();
-	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
-
-	await host.hooks.get("session:prompt")({ sessionID: "s1", prompt: { text: "hola" } });
-	host.close();
-	await cleanup();
-
-	assert.deepEqual(callsWith(calls, "end").map(argv), ["mnexis end --id s1 --json"]);
+	assert.deepEqual(events, ["session", "prompt", "kill"], "the children die first, and nothing follows");
+	assert.deepEqual(callsWith(calls, "end"), [], "a reload replaces the plugin, not the session");
+	assert.deepEqual(callsWith(calls, "save"), []);
+	assert.equal(report.action, "skipped");
 });
 
 test("v2: a workspace with no namespace is pointed at nothing, and the read is not repeated", async () => {
@@ -836,7 +870,7 @@ test("v1: ending a session the engine never heard of is the engine's answer, not
 	});
 
 	await hooks.event({ event: { type: "session.created", properties: { info: { id: "s1" } } } });
-	await hooks.dispose();
+	await hooks.event({ event: { type: "session.deleted", properties: { info: { id: "s1" } } } });
 
 	const end = journal.find((record) => record.kind === "session-end");
 	assert.equal(end.exit_code, 3);
@@ -868,4 +902,179 @@ test("v2: the host's session.deleted ends that session, and the cleanup does not
 	await cleanup();
 
 	assert.deepEqual(callsWith(calls, "end").map(argv), ["mnexis end --id s7 --json"]);
+});
+
+// --- the close: the state a session leaves behind (fix 2) -----------------
+//
+// pi writes one "estado al cierre" `project_state` at close (index.ts:2489-2520)
+// and the engine's `end --json` answers the namespace it is written into
+// (`src/cli/commands.rs:845-853`). The record goes through the same `run()`
+// path every other write takes, so the write budget and the busy retry apply.
+
+test("v1: the host's session.deleted writes the estado al cierre of that session", async () => {
+	const { exec, calls } = recordingExec(engine());
+	const hooks = await createPlugin({ exec, env: {} }).server({ directory: "/repo" });
+
+	await hooks.event({ event: { type: "session.created", properties: { info: { id: "s1" } } } });
+	const report = await hooks.event({
+		event: { type: "session.deleted", properties: { info: { id: "s1" } } },
+	});
+
+	const save = callsWith(calls, "save")[0];
+	assert.ok(save, "the closing state was written");
+	assert.deepEqual(save.args.slice(0, 7), [
+		"save",
+		"--namespace",
+		"acme",
+		"--type",
+		"project_state",
+		"--title",
+		"estado al cierre",
+	]);
+	const content = save.args[save.args.length - 2];
+	assert.match(content, /Session s1 ended at 2026-11-03T10:30:00Z\./);
+	assert.match(content, /It started at 2026-11-03T10:00:00Z\./);
+	assert.match(content, /Directory: \/repo\./);
+	// The end comes first: its answer is where the namespace comes from.
+	assert.ok(
+		calls.findIndex((call) => call.args[0] === "end") <
+			calls.findIndex((call) => call.args[0] === "save"),
+	);
+	assert.equal(report.action, "closed");
+	assert.equal(report.namespace, "acme");
+});
+
+test("v2: the host's session.deleted writes the estado al cierre of that session", async () => {
+	const { exec, calls } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	host.push({ type: "session.created", data: { sessionID: "s7" } });
+	assert.ok(await waitFor(() => callsWith(calls, "session").length === 1), "the session was registered");
+	host.push({ type: "session.deleted", data: { sessionID: "s7" } });
+	assert.ok(await waitFor(() => callsWith(calls, "save").length === 1), "the closing state was written");
+
+	const save = callsWith(calls, "save")[0];
+	assert.deepEqual(save.args.slice(0, 7), [
+		"save",
+		"--namespace",
+		"acme",
+		"--type",
+		"project_state",
+		"--title",
+		"estado al cierre",
+	]);
+	assert.match(save.args[save.args.length - 2], /Session s7 ended/);
+
+	host.close();
+	await cleanup();
+});
+
+// --- the shutdown budget (fix 3) -----------------------------------------
+//
+// pi awaits its shutdown with no timeout, so it gives the close one of its own
+// (R1, `lib/budget.ts`). Here the close is the work a host hook awaits, and it
+// gets the same one budget for all of its steps; a step that does not fit is
+// abandoned, journaled, and the session stays tracked so the next close signal
+// can retry it.
+
+test("v2: a close that hangs is abandoned inside the budget, and the host returns", async () => {
+	const host = fakeHost();
+	const { exec, calls } = recordingExec((args) => {
+		if (args[0] === "end") return new Promise(() => {});
+		return engine()(args);
+	});
+	const cleanup = await createPlugin({ exec, env: { [SHUTDOWN_BUDGET_ENV]: "60" } }).setup(host.ctx);
+
+	host.push({ type: "session.created", data: { sessionID: "s9" } });
+	assert.ok(await waitFor(() => callsWith(calls, "session").length === 1), "the session was registered");
+	const started = Date.now();
+	host.push({ type: "session.deleted", data: { sessionID: "s9" } });
+	assert.ok(
+		await waitFor(() => host.journal.has("mnexis.report.session-end"), { timeout: 2000 }),
+		"the abandonment reached the journal this host has",
+	);
+	const elapsed = Date.now() - started;
+
+	assert.ok(elapsed < 2000, `the close returned inside its budget (${elapsed} ms)`);
+	const record = host.journal.get("mnexis.report.session-end");
+	assert.equal(record.action, "abandoned");
+	assert.match(record.reason, /end did not finish within the 60 ms shutdown budget/);
+	assert.equal(record.session, "s9");
+	assert.equal(callsWith(calls, "save").length, 0, "nothing is written after an abandoned end");
+
+	host.close();
+	await cleanup();
+});
+
+test("v1: the abandoned close reaches the host's log and the close's own answer", async () => {
+	const journal = [];
+	const { exec } = recordingExec((args) => {
+		if (args[0] === "end") return new Promise(() => {});
+		return engine()(args);
+	});
+	const hooks = await createPlugin({
+		exec,
+		env: { [SHUTDOWN_BUDGET_ENV]: "60" },
+		logger: (record) => journal.push(record),
+	}).server({ directory: "/repo" });
+
+	await hooks.event({ event: { type: "session.created", properties: { info: { id: "s1" } } } });
+	const report = await hooks.event({
+		event: { type: "session.deleted", properties: { info: { id: "s1" } } },
+	});
+
+	const close = journal.find((record) => record.kind === "session-end");
+	assert.ok(close, "the abandonment is journaled, never swallowed");
+	assert.equal(close.action, "abandoned");
+	assert.match(close.reason, /60 ms shutdown budget/);
+	assert.equal(report.action, "abandoned");
+	assert.deepEqual(report.steps, [], "no step completed");
+	assert.match(report.abandoned[0], /^end did not finish/);
+});
+
+test("an abandoned close is re-runnable: the next close signal tries again, under one title", async () => {
+	let hang = true;
+	const { exec, calls } = recordingExec((args) => {
+		if (args[0] === "end" && hang) {
+			hang = false;
+			return new Promise(() => {});
+		}
+		return engine()(args);
+	});
+	const hooks = await createPlugin({ exec, env: { [SHUTDOWN_BUDGET_ENV]: "60" } }).server({
+		directory: "/repo",
+	});
+
+	await hooks.event({ event: { type: "session.created", properties: { info: { id: "s1" } } } });
+	const abandoned = await hooks.event({
+		event: { type: "session.deleted", properties: { info: { id: "s1" } } },
+	});
+	assert.equal(abandoned.action, "abandoned");
+
+	const retried = await hooks.event({
+		event: { type: "session.deleted", properties: { info: { id: "s1" } } },
+	});
+	assert.equal(retried.action, "closed");
+	// The record's title is the engine's identity: the retry revises the one
+	// record instead of adding a second answer to "where did the session leave
+	// the project".
+	const titles = callsWith(calls, "save").map((call) => call.args[call.args.indexOf("--title") + 1]);
+	assert.deepEqual(titles, ["estado al cierre"]);
+});
+
+test("v2: a refusal the host cannot log reaches the journal it has", async () => {
+	const host = fakeHost();
+	const { exec } = recordingExec(engine({ prompt: { code: 4, stderr: "forbidden" } }));
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	await host.hooks.get("session:prompt")({ sessionID: "s1", prompt: { text: "hola" } });
+
+	assert.ok(await waitFor(() => host.journal.has("mnexis.report.capture")), "the refusal was journaled");
+	const record = host.journal.get("mnexis.report.capture");
+	assert.equal(record.exit_code, 4);
+	assert.equal(JSON.stringify(record).includes("hola"), false, "the text never reaches the journal");
+
+	host.close();
+	await cleanup();
 });
