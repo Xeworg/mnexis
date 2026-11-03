@@ -3645,3 +3645,95 @@ async fn memory_context_searches_the_workspaces_own_namespace()
     client.cancel().await?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// The limits, declared where the agent reads them (the schema is the only
+// thing the model sees before it writes; a cap it cannot see is a cap it
+// hits blind, and the answer it gets back is the only warning).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_schema_declares_the_caps_the_engine_enforces() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir_in("target")?;
+    let data_dir = tmp.path();
+    bootstrap_profile(data_dir)?;
+
+    let binary = std::env::var("CARGO_BIN_EXE_mnexis")?;
+    let transport =
+        TokioChildProcess::new(tokio::process::Command::new(&binary).configure(|cmd| {
+            cmd.arg("--data-dir").arg(data_dir).arg("mcp").arg("serve");
+        }))?;
+    let client = ().serve(transport).await?;
+    let tools = client.list_all_tools().await?;
+
+    // The schema states the engine's defaults, so the numbers it declares
+    // come from the engine itself: a default that moves cannot leave the
+    // schema behind, and the test says so.
+    let config = mnexis_core::application::ServiceConfig::default();
+    let content_cap = format!("{} KiB", config.max_content_bytes / 1024);
+    let key_cap = format!("{} bytes", config.max_topic_key_bytes);
+    let query_cap = format!("{} KiB", config.max_query_bytes / 1024);
+
+    let argument_description = |tool: &str, argument: &str| -> String {
+        let found = tools
+            .iter()
+            .find(|t| t.name.as_ref() == tool)
+            .unwrap_or_else(|| panic!("{tool} present in the tool list"));
+        found
+            .input_schema
+            .get("properties")
+            .and_then(|props| props.get(argument))
+            .and_then(|prop| prop.get("description"))
+            .and_then(|description| description.as_str())
+            .unwrap_or_else(|| {
+                panic!(
+                    "{tool} schema must describe {argument}: {:?}",
+                    found.input_schema
+                )
+            })
+            .to_string()
+    };
+
+    let content = argument_description("memory_save", "content");
+    assert!(
+        content.contains(&content_cap) && content.contains("max_content_bytes"),
+        "memory_save content must declare the cap and the setting that moves it, got: {content:?}"
+    );
+
+    let topic_key = argument_description("memory_save", "topic_key");
+    assert!(
+        topic_key.contains(&key_cap) && topic_key.contains("max_topic_key_bytes"),
+        "memory_save topic_key must declare the byte cap, got: {topic_key:?}"
+    );
+
+    let keywords = argument_description("memory_save", "keywords");
+    assert!(
+        keywords.contains("48 bytes"),
+        "memory_save keywords must declare the per-word byte cap, got: {keywords:?}"
+    );
+
+    let query = argument_description("memory_search", "query");
+    assert!(
+        query.contains(&query_cap) && query.contains("max_query_bytes"),
+        "memory_search query must declare the cap, got: {query:?}"
+    );
+
+    let prompts_query = argument_description("memory_search_prompts", "query");
+    assert!(
+        prompts_query.contains(&query_cap) && prompts_query.contains("max_query_bytes"),
+        "memory_search_prompts query must declare the cap, got: {prompts_query:?}"
+    );
+
+    // The door's task is NOT bounded by the query's cap: the door reads the
+    // index directly, so a schema that claims the cap there would name a
+    // limit the engine does not enforce.
+    let task = argument_description("memory_context", "task");
+    assert!(
+        !task.contains("max_query_bytes"),
+        "memory_context task must not claim a cap the door does not enforce, got: {task:?}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}

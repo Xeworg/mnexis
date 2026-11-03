@@ -2864,7 +2864,10 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 		parameters: {
 			type: "object",
 			properties: {
-				content: { type: "string", description: "One self-contained sentence." },
+				content: {
+					type: "string",
+					description: "One self-contained sentence (the engine admits 16 KiB by default).",
+				},
 				title: {
 					type: "string",
 					description: "Stable label of the fact (what it IS, not what it says now).",
@@ -2874,7 +2877,15 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 					type: "string",
 					description:
 						"Comma-separated synonyms in other languages or jargon; vocabulary, " +
-						"never a value. They accumulate across saves.",
+						"never a value. They accumulate across saves: the cap is 32 words for " +
+						"the record, and the count is the union of the words it already carries " +
+						"and the new ones.",
+				},
+				replace_keywords: {
+					type: "boolean",
+					description:
+						"Replace the record's words with the ones you send instead of adding " +
+						"to them; the way out when the list is near the 32-word cap.",
 				},
 				topic_key: { type: "string", description: "Stable key grouping facts about one topic." },
 				type: {
@@ -2904,6 +2915,7 @@ export default function mnexisMemoryExtension(pi: ExtensionAPI) {
 					title: params.title,
 					tags: params.tags,
 					keywords: params.keywords,
+					replaceKeywords: params.replace_keywords,
 					topicKey: params.topic_key,
 					idempotencyKey: params.idempotency_key,
 					type: params.type,

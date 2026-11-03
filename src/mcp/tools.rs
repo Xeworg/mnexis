@@ -47,7 +47,9 @@ use crate::domain::memory::MemoryState;
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SaveArgs {
-    /// Memory content (required)
+    /// Memory content (required). The profile admits 16 KiB by default
+    /// (`max_content_bytes`); a longer record is refused whole and the
+    /// answer names the limit in effect.
     pub content: String,
     /// Namespace (default: "default")
     #[serde(default)]
@@ -68,6 +70,7 @@ pub struct SaveArgs {
     pub title: Option<String>,
     /// Topic key — unique per namespace when non-empty (default: "").
     /// Allowed characters: lowercase letters, digits, '.', '-' and '/'
+    /// (max 128 bytes by default, `max_topic_key_bytes`).
     #[serde(default)]
     pub topic_key: Option<String>,
     /// Idempotency key for safe retries (default: none)
@@ -88,6 +91,7 @@ pub struct SaveArgs {
     /// counts the record's whole list (the words asked for plus the ones it
     /// already carries), so a save that would cross the cap is rejected
     /// whole; near the cap, send fewer new words or set replace_keywords.
+    /// Each word is up to 48 bytes.
     #[serde(default)]
     pub keywords: Option<String>,
     /// Replace the words the record already carries instead of adding to
@@ -166,7 +170,8 @@ pub struct SessionEndArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SavePromptArgs {
-    /// What the user said, verbatim.
+    /// What the user said, verbatim. The profile admits 16 KiB by default
+    /// (`max_content_bytes`).
     pub content: String,
     /// The session it belongs to, when there is one.
     #[serde(default)]
@@ -193,7 +198,9 @@ pub struct SuggestTopicKeyArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SearchPromptsArgs {
-    /// The query, in plain language.
+    /// The query, in plain language. The profile admits 8 KiB by default
+    /// (`max_query_bytes`); a longer query is refused and the answer names
+    /// the limit in effect.
     pub query: String,
     /// Namespace (default: every authorised namespace).
     #[serde(default)]
@@ -308,7 +315,9 @@ pub struct RestoreArgs {
 #[serde(deny_unknown_fields)]
 pub struct SearchArgs {
     /// The query, in plain language (required). The engine compiles it:
-    /// every word counts, a hyphen is part of a word.
+    /// every word counts, a hyphen is part of a word. The profile admits
+    /// 8 KiB by default (`max_query_bytes`); a longer query is refused and
+    /// the answer names the limit in effect.
     pub query: String,
     /// Namespace to search within (default: all authorised).
     #[serde(default)]
