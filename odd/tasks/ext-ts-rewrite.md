@@ -161,7 +161,7 @@ installed pi dist. Verdicts:
   4e292e8.
 - T6 (S2/S3): docs — README truth fixes (journal visibility claims), decision
   table completeness, the pi skill's overlap note. Route: parent inline. Risk:
-  none.
+  none. Commit: 97f7142.
 - T7 (S3): install on the host, live verification: markers present, session
   registered, prompt captured, /mnexis renders, declared tools == 5 and
   tool_search reachability, journal lines visible in the transcript, footer
@@ -247,3 +247,14 @@ installed pi dist. Verdicts:
   (bound + has memories), mutates systemPromptOptions.sections in place and
   never returns a systemPrompt; the confirm-args swap is fixed with the reason
   in a comment at the call site.
+- L11: T6 evidence (97f7142): README — the loadout truth replaces the
+  all-declared claim (5 declared + deferred tail + tool_search + evidence
+  activation + save_prompt hidden + session lifecycle in the extension), a new
+  "journal, counters and the nudge" subsection, the gate split by dialog
+  channel (not mode) with the 90 s timeout and the timed-out-≠-declined
+  promise, chrome.js → chrome.ts, and the canonical test invocation from the
+  repo root with the TS note (L7's finding). SKILL.md — mnexis_context is the
+  start verb, mnexis_workspace demoted to binding/allowlists, and the overlap
+  note: the extension is the code layer, the skill is the advisory layer and
+  repeats nothing the tools declare. cargo agents 23/23 (the skill re-embeds
+  green).
