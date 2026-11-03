@@ -86,8 +86,11 @@ pub const PLUGIN_MNEXIS_MEMORY: EmbeddedAsset = EmbeddedAsset {
 };
 
 /// Every asset the binary can install, in installation order.
-pub const ALL_ASSETS: &[EmbeddedAsset] =
-    &[SKILL_MNEXIS_MEMORY, EXTENSION_MNEXIS_MEMORY, PLUGIN_MNEXIS_MEMORY];
+pub const ALL_ASSETS: &[EmbeddedAsset] = &[
+    SKILL_MNEXIS_MEMORY,
+    EXTENSION_MNEXIS_MEMORY,
+    PLUGIN_MNEXIS_MEMORY,
+];
 
 #[cfg(test)]
 mod tests {

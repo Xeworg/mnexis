@@ -816,7 +816,9 @@ mod tests {
                     AssetStatus {
                         kind: AssetKind::Skill,
                         name: "mnexis-memory",
-                        directory: PathBuf::from("/home/tester/.config/opencode/skills/mnexis-memory"),
+                        directory: PathBuf::from(
+                            "/home/tester/.config/opencode/skills/mnexis-memory",
+                        ),
                         installed: false,
                     },
                     AssetStatus {
