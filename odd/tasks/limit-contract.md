@@ -110,3 +110,16 @@ the model reads declares the cap before the caller hits it.
   `3dc7b94` (the schema and the help that declare the caps), and the last
   slice (the pi extension's escape, `S7`). A PR that carried only the first
   would leave the schema claiming a cap and the extension missing the flag.
+- **L11** — Delivered: PR #123 (`fix/limit-contract`, three commits) and PR
+  #124 (`style/rustfmt-drift`, the pre-existing `cargo fmt` drift from
+  #119-#121, on its own branch so review stays focused). The merge of both is
+  the human's decision. Meanwhile the host was repaired with the human's
+  explicit OK: the release built from this branch was installed at
+  `~/.local/bin/mnexis` and `mnexis agent install --env pi` rewrote
+  `~/.gentle-shell/agent/extensions/mnexis-memory` (both files compared
+  byte-identical to the tree). Verified against the **installed** binary on a
+  scratch profile: the content cap says "the profile's limit. Trim it, or
+  split it into several records.", and the union case says "the record
+  already carried 2, and you are adding 31. Send replace_keywords to prune
+  the record's words" — and `--replace-keywords` on that same record answered
+  `revision 2` with the new words. The opaque error is gone from the host.
