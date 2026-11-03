@@ -114,6 +114,33 @@ experimental) and `session.deleted`; the setup cleanup runs on unload. So "sessi
 is a best-effort, not an event with a promised seat — the same shape the pi extension has
 with `session_shutdown`.
 
+**What v2.2.5 really publishes (measured live, 2026-11-03, `bench-oc:verify`).** The
+names this plugin used — `session.created` and `session.deleted` — are the **V1** names,
+copied from `opencode.ai/docs/plugins` (which today documents the older generation). On
+v2.2.5 the bus is alive and busy, and the plugin was listening to nothing: one headless
+`opencode run` delivered **25** event types — `session.execution.started` /
+`succeeded`, `session.step.*`, `session.text.*`, `session.inbox.*`, `session.usage.updated`,
+`session.renamed`, and the rest — and **neither** `session.created` **nor**
+`session.deleted` was among them. The union of publishable types
+(`@opencode/client@2.2.5`, `dist/promise/client.d.ts`) *does* contain both names, so the
+subscription was legal and the seat was dead: `session.deleted` is published only on an
+explicit session removal ("Remove a temporary session with `remove`"), never at the end of
+a run, and `session.created` is not published in a run at all. `session.idle` exists but
+the schema marks it `// deprecated` in v2.2.5, and the host did not publish it.
+
+The seat that fires and means "the session finished its work and goes idle" is
+`ctx.session.hook("experimental.idle", fn)`, payload `{ sessionID, background }` — verified
+live: it fires between `session.execution.started` and `session.execution.succeeded`. It is
+the seat the host's own built-in `goal` plugin uses
+(`packages/core/src/plugin/goal.ts@v2.2.5`). The paths the idle seat skips (a failure or an
+interruption) are covered by `session.execution.failed` / `session.execution.interrupted`.
+
+So V2's lifecycle is: **the pause refreshes the state** (the record the next session
+resumes from is written again, saying the session is open — because it is), and **the end
+is real where the host gives one**: the engine's session is ended when another session
+starts, or when the plugin's teardown runs. There is no process-shutdown hook in v2.2.5
+(open request `anomalyco/opencode#10524`).
+
 **The unload carries no reason, on either model** (measured against the published types,
 2026-11-03). V2's `setup` returns `Cleanup = () => Promise<void> | void`
 (`@opencode/plugin@2.0.4`, `dist/promise/plugin.d.ts`), and V1's `dispose()` takes no
@@ -121,8 +148,13 @@ argument (`Hooks` above). pi skips its close when the shutdown reason is `reload
 (`extensions/mnexis-memory/index.ts:2524`); opencode has no such reason to skip on, and a
 V2 hot reload runs the old plugin's cleanup on the way out (§3). A reload and a quit are
 therefore the same event at the unload, and — because the engine never reopens an ended
-session — ending there would kill a live session on every reload. The plugin ends nothing
-at unload; the close runs on `session.deleted`.
+session — ending there would kill a live session on every reload. The engine tolerates a
+session ended early (measured on the binary: a prompt on an ended session is accepted, and
+registering the same id again answers the ended row without reopening it), so V2 ends the
+sessions it opened at the unload and the record it writes is corrected by the next pause
+if the session turns out to be alive. **V1 keeps ending nothing at unload**: its host model
+has an end signal of its own (`session.deleted`), and changing V1 is out of this feature's
+scope.
 
 ### What cannot be done
 
@@ -266,8 +298,9 @@ engine's own rule forbids. So the plugin adds only what MCP and the CLI cannot d
 | Rule | Why the host must carry it | V1 hook | V2 hook |
 | --- | --- | --- | --- |
 | **capture** — store what the person typed, verbatim | the only writer today is a tool the model must be asked to call (capture gap) | `chat.message` → text parts, `synthetic` skipped | `session.hook("prompt")` (host already excludes synthetic) |
-| **session start** — register the session with the engine | the session must land in the namespace its memories land in | `event: session.created` (`properties.info.id`) | `event.subscribe({types:["session.created"]})` (`data.sessionID`) |
-| **session end** — end what the plugin opened, and leave the state it closed with | best effort, no promised seat in either model; the unload carries no reason, so a reload and a quit look the same there (§1) | `event: session.deleted` → `mnexis end` + the "estado al cierre" record; `dispose()` kills the in-flight children and ends nothing | `event.subscribe({types:["session.deleted"]})` → the same close; the cleanup returned by `setup` kills and ends nothing |
+| **session start** — register the session with the engine | the session must land in the namespace its memories land in | `event: session.created` (`properties.info.id`) | `session.hook("prompt")` — the seat that fires in a run (v2.2.5 publishes no `session.created`; measured 2026-11-03) |
+| **session pause** — refresh the state the next session resumes from | a host that publishes a pause and not an end leaves the state unwritten, and a session nobody ends is a session nobody resumes from | — | `session.hook("experimental.idle")` + `event.subscribe({types:["session.execution.succeeded","session.execution.failed","session.execution.interrupted"]})` → the "estado al cierre" record, revised, saying the session is open |
+| **session end** — end what the plugin opened, and leave the state it closed with | best effort, no promised seat in either model; the unload carries no reason, so a reload and a quit look the same there (§1) | `event: session.deleted` → `mnexis end` + the "estado al cierre" record; `dispose()` kills the in-flight children and ends nothing | `event.subscribe({types:["session.deleted"]})` → the same close; plus the end the host gives one way or another: a new session starts, or the plugin's cleanup runs (v2.2.5 has no end-of-session event; §1) |
 | **the pointer** — point at the door, once per session | a session that never hears about the door never calls it | `experimental.chat.system.transform` | `session.hook("context")` |
 | **the settle question** — ask once when work changed files and nothing was saved | the judgment is the model's; a session that is never asked never considers it | `tool.execute.after` + the system transform | `tool.hook("execute.after")` + the context hook |
 | **compaction** — keep the project state in the summary | the state must survive the context that held it | `experimental.session.compacting` (`output.context`) | `session.hook("compaction")` (`event.system`) |
@@ -370,7 +403,7 @@ T3 ported the pi feature set where this host can express it. The verdicts:
 | Per-tool `promptGuidelines` | **N-A** | pi's guidelines are a field of pi's own tool definition and pi renders them into its system prompt; opencode's catalog entries carry a description, the input schema and options (`tool.transform`) or a description and parameters (V1 `tool.definition`) — no guidelines field the host renders. The vocabulary rides the save's description (V2) and the settle ask (both) instead. |
 | Prompt capture by the host | **PORTED (already present)** | `chat.message` / `session.hook("prompt")`; the host excludes synthetic messages. Now under a 1.5 s deadline and the busy retry. |
 | Reliability: budgets, per-command busy retry, child registry, close deadline (R1) | **PORTED** | Per-call ceilings (read 10 s, write 30 s), busy exit 10 retried on `session`/`end`/`prompt`/`save` with 250/750 ms inside the call budget, `createDeadline` on the capture, the pointer and — R1 — the whole close (end + estado al cierre share one 5 s budget), `createChildRegistry` kills in-flight children before the unload. The plugin does spawn the CLI, so the registry applies. R1 was missing when the audit read this table and is implemented now. |
-| Session lifecycle (registered start/end, idempotent close, the state a session closes with) | **PORTED** | Both models register `session.created` and close on the host's own end signal, `session.deleted`: `mnexis end --json`, then the workspace's one "estado al cierre" `project_state` built from that answer (pi's title and shape, so a second close revises the record). The engine's verified semantics are read, not guessed: a second start is a no-op, a start after an end is reported as `already_ended` and never reopens, an unknown end (exit 3) is reported as `not_registered`, never thrown. The unload ends nothing (§1): a reload is not an end. |
+| Session lifecycle (registered start/end, idempotent close, the state a session closes with) | **PORTED** | Both models register the session and close on the host's own end signal: `mnexis end --json`, then the workspace's one "estado al cierre" `project_state` built from that answer (pi's title and shape, so a second close revises the record). The engine's verified semantics are read, not guessed: a second start is a no-op, a start after an end is reported as `already_ended` and never reopens, an unknown end (exit 3) is reported as `not_registered`, never thrown. **V2 was ported on the wrong event names** — `session.created`/`session.deleted` are the V1 names, and v2.2.5 publishes neither in a run (§1, measured 2026-11-03): the seat is now `session.hook("experimental.idle")` plus the `session.execution.*` events, the state is refreshed at the pause (saying the session is open), and the engine's session is ended where the host gives an end — a new session starts, or the plugin's cleanup runs. **V1 keeps its own seats and ends nothing at unload** (§1); the V1 population's `session.idle` behavior is unmeasured and stays a follow-up. |
 | Journal renderers, footer counters, `/mnexis` card | **N-A** | opencode hardcodes transcript rendering per tool id; a plugin cannot restyle an MCP tool or draw a card (§1). V1's `client.app.log` is the only notification surface and the plugin already journals refusals there; V2 has no logger. A plugin TUI part, if the host ever exposes one for the transcript, is the future option. |
 | Gate with timeout / tri-state | **N-A** | There is no dialog to time out: the gate refuses synchronously in the before-tool hook and names the human's command. The plugin keeps its inverted model (the human grants out of band). |
 | Compaction summary stored as an episode (pi's `session_compact`) | **N-A** | Only V2's `session.compaction.ended` carries `data.text`, and its runtime semantics are unverified (§1, §6.4); an unverified write into the store is worse than a missing one. Follow-up when the field is verified. |

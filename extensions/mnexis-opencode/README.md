@@ -14,8 +14,10 @@ do, because they belong to the host:
   with a pointer to the vocabulary the save carries;
 - **it keeps the project state alive through a compaction**;
 - **it closes a session with the state it left** — `mnexis end`, then the workspace's one
-  "estado al cierre" `project_state` the next session resumes from — when the host deletes
-  the session; a plugin reload is not an end and closes nothing;
+  "estado al cierre" `project_state` the next session resumes from — where the host gives
+  an end: another session starts, or the plugin unloads. opencode 2 has no end-of-session
+  event, so at every pause the plugin refreshes that same record instead, saying the
+  session is open;
 - **it guards the human's permissions**: a model-issued `mnexis config allow-namespace`
   or an edit of the mnexis profile is refused, with the command the human must run;
 - **it curates the definitions the model reads** (opencode 2 only, so far): the seventeen
@@ -135,7 +137,7 @@ plugin of yours. There is no `node_modules`
 | Rule | What it does | opencode 1 | opencode 2 |
 | --- | --- | --- | --- |
 | capture | every prompt you type, byte for byte, in the workspace's namespace | `chat.message` | `session.hook("prompt")` |
-| session | `mnexis session --id … --directory …`; when the host deletes the session, `mnexis end` and the workspace's one "estado al cierre" record. A plugin unload (including a hot reload) ends nothing | `session.created`, `session.deleted`, `dispose` | `session.created`, `session.deleted`, setup cleanup |
+| session | `mnexis session --id … --directory …`; at the pause the workspace's one "estado al cierre" record is refreshed (saying the session is open), and where the host gives an end — another session starts, or the plugin unloads — `mnexis end` closes it for real | `session.created`, `session.deleted`, `dispose` | `session.hook("experimental.idle")`, `session.execution.*`, `session.created`, `session.deleted`, setup cleanup |
 | pointer | one system-prompt line per session: the namespace, the memory count, the door, the previous session's summary | `experimental.chat.system.transform` | `session.hook("context")` |
 | settle | one question per session when a tool succeeded and no `mnexis_memory_save` landed; the ask names the save and its `memory_type` vocabulary | `tool.execute.after` + the system transform | `tool.hook("execute.after")` + the context hook |
 | compaction | the live `project_state` and `decision` records, from `mnexis list --type … --full`, bounded and counted | `experimental.session.compacting` | `session.hook("compaction")` |
@@ -160,6 +162,24 @@ closes a session where the host says the session is over: `session.deleted`. The
 stated: a quit that never deletes its session leaves the engine's row live. The engine's
 verified semantics make that harmless — a second start of the same id is a no-op, and a
 start after an end never reopens — and the next session's close writes the record.
+
+**opencode 2 has no end-of-session event, so there are two kinds of "the session is
+over"** (measured live on v2.2.5, 2026-11-03):
+
+- **The pause** — the session finished its work and goes idle. The host publishes it as
+  `experimental.idle` (the seat its own `goal` plugin uses) and, for the paths idle skips
+  (a failure, an interruption), as `session.execution.failed` / `session.execution.interrupted`.
+  At the pause the plugin **refreshes the state** — the same "estado al cierre" record,
+  revised, saying the session is open, because it is. The record lands even when the
+  session never ends.
+- **The end** — where the host gives one: another session starts (the person moved on) or
+  the plugin's teardown runs. Then the engine's session is ended for real (`mnexis end`),
+  and the record says the session ended.
+
+The names this plugin used before — `session.created` and `session.deleted` — are the
+**opencode 1** names, and opencode 2 publishes neither in a run: one headless run
+delivered 25 event types and not those two. `session.deleted` in opencode 2 means "this
+session was removed", not "the work is done". opencode 1 keeps its own seats.
 
 The settle question is outcome-based, not quota-based: a tool that failed changed no file
 and saved nothing, a save that was attempted and failed is not a save, and the question is

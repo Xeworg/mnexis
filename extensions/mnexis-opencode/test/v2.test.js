@@ -22,7 +22,7 @@ import { argv, callsWith, engine, fakeHost, recordingExec, waitFor } from "./hel
 // --- opencode 2.x ---------------------------------------------------------
 
 
-test("v2: setup registers the four hooks and one subscription, and hands back a cleanup", async () => {
+test("v2: setup registers the five hooks and one subscription, and hands back a cleanup", async () => {
 	const { exec } = recordingExec(engine());
 	const host = fakeHost();
 	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
@@ -31,6 +31,7 @@ test("v2: setup registers the four hooks and one subscription, and hands back a 
 	assert.deepEqual([...host.hooks.keys()].sort(), [
 		"session:compaction",
 		"session:context",
+		"session:experimental.idle",
 		"session:prompt",
 		"tool:execute.after",
 		"tool:execute.before",
@@ -173,7 +174,7 @@ test("v2: a host missing one seat still gets the other rules", async () => {
 	await cleanup();
 });
 
-test("v2: the cleanup kills the calls still in flight and never ends the session", async () => {
+test("v2: the cleanup kills the calls still in flight and ends the session the plugin opened", async () => {
 	const events = [];
 	const registry = { killAll: () => events.push("kill") };
 	const { exec, calls } = recordingExec((args) => {
@@ -187,10 +188,14 @@ test("v2: the cleanup kills the calls still in flight and never ends the session
 	host.close();
 	const report = await cleanup();
 
-	assert.deepEqual(events, ["session", "prompt", "kill"], "the children die first, and nothing follows");
-	assert.deepEqual(callsWith(calls, "end"), [], "a reload replaces the plugin, not the session");
-	assert.deepEqual(callsWith(calls, "save"), []);
-	assert.equal(report.action, "skipped");
+	// The host is going away: the session the plugin opened is ended, with the
+	// state it leaves behind. (The host cannot say whether this is a quit or a
+	// reload, and the engine tolerates a session ended early.)
+	assert.deepEqual(callsWith(calls, "end").map(argv), ["mnexis end --id s1 --json"]);
+	assert.equal(callsWith(calls, "save").length, 1, "the closing state was written");
+	assert.match(callsWith(calls, "save")[0].args.at(-2), /Session s1 ended/);
+	assert.deepEqual(events, ["session", "prompt", "end", "save", "kill"], "the children die last");
+	assert.equal(report.action, "closed");
 });
 
 test("v2: a workspace with no namespace is pointed at nothing, and the read is not repeated", async () => {
@@ -243,10 +248,166 @@ test("v2: the settle question rides the context seat once, from the session's ow
 	await cleanup();
 });
 
-// The lifecycle on V2: the event stream registers and closes, and the cleanup
-// repeats neither. The engine's semantics are beside the v1 tests.
+// The lifecycle on the seats opencode v2.2.5 really publishes.
+//
+// The V2 host has no end-of-session event: `session.deleted` is an explicit
+// removal, and `session.created` is not published at all in a run (measured
+// live on v2.2.5, 2026-11-03 — the bus delivered 25 types and neither of
+// those). What the host does publish is the idle seat — the session finished
+// its work and goes idle — and the execution events that cover the paths idle
+// skips (a failure or an interruption never reaches idle).
+//
+// So the state the next session resumes from is refreshed at the pause, and
+// the engine's session is ended for real when the host goes away or another
+// session starts (see the tests below).
 
-test("v2: the host's session.deleted ends that session, and the cleanup does not repeat it", async () => {
+test("v2: the idle seat refreshes the closing state without ending the session", async () => {
+	const { exec, calls } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	// The host admits what the person typed: the session is registered.
+	await host.hooks.get("session:prompt")({
+		sessionID: "s7",
+		messageID: "m1",
+		prompt: { text: "guarda el puerto" },
+		delivery: "steer",
+	});
+	assert.ok(await waitFor(() => callsWith(calls, "session").length === 1), "the session was registered");
+
+	// The session finishes its work and goes idle.
+	await host.hooks.get("session:experimental.idle")({
+		sessionID: "s7",
+		background: [],
+	});
+
+	assert.ok(await waitFor(() => callsWith(calls, "save").length === 1), "the closing state was written");
+	assert.equal(callsWith(calls, "end").length, 0, "the engine's session is still open");
+
+	const save = callsWith(calls, "save")[0];
+	assert.deepEqual(save.args.slice(0, 7), [
+		"save",
+		"--namespace",
+		"acme",
+		"--type",
+		"project_state",
+		"--title",
+		"estado al cierre",
+	]);
+	// The record must not claim the session ended: it is open.
+	assert.match(save.args[save.args.length - 2], /s7/);
+	assert.doesNotMatch(save.args[save.args.length - 2], /ended at/);
+
+	host.close();
+	await cleanup();
+});
+
+test("v2: the execution event refreshes the closing state on the paths idle skips", async () => {
+	const { exec, calls } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	await host.hooks.get("session:prompt")({
+		sessionID: "s8",
+		messageID: "m1",
+		prompt: { text: "guarda el puerto" },
+		delivery: "steer",
+	});
+	assert.ok(await waitFor(() => callsWith(calls, "session").length === 1), "the session was registered");
+
+	// A turn that failed never reaches the idle seat.
+	host.push({ type: "session.execution.failed", data: { sessionID: "s8" } });
+	assert.ok(await waitFor(() => callsWith(calls, "save").length === 1), "the closing state was written");
+	assert.equal(callsWith(calls, "end").length, 0, "the engine's session is still open");
+
+	host.close();
+	await cleanup();
+});
+
+test("v2: a new session ends the previous one, with its state", async () => {
+	const { exec, calls } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	await host.hooks.get("session:prompt")({
+		sessionID: "s1",
+		messageID: "m1",
+		prompt: { text: "primera conversación" },
+		delivery: "steer",
+	});
+	assert.ok(await waitFor(() => callsWith(calls, "session").length === 1), "the first session was registered");
+
+	// The person starts another conversation: the previous one is over.
+	host.push({ type: "session.execution.started", data: { sessionID: "s2" } });
+	assert.ok(await waitFor(() => callsWith(calls, "end").length === 1), "the previous session was ended");
+
+	assert.deepEqual(callsWith(calls, "end").map(argv), ["mnexis end --id s1 --json"]);
+	const save = callsWith(calls, "save")[0];
+	assert.deepEqual(save.args.slice(0, 7), [
+		"save",
+		"--namespace",
+		"acme",
+		"--type",
+		"project_state",
+		"--title",
+		"estado al cierre",
+	]);
+	assert.match(save.args.at(-2), /Session s1 ended/);
+
+	host.close();
+	await cleanup();
+});
+
+test("v2: the turn that follows in the same session does not end it", async () => {
+	const { exec, calls } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	await host.hooks.get("session:prompt")({
+		sessionID: "s1",
+		messageID: "m1",
+		prompt: { text: "primera" },
+		delivery: "steer",
+	});
+	assert.ok(await waitFor(() => callsWith(calls, "session").length === 1), "the session was registered");
+
+	// A second turn of the SAME session is not a new session.
+	host.push({ type: "session.execution.started", data: { sessionID: "s1" } });
+	await waitFor(() => callsWith(calls, "save").length >= 0);
+	assert.equal(callsWith(calls, "end").length, 0, "the session is not ended by its own next turn");
+
+	host.close();
+	await cleanup();
+});
+
+test("v2: a second pause with the same state does not write the record again", async () => {
+	const { exec, calls } = recordingExec(engine());
+	const host = fakeHost();
+	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);
+
+	await host.hooks.get("session:prompt")({
+		sessionID: "s9",
+		messageID: "m1",
+		prompt: { text: "guarda el puerto" },
+		delivery: "steer",
+	});
+	assert.ok(await waitFor(() => callsWith(calls, "session").length === 1), "the session was registered");
+
+	await host.hooks.get("session:experimental.idle")({ sessionID: "s9", background: [] });
+	assert.ok(await waitFor(() => callsWith(calls, "save").length === 1), "the closing state was written");
+
+	// The idle seat and the execution event both name the end of the turn, and
+	// the state did not change between them: one record, one write.
+	host.push({ type: "session.execution.succeeded", data: { sessionID: "s9" } });
+	await waitFor(() => callsWith(calls, "save").length >= 1);
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal(callsWith(calls, "save").length, 1, "the unchanged state is not written twice");
+
+	host.close();
+	await cleanup();
+});
+
+test("v2: the lifecycle on V2: the host's session.deleted ends that session, and the cleanup does not repeat it", async () => {
 	const { exec, calls } = recordingExec(engine());
 	const host = fakeHost();
 	const cleanup = await createPlugin({ exec, env: {} }).setup(host.ctx);

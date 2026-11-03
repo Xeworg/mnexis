@@ -33,7 +33,7 @@ function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 	// session's outcomes say, what a session is, and what a session is told
 	// once. The state above is the instance's, and it is all they share.
 	const { observeTool, settle } = createSettle({ evidence });
-	const { startSession, closeSession, capture } = createSession({ sessions, evidence, cwd, cli, env, report });
+	const { startSession, closeSession, capture, refreshSessionState, closeOpenSessions } = createSession({ sessions, evidence, cwd, cli, env, report });
 	const { pointer, compaction } = createPointer({ pointed, cwd, cli, env, report });
 
 	/**
@@ -59,6 +59,8 @@ function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 		capture,
 		startSession,
 		closeSession,
+		refreshSessionState,
+		closeOpenSessions,
 		pointer,
 		settle,
 		observeTool,

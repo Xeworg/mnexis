@@ -85,8 +85,16 @@
 "read time and never stored: `merged`, `not_merged` or `unknown`.",
 "session id you were given — never invented; this plugin already registers the " +
 "session, each with identity and a preview; `full` gives whole records. The " +
+"session.created",
+"session.deleted",
+"session.execution.failed",
+"session.execution.interrupted",
+"session.execution.started",
+"session.execution.succeeded",
 "sessions the host opens. The engine never ends a session for you.",
 "set — " +
+"shutdown",
+"shutdown",
 "shutdown",
 "so no session is ended here";
 "state. Every other read answers previews; this is the record itself.",
@@ -101,8 +109,13 @@
 "you believe is current, so two writers cannot overwrite each other silently; a " +
 (error, stdout, stderr) => {
 ) {
+) {
+),
 ),
 ).catch(() => {
+);
+);
+);
 );
 );
 );
@@ -149,6 +162,7 @@
 SAVE_GLOSS_HEADER,
 TYPE_NAMES.join(", ") +
 ["list", "--type", "project_state,decision", "--full", "--limit", String(limit)],
+],
 ].join("\n"),
 ].join("\n");
 ];
@@ -159,8 +173,12 @@ TYPE_NAMES.join(", ") +
 `mnexis memory: this workspace writes into namespace \`${namespace}\`` +
 abandoned: [],
 abandoned: [],
+abandoned: [],
+abandoned: [],
 abandoned: `${step} did not finish within the ${budget} ms ${name} budget and was abandoned`,
 abandoned: `${step} was abandoned: the ${budget} ms ${name} budget was already spent`,
+action: "skipped",
+action: "skipped",
 action: "skipped",
 action: "skipped",
 action: close.action,
@@ -179,9 +197,11 @@ async "tool.execute.before"(hookInput, output) {
 async dispose() {
 async event({ event }) {
 async function capture(sessionID, text) {
+async function closeOpenSessions({ keep = "" } = {}) {
 async function closeSession(sessionID) {
 async function compaction() {
 async function pointer(sessionID) {
+async function refreshSessionState(sessionID) {
 async function run(args, { json = false, cwd, timeout: override = null } = {}) {
 async function server(input = {}) {
 async function setup(ctx = {}) {
@@ -197,11 +217,15 @@ async status(cwd) {
 async step(step, work) {
 await core.capture(event?.sessionID, event?.prompt?.text);
 await core.capture(hookInput?.sessionID, promptTextFromParts(output?.parts));
+await core.closeOpenSessions({ keep: sessionID });
 await core.closeSession(sessionID);
+await core.refreshSessionState(event?.sessionID);
+await core.refreshSessionState(sessionID);
 await core.startSession(sessionID, directoryOfEvent(event) ?? cwd);
 await core.startSession(sessionIDOfEvent(event), directoryOfEvent(event) ?? cwd);
 await ctx.session.hook("compaction", async (event) => {
 await ctx.session.hook("context", async (event) => {
+await ctx.session.hook("experimental.idle", async (event) => {
 await ctx.session.hook("prompt", async (event) => {
 await ctx.tool.hook("execute.after", (event) => {
 await ctx.tool.hook("execute.before", (event) => {
@@ -212,6 +236,8 @@ body: { service: PLUGIN_ID, level: "warn", message: "mnexis", extra: record },
 break;
 break;
 budgetOf(env[CAPTURE_BUDGET_ENV], PROMPT_CAPTURE_BUDGET_MS),
+budgetOf(env[SHUTDOWN_BUDGET_ENV], SHUTDOWN_BUDGET_MS),
+budgetOf(env[SHUTDOWN_BUDGET_ENV], SHUTDOWN_BUDGET_MS),
 budgetOf(env[SHUTDOWN_BUDGET_ENV], SHUTDOWN_BUDGET_MS),
 busyRetries += 1;
 busyRetries < BUSY_RETRY_DELAYS_MS.length
@@ -228,6 +254,7 @@ children.killAll();
 clearTimeout(timer);
 cli,
 cli.withBudget(left).previousSession(cwd),
+cli.withBudget(left).saveMemory(
 cli.withBudget(left).saveMemory(
 cli.withBudget(left).savePrompt({ content: text, sessionId: sessionID }, cwd),
 cli.withBudget(left).sessionEnd({ sessionId: sessionID }, where),
@@ -252,7 +279,9 @@ close.reason = "not opened by this plugin";
 close.reason = "the host named no session";
 close.steps.push("end");
 close.steps.push("save");
+closeOpenSessions,
 closeSession,
+closed: [],
 code = 127;
 code = typeof error.code === "number" ? error.code : 1;
 command,
@@ -276,13 +305,19 @@ const args = ["prompt", content];
 const args = ["save", "--namespace", namespace];
 const args = ["session", "--id", sessionId];
 const at = branchSha ? ` at ${branchSha}` : "";
+const at = branchSha ? ` at ${branchSha}` : "";
 const block = await core.compaction();
 const block = await core.compaction();
 const body = `\n ${content.split("\n").join("\n ")}`;
 const branch = text(data.branch);
+const branch = text(data.branch);
+const branchRemote = text(data.branch_remote);
 const branchRemote = text(data.branch_remote);
 const branchSha = text(data.branch_sha);
+const branchSha = text(data.branch_sha);
 const budget = Number.isFinite(budgetMs) && budgetMs > 0 ? budgetMs : 0;
+const budget = createDeadline(
+const budget = createDeadline(
 const budget = createDeadline(
 const budget = createDeadline(
 const budget = createDeadline(budgetOf(env[POINTER_BUDGET_ENV], POINTER_BUDGET_MS), "pointer");
@@ -296,8 +331,10 @@ const children = registry ?? createChildRegistry();
 const children = registry ?? createChildRegistry();
 const cli = client ?? createClient({ env, registry: children });
 const close = {
+const closed = await budget.step("end", () => closeSession(sessionID));
 const command = binary || env.MNEXIS_BIN || "mnexis";
 const command = typeof input?.command === "string" ? input.command : "";
+const content = sessionPauseContent({ id: sessionID, ...(known.session ?? {}) });
 const content = typeof item.content === "string" ? item.content.trim() : "";
 const controller = new AbortController();
 const controllers = [];
@@ -309,10 +346,12 @@ const cwd =
 const cwd = typeof ctx.location?.directory === "string" ? ctx.location.directory : process.cwd();
 const data = json ? parseJson(result.stdout) : null;
 const data = session && typeof session === "object" ? session : {};
+const data = session && typeof session === "object" ? session : {};
 const deadline = Date.now() + budget;
 const deadline = Date.now() + timeout;
 const delay = BUSY_RETRY_DELAYS_MS[busyRetries];
 const description = CURATED_DESCRIPTIONS[id];
+const directory = text(data.directory);
 const directory = text(data.directory);
 const end = text.lastIndexOf("}");
 const endStep = await budget.step("end", (left) =>
@@ -328,18 +367,22 @@ const fullArgs = json ? [...args, "--json"] : args;
 const head = `\n- [${type}] ${title} (${uuid}${revision})`;
 const hostLogger =
 const id = text(data.id) || "unknown";
+const id = text(data.id) || "unknown";
 const id = tool && typeof tool.id === "string" ? tool.id : "";
 const info = event.properties && event.properties.info;
 const info = properties && properties.info;
 const items = listData && typeof listData === "object" && Array.isArray(listData.items)
 const journal = (data) =>
 const kind = typeof record?.kind === "string" && record.kind !== "" ? record.kind : "report";
+const known = sessions.get(sessionID);
+const known = sessions.get(sessionID);
 const left = deadline - Date.now();
 const left = kept - carried;
 const left = this.remaining();
 const lines = [
 const lines = [
 const lines = [`Session ${id} ended${endedAt ? ` at ${endedAt}` : ""}.`];
+const lines = [`Session ${id} is still open; it paused.`];
 const list = editor && typeof editor.list === "function" ? editor.list() : [];
 const live = [...children];
 const location = event.location;
@@ -348,6 +391,8 @@ const name = typeof label === "string" && label !== "" ? label : "the work";
 const name = typeof tool === "string" ? tool : "";
 const namespace =
 const namespace =
+const namespace =
+const namespace = known.namespace;
 const plugin = createPlugin();
 const pointed = new Set();
 const pointer = await core.pointer(event?.sessionID);
@@ -355,8 +400,10 @@ const pointer = await core.pointer(hookInput?.sessionID);
 const properties = event.properties && typeof event.properties === "object" ? event.properties : null;
 const raw = typeof session.summary === "string" ? session.summary.trim() : "";
 const recallStep = await budget.step("recall", (left) =>
+const refresh = {
 const refusal = gateViolation(event?.tool, event?.input);
 const refusal = gateViolation(hookInput?.tool, output?.args);
+const remote = branchRemote ? ` (${branchRemote})` : "";
 const remote = branchRemote ? ` (${branchRemote})` : "";
 const result = await cli.sessionStart({ sessionId: sessionID, directory: where }, cwd);
 const result = await cli.stateRecords(cwd, STATE_LIMIT);
@@ -364,6 +411,8 @@ const result = captured.value;
 const retry = RETRY_COMMANDS.has(name);
 const revision = Number.isFinite(item.revision) ? `, rev ${item.revision}` : "";
 const saved = await budget.step("save", (left) =>
+const saved = await budget.step("save", (left) =>
+const server = createV1Entry(coreFor);
 const session = ended.data && typeof ended.data === "object" ? ended.data : null;
 const session = previous && typeof previous === "object" ? previous.session : null;
 const session = result.data && typeof result.data === "object" ? result.data : null;
@@ -372,8 +421,11 @@ const sessionID = sessionIDOfEvent(event);
 const sessions = new Map();
 const settle = core.settle(event?.sessionID);
 const settle = core.settle(hookInput?.sessionID);
+const setup = createV2Entry(coreFor);
+const shutdown = await core.shutdown();
 const start = text.indexOf("{");
 const started = typeof session.started_at === "string" ? session.started_at : "";
+const startedAt = text(data.started_at);
 const startedAt = text(data.started_at);
 const state = evidence.get(sessionID);
 const state = evidenceOf(sessionID);
@@ -381,8 +433,11 @@ const status = statusStep.value;
 const statusStep = await budget.step("status", (left) =>
 const stream = ctx.event.subscribe({
 const summary = previousSummary(previous);
+const sweep = await core.closeOpenSessions();
+const sweep = {
 const target =
 const text =
+const text = (value) => (typeof value === "string" ? value.trim() : "");
 const text = (value) => (typeof value === "string" ? value.trim() : "");
 const text = String(stdout ?? "").trim();
 const text = pointerText({ status: status.data, previous });
@@ -396,10 +451,18 @@ const uuid = typeof item.uuid === "string" ? item.uuid : "?";
 const value = Number.parseInt(String(override ?? ""), 10);
 const when = started.length >= 10 ? started.slice(0, 10) : "date unknown";
 const where = directory || cwd;
-const where = sessions.get(sessionID) ?? cwd;
+const where = known.directory ?? cwd;
 const workspace = status && typeof status === "object" ? status.workspace : null;
+const { observeTool, settle } = createSettle({ evidence });
+const { pointer, compaction } = createPointer({ pointed, cwd, cli, env, report });
 const { registry, ...spawnOptions } = options;
+const { startSession, closeSession, capture, refreshSessionState, closeOpenSessions } = createSession({ sessions, evidence, cwd, cli, env, report });
+content,
 content: sessionCloseContent({ id: sessionID, ...(session ?? {}) }),
+continue;
+continue;
+continue;
+continue;
 continue;
 continue;
 controller.abort();
@@ -410,9 +473,13 @@ createCore({
 curateCatalog(editor);
 cwd,
 data,
+directory: where,
+directory: where,
 editor.update(id, (target) => {
 ended_at: close.ended_at,
 ended_at: endedAt,
+ended_at: endedAt,
+ended_at: null,
 env,
 error: output?.error,
 event.error != null ||
@@ -422,6 +489,9 @@ event.result?.isError === true ||
 event.system.push({ type: "text", text: block });
 event.system.push({ type: "text", text: pointer });
 event.system.push({ type: "text", text: settle });
+event?.type === "session.execution.failed" ||
+event?.type === "session.execution.interrupted"
+event?.type === "session.execution.succeeded" ||
 evidence.delete(sessionID);
 evidence.delete(sessionID);
 evidence.set(sessionID, state);
@@ -463,16 +533,24 @@ export function pointerText({ status, previous } = {}) {
 export function promptTextFromParts(parts) {
 export function sessionCloseContent(session) {
 export function sessionIDOfEvent(event) {
+export function sessionPauseContent(session) {
 export function stateBlockText(listData) {
 export function storageLogger(storage) {
+failed: [],
 firstLine.length > SUMMARY_CHARS ? `${firstLine.slice(0, SUMMARY_CHARS - 1)}…` : firstLine;
 for (const child of live) {
 for (const controller of controllers) {
 for (const item of items) {
 for (const part of parts) {
+for (const sessionID of [...sessions.keys()]) {
 for (const tool of list) {
 for await (const event of stream) {
 function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
+function createPointer({ pointed, cwd, cli, env, report }) {
+function createSession({ sessions, evidence, cwd, cli, env, report }) {
+function createSettle({ evidence }) {
+function createV1Entry(coreFor) {
+function createV2Entry(coreFor) {
 function curateCatalog(editor) {
 function evidenceOf(sessionID) {
 function make(binding = {}) {
@@ -482,6 +560,7 @@ function report(kind, data) {
 function settle(sessionID) {
 function sleep(ms) {
 function timeoutFor(name) {
+if (
 if (!Array.isArray(event?.system)) {
 if (!Array.isArray(list)) {
 if (!Array.isArray(output?.system)) {
@@ -494,12 +573,13 @@ if (!event) {
 if (!id.startsWith(MCP_TOOL_PREFIX)) {
 if (!isHumanMessage(output?.message)) {
 if (!item || typeof item !== "object") continue;
+if (!known || typeof known === "string") {
+if (!known || typeof known === "string") {
 if (!message || typeof message !== "object") {
 if (!namespace) {
 if (!part || typeof part !== "object") continue;
 if (!recallStep.abandoned && recallStep.value.code === 0) {
 if (!session || typeof session !== "object") {
-if (!sessions.has(sessionID)) {
 if (!state || !state.files || state.saves > 0 || state.asked) {
 if (!state) {
 if (!storage || typeof storage.set !== "function") {
@@ -510,14 +590,18 @@ if (answer === ABANDONED) {
 if (block && Array.isArray(event?.system)) {
 if (block && Array.isArray(output?.context)) {
 if (branch) {
+if (branch) {
 if (captured.abandoned) {
 if (carried === 0) {
+if (closed.abandoned) {
+if (closed.action === "closed") {
 if (content === "") continue;
 if (ctx.event && typeof ctx.event.subscribe === "function") {
 if (ctx.session && typeof ctx.session.hook === "function") {
 if (ctx.tool && typeof ctx.tool.hook === "function") {
 if (ctx.tool && typeof ctx.tool.transform === "function") {
 if (deadline - Date.now() <= delay) {
+if (directory) {
 if (directory) {
 if (directory) {
 if (endStep.abandoned) {
@@ -530,10 +614,14 @@ if (error.code === "ENOENT") {
 if (event.type === "session.created") {
 if (event.type === "session.deleted") {
 if (event?.type === "session.deleted") {
+if (event?.type === "session.execution.started") {
 if (failed) {
 if (fromData) {
 if (info && typeof info.directory === "string" && info.directory !== "") {
 if (info && typeof info.id === "string" && info.id !== "") {
+if (keep && sessionID === keep) {
+if (known.ended_at) {
+if (known.last_refresh === content) {
 if (left <= 0) {
 if (left <= 0) {
 if (left > 0) {
@@ -553,6 +641,8 @@ if (result.code !== 0) {
 if (result.code !== 0) {
 if (result.code !== 0) {
 if (saved.abandoned) {
+if (saved.abandoned) {
+if (saved.value.code !== 0) {
 if (saved.value.code !== 0) {
 if (sessionID === "") {
 if (sessionId) {
@@ -560,6 +650,7 @@ if (sessions.has(sessionID)) {
 if (settle) {
 if (settle) {
 if (start >= 0 && end > start) {
+if (startedAt) {
 if (startedAt) {
 if (status.code !== 0) {
 if (statusStep.abandoned) {
@@ -570,7 +661,9 @@ if (tool === "") {
 if (tool === SAVE_TOOL_ID) {
 if (typeof description === "string") {
 if (typeof logger !== "function") {
+if (typeof namespace !== "string" || namespace === "") {
 if (typeof part.text !== "string") continue;
+if (typeof sessionID !== "string" || sessionID === "") {
 if (typeof sessionID !== "string" || sessionID === "") {
 if (typeof sessionID !== "string" || sessionID === "") {
 if (typeof sessionID !== "string" || sessionID === "") {
@@ -590,6 +683,8 @@ journal({ step: "hook" });
 journal({ step: "save", exit_code: saved.value.code });
 kept += 1;
 killAll() {
+known.directory ?? cwd,
+known.last_refresh = content;
 let busyRetries = 0;
 let carried = 0;
 let code = 0;
@@ -602,7 +697,10 @@ let used = lines[0].length;
 lines.push(
 lines.push(
 lines.push(`Branch: ${branch}${at}${remote}.`);
+lines.push(`Branch: ${branch}${at}${remote}.`);
 lines.push(`Directory: ${directory}.`);
+lines.push(`Directory: ${directory}.`);
+lines.push(`It started at ${startedAt}.`);
 lines.push(`It started at ${startedAt}.`);
 lines.push(`Previous session (${summary.when}): ${summary.text}`);
 lines.push(head + body);
@@ -626,7 +724,11 @@ mnexis_memory_supersede:
 mnexis_memory_update:
 mnexis_memory_workspace:
 namespace,
+namespace,
+namespace,
+namespace: "",
 namespace: close.namespace,
+namespace: null,
 namespace: null,
 observeTool,
 output.context.push(block);
@@ -636,6 +738,22 @@ pointed.add(sessionID);
 pointer,
 previous = recallStep.value.data;
 reason: RELOAD_SKIP_REASON,
+refresh.abandoned.push(saved.abandoned);
+refresh.action = "abandoned";
+refresh.action = "failed";
+refresh.action = "failed";
+refresh.action = "refreshed";
+refresh.action = "skipped";
+refresh.error = String(error);
+refresh.exit_code = saved.value.code;
+refresh.namespace = namespace;
+refresh.reason = "not opened by this plugin";
+refresh.reason = "the engine named no namespace for this session";
+refresh.reason = "the host named no session";
+refresh.reason = "the session is already ended";
+refresh.reason = "the state is unchanged";
+refresh.steps.push("save");
+refreshSessionState,
 registry.track(child);
 registry: children,
 remaining() {
@@ -648,6 +766,9 @@ report("pointer", { session: sessionID, abandoned: statusStep.abandoned });
 report("pointer", { session: sessionID, error: String(error) });
 report("pointer", { session: sessionID, exit_code: status.code });
 report("session-end", {
+report("session-refresh", { session: sessionID, error: String(error) });
+report("session-refresh", { session: sessionID, exit_code: saved.value.code });
+report("session-refresh", { session: sessionID, step: "save", reason: saved.abandoned });
 report("session-start", {
 report("session-start", { session: sessionID, error: String(error) });
 report("session-start", { session: sessionID, exit_code: result.code });
@@ -691,11 +812,11 @@ return close;
 return close;
 return core.closeSession(sessionIDOfEvent(event));
 return core.shutdown();
-return core.shutdown();
 return fromData;
 return info.directory;
 return info.id;
 return lines.join("");
+return lines.join("\n");
 return lines.join("\n");
 return lines.join("\n");
 return location.directory;
@@ -725,7 +846,19 @@ return null;
 return null;
 return null;
 return properties.sessionID;
+return refresh;
+return refresh;
+return refresh;
+return refresh;
+return refresh;
+return refresh;
+return refresh;
+return refresh;
+return refresh;
+return server;
+return setup;
 return state;
+return sweep;
 return text === "" ? null : text;
 return text === "" ? null : text;
 return texts.join("\n").trim() === "" ? "" : texts.join("\n");
@@ -740,7 +873,11 @@ return {
 return {
 return {
 return {
+return { ...shutdown, action: sweep.action, closed: sweep.closed, abandoned: sweep.abandoned };
 return { id: PLUGIN_ID, setup, server };
+return { observeTool, settle };
+return { pointer, compaction };
+return { startSession, closeSession, capture, refreshSessionState, closeOpenSessions };
 return { value: answer };
 return { when, text };
 return;
@@ -764,6 +901,10 @@ run: call,
 session && typeof session.ended_at === "string" && session.ended_at !== ""
 session && typeof session.ended_at === "string" && session.ended_at !== ""
 session && typeof session.namespace === "string" ? session.namespace : "";
+session && typeof session.namespace === "string" ? session.namespace : "";
+session: null,
+session: session ?? null,
+session: sessionID,
 session: sessionID,
 session: sessionID,
 session: sessionID,
@@ -771,7 +912,9 @@ session: sessionID,
 sessionID: hookInput?.sessionID,
 sessions.delete(sessionID);
 sessions.delete(sessionID);
-sessions.set(sessionID, where);
+sessions.set(sessionID, {
+sessions.set(sessionID, {
+sessions: [...sessions.keys()],
 sessions: [...sessions.keys()],
 settle,
 shutdown,
@@ -785,7 +928,12 @@ status && typeof status === "object" && Number.isFinite(status.memory_count)
 steps: [...close.steps],
 steps: [],
 steps: [],
+steps: [],
 storage.set(`mnexis.report.${kind}`, { at: new Date().toISOString(), ...record }),
+sweep.abandoned.push(closed.abandoned);
+sweep.action = sweep.abandoned.length > 0 ? "partial" : "closed";
+sweep.closed.push(sessionID);
+sweep.failed.push({ session: sessionID, action: closed.action, reason: closed.reason });
 target.description = description;
 target.options = { ...(target.options ?? {}), codemode: false };
 texts.push(part.text);
@@ -793,6 +941,7 @@ throw new Error(refusal);
 throw new Error(refusal);
 timeout_ms: timeout,
 timer = setTimeout(() => resolve(ABANDONED), left);
+title: SESSION_CLOSE_TITLE,
 title: SESSION_CLOSE_TITLE,
 tool: hookInput?.tool,
 track(child) {
@@ -817,12 +966,15 @@ try {
 try {
 try {
 try {
+try {
+try {
+type: "project_state",
 type: "project_state",
 typeof event.sessionID === "string" && event.sessionID !== ""
 typeof event.tool === "string"
 typeof input.directory === "string"
 typeof input?.filePath === "string"
-types: ["session.created", "session.deleted"],
+types: [
 used += head.length + body.length;
 void (async () => {
 void Promise.resolve(
@@ -831,6 +983,7 @@ where,
 while (
 withBudget(ms) {
 workspace && typeof workspace.namespace === "string" && workspace.namespace !== ""
+{
 {
 { encoding: "utf8", maxBuffer: 8 * 1024 * 1024, ...spawnOptions },
 { json: true, cwd },
@@ -987,11 +1140,39 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 }
 }
 }
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
 } catch (error) {
 } catch (error) {
 } catch (error) {
 } catch (error) {
 } catch (error) {
+} catch (error) {
+} catch {
 } catch {
 } catch {
 } catch {
@@ -1026,6 +1207,9 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 });
 });
 });
+});
+});
+});
 },
 },
 },
@@ -1047,6 +1231,9 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 },
 },
 },
+},
+};
+};
 };
 };
 };
@@ -1064,6 +1251,14 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 # payloads (one JSON string per line)
 "\" — \""
 "\" — so pick the one that fits.\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
+"\"\""
 "\"\""
 "\"\""
 "\"\""
@@ -1174,6 +1369,7 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"\\n\""
 "\"\\n\""
 "\"\\n\""
+"\"\\n\""
 "\"`memory_save_prompt`.\""
 "\"`memory_type` you name replaces the record's kind, and omitting it keeps the one \""
 "\"`mnexis config allow-namespace <namespace>` once — the grant persists in the \""
@@ -1181,6 +1377,7 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"`mnexis_memory_get`.\""
 "\"`mnexis_memory_get`; `full` gives every memory whole.\""
 "\"`mnexis_memory_save` carries the vocabulary: `memory_type` is the engine's closed \""
+"\"abandoned\""
 "\"abandoned\""
 "\"abandoned\""
 "\"and the answer names the namespace it searched. `mnexis_memory_search` is the \""
@@ -1197,6 +1394,8 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"changed fact updates it. Keywords are other languages' or teams' names for \""
 "\"changing existing code. Reaches every namespace you may read; `namespace` narrows \""
 "\"chat.message\""
+"\"closed\""
+"\"closed\""
 "\"closed\""
 "\"compaction\""
 "\"compaction\""
@@ -1219,6 +1418,7 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"end\""
 "\"end\""
 "\"end\""
+"\"end\""
 "\"episode — something that happened in a session.\""
 "\"estado al cierre\""
 "\"every namespace you may read; `namespace` narrows it. Read one with \""
@@ -1227,10 +1427,13 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"execute.before\""
 "\"exit\""
 "\"experimental.chat.system.transform\""
+"\"experimental.idle\""
 "\"experimental.session.compacting\""
 "\"fact changed: save the new one first, then link both here with the revision each \""
 "\"fact — the neutral default when none of the others fit.\""
 "\"fact\""
+"\"failed\""
+"\"failed\""
 "\"failed\""
 "\"failed\""
 "\"failed\""
@@ -1270,7 +1473,9 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"namespace this workspace writes into, the read and write allowlists, how many \""
 "\"node:child_process\""
 "\"not opened by this plugin\""
+"\"not opened by this plugin\""
 "\"number\""
+"\"object\""
 "\"object\""
 "\"object\""
 "\"object\""
@@ -1289,6 +1494,7 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"of a word (`staging-eu`). Each hit is identity and kind — open one with \""
 "\"one is at. Both must live in this project's namespace; another project's memory \""
 "\"partial\""
+"\"partial\""
 "\"pasted from another conversation, or a statement that must be found by its exact \""
 "\"patch\""
 "\"picks the record — the same title always lands on the same record, so a \""
@@ -1302,6 +1508,7 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"project (the live project_state and decision records that fit the block's own \""
 "\"project_state — where the work stands now.\""
 "\"project_state\""
+"\"project_state\""
 "\"project_state,decision\""
 "\"prompt capture\""
 "\"prompt\""
@@ -1312,7 +1519,11 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"read time and never stored: `merged`, `not_merged` or `unknown`.\""
 "\"recall\""
 "\"recall\""
+"\"refreshed\""
 "\"report\""
+"\"save\""
+"\"save\""
+"\"save\""
 "\"save\""
 "\"save\""
 "\"save\""
@@ -1326,6 +1537,9 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"session\""
 "\"session, each with identity and a preview; `full` gives whole records. The \""
 "\"session-end\""
+"\"session-refresh\""
+"\"session-refresh\""
+"\"session-refresh\""
 "\"session-start\""
 "\"session-start\""
 "\"session-start\""
@@ -1334,10 +1548,23 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"session.deleted\""
 "\"session.deleted\""
 "\"session.deleted\""
+"\"session.execution.failed\""
+"\"session.execution.failed\""
+"\"session.execution.interrupted\""
+"\"session.execution.interrupted\""
+"\"session.execution.started\""
+"\"session.execution.started\""
+"\"session.execution.succeeded\""
+"\"session.execution.succeeded\""
 "\"sessions the host opens. The engine never ends a session for you.\""
 "\"set — \""
 "\"shell\""
 "\"shutdown\""
+"\"shutdown\""
+"\"shutdown\""
+"\"skipped\""
+"\"skipped\""
+"\"skipped\""
 "\"skipped\""
 "\"skipped\""
 "\"so no session is ended here\""
@@ -1383,19 +1610,30 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"string\""
 "\"string\""
 "\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
+"\"string\""
 "\"summary), and what the answer did not include: how many candidates the budget \""
 "\"text\""
 "\"text\""
 "\"text\""
 "\"text\""
 "\"the engine ended the session but answered no namespace\""
+"\"the engine named no namespace for this session\""
 "\"the files.\""
 "\"the host named no session\""
+"\"the host named no session\""
 "\"the matching memories, the live project state and the previous session's summary.\""
+"\"the session is already ended\""
+"\"the state is unchanged\""
 "\"the unload carries no reason on this host: a reload and a quit look the same, \""
 "\"the work\""
 "\"tool.execute.after\""
 "\"tool.execute.before\""
+"\"unknown\""
 "\"unknown\""
 "\"user\""
 "\"utf8\""
@@ -1410,6 +1648,8 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "\"{\""
 "\"}\""
 "` (${branchRemote})`"
+"` (${branchRemote})`"
+"` at ${branchSha}`"
 "` at ${branchSha}`"
 "`${count === null ? \"\" : ` (${count} memories)`}.`"
 "`${firstLine.slice(0, SUMMARY_CHARS - 1)}…`"
@@ -1417,10 +1657,14 @@ workspace && typeof workspace.namespace === "string" && workspace.namespace !== 
 "`${step} was abandoned: the ${budget} ms ${name} budget was already spent`"
 "`, rev ${item.revision}`"
 "`Branch: ${branch}${at}${remote}.`"
+"`Branch: ${branch}${at}${remote}.`"
 "`Directory: ${directory}.`"
+"`Directory: ${directory}.`"
+"`It started at ${startedAt}.`"
 "`It started at ${startedAt}.`"
 "`Previous session (${summary.when}): ${summary.text}`"
 "`Session ${id} ended${endedAt ? ` at ${endedAt}` : \"\"}.`"
+"`Session ${id} is still open; it paused.`"
 "`\\n  ${content.split(\"\\n\").join(\"\\n  \")}`"
 "`\\n- [${type}] ${title} (${uuid}${revision})`"
 "`\\n… ${left} more live record${left === 1 ? \"\" : \"s\"} did not fit; `"
