@@ -210,7 +210,9 @@ impl AgentInstaller {
     pub fn plugins_dir(&self, environment: AgentEnvironment) -> Option<PathBuf> {
         match environment {
             AgentEnvironment::Pi => None,
-            AgentEnvironment::Opencode => Some(self.home.join(".config").join("opencode").join("plugins")),
+            AgentEnvironment::Opencode => {
+                Some(self.home.join(".config").join("opencode").join("plugins"))
+            }
         }
     }
 
@@ -400,9 +402,7 @@ fn stale_installed_files(directory: &Path, shipped: &[String]) -> Vec<String> {
     };
     let previous: Vec<String> = serde_json::from_str::<serde_json::Value>(&contents)
         .ok()
-        .and_then(|value| {
-            serde_json::from_value::<Vec<String>>(value.get("files").cloned()?).ok()
-        })
+        .and_then(|value| serde_json::from_value::<Vec<String>>(value.get("files").cloned()?).ok())
         .unwrap_or_default();
     previous
         .into_iter()
@@ -707,9 +707,11 @@ mod tests {
         let targets = installer.targets(AgentEnvironment::Opencode);
         assert_eq!(targets.len(), 2);
         assert_eq!(targets[0].kind, AssetKind::Skill);
-        assert!(targets[0]
-            .directory
-            .ends_with("opencode/skills/mnexis-memory"));
+        assert!(
+            targets[0]
+                .directory
+                .ends_with("opencode/skills/mnexis-memory")
+        );
         assert_eq!(targets[1].kind, AssetKind::Plugin);
         // The plugin lands in the plugins directory itself: opencode loads
         // every .js file it finds there, so the file name is the asset's.
@@ -741,8 +743,7 @@ mod tests {
         installer
             .install(AgentEnvironment::Opencode, AssetFilter::All)
             .expect("reinstall");
-        let contents =
-            fs::read_to_string(plugins.join("foreign-plugin.js")).expect("read foreign");
+        let contents = fs::read_to_string(plugins.join("foreign-plugin.js")).expect("read foreign");
         assert_eq!(contents, "theirs");
         fs::remove_dir_all(&home).ok();
     }
@@ -795,7 +796,10 @@ mod tests {
             !skill.join(".mnexis-manifest.json").exists(),
             "the receipt survived the uninstall"
         );
-        assert!(!skill.exists(), "the emptied skill directory was not removed");
+        assert!(
+            !skill.exists(),
+            "the emptied skill directory was not removed"
+        );
         fs::remove_dir_all(&home).ok();
     }
 
@@ -868,10 +872,16 @@ mod tests {
             .install(AgentEnvironment::Pi, AssetFilter::Extension)
             .expect("reinstall");
 
-        assert!(!extension.join("index.js").exists(), "the stale file survived");
-        assert!(report.files.iter().any(
-            |f| f.action == FileAction::Removed && f.path == extension.join("index.js")
-        ));
+        assert!(
+            !extension.join("index.js").exists(),
+            "the stale file survived"
+        );
+        assert!(
+            report
+                .files
+                .iter()
+                .any(|f| f.action == FileAction::Removed && f.path == extension.join("index.js"))
+        );
         fs::remove_dir_all(&home).ok();
     }
 
@@ -915,7 +925,10 @@ mod tests {
         let asset = asset_for(AssetKind::Extension).expect("the extension asset");
         for file in asset.files {
             let path = extension.join(file.path);
-            assert!(path.is_file(), "shipped file missing after cleanup: {path:?}");
+            assert!(
+                path.is_file(),
+                "shipped file missing after cleanup: {path:?}"
+            );
         }
         fs::remove_dir_all(&home).ok();
     }
