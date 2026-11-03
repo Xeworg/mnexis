@@ -17,7 +17,7 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 
 | Tool | Purpose |
 | --- | --- |
-| `mnexis_workspace` | First call of a session: the namespace this workspace writes into, the allowlists, and the most recent memories — each with its title and a preview, never the whole record. |
+| `mnexis_workspace` | The namespace this workspace writes into, the allowlists, and the most recent memories — each with its title and a preview, never the whole record. Call it for the binding or the allowlists; `mnexis_context` is the session's start verb. |
 | `mnexis_context` | The one-call door: the task in one line, and the memories this project recorded that matter for it, trimmed to a token budget — whole facts, never a cut one — plus the **session state** (the live `project_state`/`decision` records with the content that fits the block's own 2048-token budget, the index of the live records that did not fit, and the previous session's summary), so one call answers "where did we leave off". Each item is the fact whole — identity and entire content — and the answer declares the namespace it searched, the tokens it spent, and the candidates the budget could not keep, with their size. |
 | `mnexis_save` | Store a durable, self-contained memory about the project, with the `type` of fact it is when the agent knows it: one of `knowledge`, `decision`, `preference`, `procedure`, `project_state`, `episode`, `fact`. Omitted, a new record is stored as `fact` and a re-save keeps the type the record already has. |
 | `mnexis_search` | Full-text search over the stored memories (ranked), narrowed by `type` when only some kinds matter. |
@@ -28,9 +28,25 @@ Remove it again with `./install.sh uninstall --extensions --env pi`.
 | `mnexis_save_prompt` | Store a message from outside this session verbatim. The session's own messages are already stored by the capture below, so the model does not copy the conversation here. |
 | `mnexis_search_prompts` | Find what the user said before, across sessions, by its words. |
 | `mnexis_supersede` | Replace an outdated memory with a newer one, keeping history. |
+| `mnexis_suggest_topic_key` | Ask which topic key a title would update, before saving an unsure fact. |
 
-Every tool is declared to the model in every session: availability does not
-depend on the model discovering a skill.
+Five of them are declared to the model in every session — `mnexis_workspace`,
+`mnexis_context`, `mnexis_search`, `mnexis_show`, `mnexis_save`: the door and
+the loop, always available without the model discovering a skill. The rest
+ride `exposure: "deferred"` and cost no declaration tokens: the extension
+activates pi's built-in `tool_search` at session start, and a door tool whose
+answer implies a tail tool (`mnexis_context` returning identifiers,
+`mnexis_search` saying "read one with `mnexis_show`") activates that tail
+tool itself, so the long tail is one activation away instead of one search
+round trip away — never a dead end. `mnexis_save_prompt` is hidden in pi
+(the host captures every prompt itself); `mnexis_session_start` and
+`mnexis_session_end` are inactive because the extension runs the session
+lifecycle itself. The MCP surface other hosts use is unchanged.
+
+`mnexis_save`'s description also carries the doctrine of what deserves to
+survive — the seven record types, one line each, and the examples — because
+the description is present at every save decision; the settle nudge below
+only points at it.
 
 `mnexis_save` also takes `keywords`: the comma-separated words the fact is
 called by in another language or another team's jargon (`puerto, port,
@@ -79,7 +95,7 @@ The answer the model reads names both records and the shared value, and
 ## What the human sees
 
 The tools draw themselves: pi renders the call and the result with the
-extension's own chrome (`lib/chrome.js`), so the transcript reads like a
+extension's own chrome (`lib/chrome.ts`), so the transcript reads like a
 conversation instead of a log of JSON. A call names the tool and its
 argument, an answer says what it is — the kind of the fact, its state, its
 revision, its namespace — and the footer carries the engine's status while
@@ -114,6 +130,25 @@ dark terminal, and a mark the human cannot see is not a mark.
 The icons appear when a memory carries its `type`. A memory the agent wrote
 without one is a `fact` (🧠), so a store where most records are generic
 shows mostly facts.
+
+### The journal, the counters and the nudge
+
+Four journal events — a refused prompt capture, a store recovery, a session
+close, a compaction — are written as session entries **and rendered**: one
+dim collapsed line each, expandable to the detail, surviving resume and
+exports. A silent data-loss path is a transcript line now, not a comment
+claiming visibility.
+
+The footer carries the session's adoption counters from the first turn —
+`ctx · search · save` — so a session where the model never consults memory
+shows its zeros before the human thinks to ask. `/mnexis status` writes a
+durable card with the whole picture: workspace key, bound namespace,
+allowlists, session state, prompts captured, memories, nudge state.
+
+The settle nudge is visible too: when the extension asks the agent to save
+what deserves to survive the session, the transcript shows one line saying
+so — an ask from the extension, not an agent that spontaneously stopped to
+write a memory.
 
 ## Read across projects, write inside one
 
@@ -256,8 +291,11 @@ Permissions belong to the human, so the extension never grants itself one:
   the namespace and exactly what it grants. Confirming runs
   `mnexis config allow-namespace <ns>` once; the grant persists in the
   profile, so later writes never ask again.
-- **Unbound or not authorized, headless session** (`pi -p`, JSON, RPC
-  without UI) → nothing is authorized. The tool fails with the exact
+- **Unbound or not authorized, session with a dialog channel** (TUI, or RPC
+  with UI) → the question is asked as above, and it carries a ~90 s timeout;
+  a timed-out ask is reported as timed out — never recorded as a decline.
+- **Unbound or not authorized, session without a dialog channel** (`pi -p`,
+  JSON mode) → nothing is authorized. The tool fails with the exact
   commands a human must run, filled in with the candidate and the key:
   `mnexis project bind <ns> --key <key> --path <path>` and
   `mnexis config allow-namespace <ns>`.
@@ -296,7 +334,13 @@ of throwing.
 
 ## Tests
 
+The extension is TypeScript; node ≥ 22.18 strips the types at load — no
+build step, no extra dependency.
+
 ```sh
+# from the repository root — running from the extension dir yields one
+# false failure (a gate test compares the workspace path against the
+# invocation's cwd)
 node --test "extensions/mnexis-memory/test/*.test.js"
 ```
 
@@ -312,5 +356,5 @@ parity suite against the real binary, which writes only into a temporary data
 directory:
 
 ```sh
-MNEXIS_PARITY_BIN=~/.local/bin/mnexis node --test "extensions/mnexis-memory/test/parity.recovery.test.js"
+MNEXIS_PARITY_BIN=~/.local/bin/mnexis node --test "extensions/mnexis-memory/test/parity.*.test.js"
 ```
