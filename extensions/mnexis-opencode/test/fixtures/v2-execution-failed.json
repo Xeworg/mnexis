@@ -1,0 +1,7 @@
+{
+	"$source": "RECORDED LIVE on opencode v2.2.5 (npm latest, 2026-11-03) in bench-oc:verify — the execution event that fires when the turn ends in failure or interruption; `experimental.idle` does NOT run on those paths (its own type says so), so the close needs this seat too",
+	"type": "session.execution.failed",
+	"data": {
+		"sessionID": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB"
+	}
+}

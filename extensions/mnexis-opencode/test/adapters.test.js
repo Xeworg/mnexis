@@ -38,12 +38,25 @@ const EVENTS = [
 	{ file: "v1-session-deleted.json", session: SESSION, directory: "/home/u/acme" },
 	{ file: "v2-session-created.json", session: SESSION, directory: "/home/u/acme" },
 	{ file: "v2-session-deleted.json", session: SESSION, directory: null },
+	// The seats opencode v2.2.5 really publishes (recorded live, 2026-11-03):
+	// the idle hook that says the session finished its work, and the execution
+	// events that cover the paths idle skips.
+	{ file: "v2-experimental-idle.json", session: SESSION, directory: null },
+	{ file: "v2-execution-succeeded.json", session: SESSION, directory: null },
+	{ file: "v2-execution-failed.json", session: SESSION, directory: null },
 ];
 
 test("every recorded host event is read for the session and the directory it names", () => {
 	for (const event of EVENTS) {
 		const payload = fixture(event.file);
-		assert.match(payload.$source, /RESEARCH\.md §\d/, `${event.file} cites where its shape is recorded`);
+		// Where the shape is recorded: our own RESEARCH, or — for the seats
+		// opencode v2.2.5 really publishes — the host's contract, recorded
+		// live. A fixture with no source is not evidence about anything.
+		assert.match(
+			payload.$source,
+			/RESEARCH\.md §\d|RECORDED LIVE/,
+			`${event.file} cites where its shape is recorded`,
+		);
 		assert.equal(sessionIDOfEvent(payload), event.session, event.file);
 		assert.equal(directoryOfEvent(payload), event.directory, event.file);
 	}

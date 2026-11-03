@@ -26,6 +26,21 @@ export const ENDED_JSON = (id) =>
 		ended_at: "2026-11-03T10:30:00Z",
 	});
 
+/**
+ * The engine's answer to a session registration: the session's row, with the
+ * namespace it writes into (`mnexis session --id X --json`, measured on the
+ * binary). A session that is already ended answers the same shape with
+ * `ended_at` set — the engine never reopens one.
+ */
+export const SESSION_JSON = (id, { endedAt = null } = {}) =>
+	JSON.stringify({
+		id,
+		namespace: "acme",
+		directory: "/repo",
+		started_at: "2026-11-03T10:00:00Z",
+		ended_at: endedAt,
+	});
+
 export const STATE_JSON = JSON.stringify({
 	count: 1,
 	items: [
@@ -84,7 +99,13 @@ export function engine(overrides = {}) {
 		if (key === "recall") return { stdout: PREVIOUS_JSON, ...overrides.recall };
 		if (key === "list") return { stdout: STATE_JSON, ...overrides.list };
 		if (key === "prompt") return { stdout: "{}", ...overrides.prompt };
-		if (key === "session") return { stdout: "{}", ...overrides.session };
+		if (key === "session") {
+			// The engine answers the row it holds for the session: the
+			// namespace the writes go into, and whether it is already ended.
+			const at = args.indexOf("--id");
+			const id = at >= 0 ? args[at + 1] : "s1";
+			return { stdout: SESSION_JSON(id, overrides.session?.ended ?? {}), ...overrides.session };
+		}
 		if (key === "end") {
 			// The engine answers the session it ended: `end --json` carries the
 			// namespace the closing record is written into (`src/cli/commands.rs`).
@@ -162,11 +183,25 @@ export function fakeHost({ directory = "/repo" } = {}) {
 			},
 		},
 		event: {
-			subscribe: ({ signal } = {}) =>
+			// The host filters the stream by the types the plugin asked for
+			// (`ctx.event.subscribe({ types })` — `@opencode/plugin`'s
+			// `EventDomain`): an event the plugin did not name never reaches
+			// it. This fake used to ignore `types`, so a test could push any
+			// event into the queue and the plugin would consume it — evidence
+			// about a shape, never about the host. A seat the host does not
+			// publish must be dead here too.
+			subscribe: ({ signal, types } = {}) =>
 				(async function* stream() {
+					const wanted = Array.isArray(types) && types.length > 0 ? new Set(types) : null;
 					for (;;) {
 						if (queue.length > 0) {
-							yield queue.shift();
+							const event = queue.shift();
+							if (wanted && !wanted.has(event?.type)) {
+								// Not one of the seats the plugin asked for: the
+								// host drops it, and so does this fake.
+								continue;
+							}
+							yield event;
 							continue;
 						}
 						if (closed || signal?.aborted) {

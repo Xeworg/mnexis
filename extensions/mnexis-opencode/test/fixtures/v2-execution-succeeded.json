@@ -1,0 +1,7 @@
+{
+	"$source": "RECORDED LIVE on opencode v2.2.5 (npm latest, 2026-11-03) in bench-oc:verify — the last event of a headless `opencode run`; the union of publishable types is `@opencode/client@2.2.5`'s `event.subscribe` (`dist/promise/client.d.ts`), where `session.deleted` exists but is published only on an explicit session removal",
+	"type": "session.execution.succeeded",
+	"data": {
+		"sessionID": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB"
+	}
+}

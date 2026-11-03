@@ -1,0 +1,8 @@
+{
+	"$source": "RECORDED LIVE on opencode v2.2.5 (npm latest, 2026-11-03) in bench-oc:verify — the `experimental.idle` seat of `@opencode/plugin@2.2.5` (`dist/promise/session.d.ts`: `readonly \"experimental.idle\": SessionIdle`), fired between `session.execution.started` and `session.execution.succeeded`; the payload is the hook's own `{ sessionID, background }`",
+	"type": "experimental.idle",
+	"data": {
+		"sessionID": "ses_01J8Z3K9QX4YV7N2M5P6R8T1WB",
+		"background": []
+	}
+}
