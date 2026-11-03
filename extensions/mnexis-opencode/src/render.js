@@ -135,6 +135,43 @@ export function sessionCloseContent(session) {
 	return lines.join("\n");
 }
 
+/**
+ * The same mechanical state, for a session that is still open.
+ *
+ * A host without an end-of-session event (opencode v2: it publishes the pause,
+ * not the end) refreshes the record at every pause. The record is the same one
+ * — the title is the identity, so the write revises it — but it must not claim
+ * the session ended: it is open, and it paused. A record that says "ended"
+ * while the session still runs is a lie the next session would read.
+ *
+ * @param {unknown} session the session row the engine answered
+ * @returns {string}
+ */
+export function sessionPauseContent(session) {
+	const data = session && typeof session === "object" ? session : {};
+	const text = (value) => (typeof value === "string" ? value.trim() : "");
+	const id = text(data.id) || "unknown";
+	const startedAt = text(data.started_at);
+	const directory = text(data.directory);
+	const branch = text(data.branch);
+	const branchSha = text(data.branch_sha);
+	const branchRemote = text(data.branch_remote);
+
+	const lines = [`Session ${id} is still open; it paused.`];
+	if (startedAt) {
+		lines.push(`It started at ${startedAt}.`);
+	}
+	if (directory) {
+		lines.push(`Directory: ${directory}.`);
+	}
+	if (branch) {
+		const at = branchSha ? ` at ${branchSha}` : "";
+		const remote = branchRemote ? ` (${branchRemote})` : "";
+		lines.push(`Branch: ${branch}${at}${remote}.`);
+	}
+	return lines.join("\n");
+}
+
 /** The previous session's summary, as one bounded line. */
 function previousSummary(previous) {
 	const session = previous && typeof previous === "object" ? previous.session : null;

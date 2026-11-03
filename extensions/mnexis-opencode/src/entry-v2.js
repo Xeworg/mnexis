@@ -84,6 +84,21 @@ function createV2Entry(coreFor) {
 				// No context seat: the pointer simply is not delivered.
 			}
 
+			// The pause seat: the session finished its work and goes idle
+			// (`experimental.idle`, `@opencode/plugin@2.2.5` — the seat the
+			// host's own `goal` plugin uses). This host has no end-of-session
+			// event: `session.deleted` is an explicit removal and
+			// `session.created` is not published in a run (measured on
+			// v2.2.5, 2026-11-03). So the state the next session resumes from
+			// is refreshed here, and the session itself stays open.
+			try {
+				await ctx.session.hook("experimental.idle", async (event) => {
+					await core.refreshSessionState(event?.sessionID);
+				});
+			} catch {
+				// No pause seat: the execution events below still refresh it.
+			}
+
 			// Compaction keeps the live state the transcript was carrying.
 			try {
 				await ctx.session.hook("compaction", async (event) => {
@@ -143,7 +158,21 @@ function createV2Entry(coreFor) {
 				const controller = new AbortController();
 				controllers.push(controller);
 				const stream = ctx.event.subscribe({
-					types: ["session.created", "session.deleted"],
+					// The names the host really publishes on v2.2.5, measured
+					// live (2026-11-03): the execution events end a turn, and
+					// they cover the paths the idle seat skips (a failure or an
+					// interruption never reaches idle). `session.created` and
+					// `session.deleted` stay in the list because they are part
+					// of the union — a host that publishes them (an explicit
+					// removal) gets the close it deserves.
+					types: [
+						"session.created",
+						"session.deleted",
+						"session.execution.started",
+						"session.execution.succeeded",
+						"session.execution.failed",
+						"session.execution.interrupted",
+					],
 					signal: controller.signal,
 				});
 				void (async () => {
@@ -154,6 +183,24 @@ function createV2Entry(coreFor) {
 								// The host's own end signal: the session is over, so its
 								// state is written before the plugin forgets it.
 								await core.closeSession(sessionID);
+								continue;
+							}
+							if (event?.type === "session.execution.started") {
+								// A new turn of a session that is already tracked is
+								// not a new session. A new session means the
+								// previous conversation is over: the engine's
+								// session is ended, with its state.
+								await core.closeOpenSessions({ keep: sessionID });
+							}
+							if (
+								event?.type === "session.execution.succeeded" ||
+								event?.type === "session.execution.failed" ||
+								event?.type === "session.execution.interrupted"
+							) {
+								// The turn is over: the state the next session
+								// resumes from is written, and the session stays
+								// open — this host never says it ended.
+								await core.refreshSessionState(sessionID);
 								continue;
 							}
 							await core.startSession(sessionID, directoryOfEvent(event) ?? cwd);
@@ -173,7 +220,13 @@ function createV2Entry(coreFor) {
 			for (const controller of controllers) {
 				controller.abort();
 			}
-			return core.shutdown();
+			// The host is going away: the sessions this plugin opened are ended
+			// for real, with the state they leave behind. (The host cannot say
+			// whether this is a quit or a reload, and the engine tolerates a
+			// session that was ended early — a prompt on it is still accepted.)
+			const sweep = await core.closeOpenSessions();
+			const shutdown = await core.shutdown();
+			return { ...shutdown, action: sweep.action, closed: sweep.closed, abandoned: sweep.abandoned };
 		};
 	}
 

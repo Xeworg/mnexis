@@ -744,6 +744,43 @@ export function sessionCloseContent(session) {
 	return lines.join("\n");
 }
 
+/**
+ * The same mechanical state, for a session that is still open.
+ *
+ * A host without an end-of-session event (opencode v2: it publishes the pause,
+ * not the end) refreshes the record at every pause. The record is the same one
+ * — the title is the identity, so the write revises it — but it must not claim
+ * the session ended: it is open, and it paused. A record that says "ended"
+ * while the session still runs is a lie the next session would read.
+ *
+ * @param {unknown} session the session row the engine answered
+ * @returns {string}
+ */
+export function sessionPauseContent(session) {
+	const data = session && typeof session === "object" ? session : {};
+	const text = (value) => (typeof value === "string" ? value.trim() : "");
+	const id = text(data.id) || "unknown";
+	const startedAt = text(data.started_at);
+	const directory = text(data.directory);
+	const branch = text(data.branch);
+	const branchSha = text(data.branch_sha);
+	const branchRemote = text(data.branch_remote);
+
+	const lines = [`Session ${id} is still open; it paused.`];
+	if (startedAt) {
+		lines.push(`It started at ${startedAt}.`);
+	}
+	if (directory) {
+		lines.push(`Directory: ${directory}.`);
+	}
+	if (branch) {
+		const at = branchSha ? ` at ${branchSha}` : "";
+		const remote = branchRemote ? ` (${branchRemote})` : "";
+		lines.push(`Branch: ${branch}${at}${remote}.`);
+	}
+	return lines.join("\n");
+}
+
 /** The previous session's summary, as one bounded line. */
 function previousSummary(previous) {
 	const session = previous && typeof previous === "object" ? previous.session : null;
@@ -1076,7 +1113,12 @@ function createSession({ sessions, evidence, cwd, cli, env, report }) {
 			return;
 		}
 		const where = directory || cwd;
-		sessions.set(sessionID, where);
+		sessions.set(sessionID, {
+			directory: where,
+			namespace: "",
+			ended_at: null,
+			session: null,
+		});
 		try {
 			const result = await cli.sessionStart({ sessionId: sessionID, directory: where }, cwd);
 			if (result.code !== 0) {
@@ -1102,8 +1144,111 @@ function createSession({ sessions, evidence, cwd, cli, env, report }) {
 					ended_at: endedAt,
 				});
 			}
+			// What the engine answered about the session is what the plugin
+			// needs to write its state: the namespace the writes go into, and
+			// whether the session is already over.
+			const namespace =
+				session && typeof session.namespace === "string" ? session.namespace : "";
+			sessions.set(sessionID, {
+				directory: where,
+				namespace,
+				ended_at: endedAt,
+				session: session ?? null,
+			});
 		} catch (error) {
 			report("session-start", { session: sessionID, error: String(error) });
+		}
+	}
+
+	/**
+	 * Refresh the state the next session resumes from, without ending this one.
+	 *
+	 * A host that publishes a pause and not an end (opencode v2: the idle seat
+	 * and the execution events) cannot say "the session ended" — but the state
+	 * a session leaves behind is worth writing at every pause, because the next
+	 * session may never come. The write goes to the same record the close
+	 * writes (the title is the identity, so it is revised), and it says the
+	 * session is open, because it is.
+	 *
+	 * A session the engine already ended is left alone: the close wrote the
+	 * truth about it, and a refresh would contradict it.
+	 */
+	async function refreshSessionState(sessionID) {
+		const refresh = {
+			session: sessionID,
+			action: "skipped",
+			steps: [],
+			abandoned: [],
+			namespace: null,
+		};
+		if (typeof sessionID !== "string" || sessionID === "") {
+			refresh.reason = "the host named no session";
+			return refresh;
+		}
+		const known = sessions.get(sessionID);
+		if (!known || typeof known === "string") {
+			// Only what the plugin opened is its to write about.
+			refresh.reason = "not opened by this plugin";
+			return refresh;
+		}
+		if (known.ended_at) {
+			refresh.reason = "the session is already ended";
+			return refresh;
+		}
+		const namespace = known.namespace;
+		if (typeof namespace !== "string" || namespace === "") {
+			// The engine owns the workspace's namespace; a write that would
+			// have to guess it is not a write, and says so.
+			refresh.reason = "the engine named no namespace for this session";
+			return refresh;
+		}
+		refresh.namespace = namespace;
+		const content = sessionPauseContent({ id: sessionID, ...(known.session ?? {}) });
+		if (known.last_refresh === content) {
+			// The state did not change since the last pause (same branch, same
+			// directory): the record already says it, and a second write would
+			// only add a revision that says the same thing.
+			refresh.action = "skipped";
+			refresh.reason = "the state is unchanged";
+			return refresh;
+		}
+		const budget = createDeadline(
+			budgetOf(env[SHUTDOWN_BUDGET_ENV], SHUTDOWN_BUDGET_MS),
+			"shutdown",
+		);
+		try {
+			const saved = await budget.step("save", (left) =>
+				cli.withBudget(left).saveMemory(
+					{
+						namespace,
+						title: SESSION_CLOSE_TITLE,
+						type: "project_state",
+						content,
+					},
+					known.directory ?? cwd,
+				),
+			);
+			if (saved.abandoned) {
+				refresh.action = "abandoned";
+				refresh.abandoned.push(saved.abandoned);
+				report("session-refresh", { session: sessionID, step: "save", reason: saved.abandoned });
+				return refresh;
+			}
+			refresh.steps.push("save");
+			refresh.exit_code = saved.value.code;
+			if (saved.value.code !== 0) {
+				refresh.action = "failed";
+				report("session-refresh", { session: sessionID, exit_code: saved.value.code });
+				return refresh;
+			}
+			refresh.action = "refreshed";
+			known.last_refresh = content;
+			return refresh;
+		} catch (error) {
+			refresh.action = "failed";
+			refresh.error = String(error);
+			report("session-refresh", { session: sessionID, error: String(error) });
+			return refresh;
 		}
 	}
 
@@ -1130,12 +1275,13 @@ function createSession({ sessions, evidence, cwd, cli, env, report }) {
 			close.reason = "the host named no session";
 			return close;
 		}
-		if (!sessions.has(sessionID)) {
+		const known = sessions.get(sessionID);
+		if (!known || typeof known === "string") {
 			// Only what the plugin opened is its to close.
 			close.reason = "not opened by this plugin";
 			return close;
 		}
-		const where = sessions.get(sessionID) ?? cwd;
+		const where = known.directory ?? cwd;
 		const budget = createDeadline(
 			budgetOf(env[SHUTDOWN_BUDGET_ENV], SHUTDOWN_BUDGET_MS),
 			"shutdown",
@@ -1234,6 +1380,53 @@ function createSession({ sessions, evidence, cwd, cli, env, report }) {
 	}
 
 	/**
+	 * End every session this plugin still holds open.
+	 *
+	 * A host that publishes a pause and not an end leaves the engine's session
+	 * open — and a session nobody ends is a session nobody can resume from.
+	 * So the end happens where the host does give one: when it goes away (the
+	 * plugin's teardown), or when another session starts (the person moved on).
+	 * The close is the same one the delete seat uses: `end`, then the state
+	 * the next session resumes from.
+	 *
+	 * One budget for the whole sweep: a host awaits this, and a store that
+	 * cannot answer every session must not hold the host.
+	 *
+	 * @param {{ keep?: string }} options the session to leave open, if any
+	 * @returns {Promise<object>} what was closed, and what was not
+	 */
+	async function closeOpenSessions({ keep = "" } = {}) {
+		const sweep = {
+			action: "skipped",
+			closed: [],
+			failed: [],
+			abandoned: [],
+			sessions: [...sessions.keys()],
+		};
+		const budget = createDeadline(
+			budgetOf(env[SHUTDOWN_BUDGET_ENV], SHUTDOWN_BUDGET_MS),
+			"shutdown",
+		);
+		for (const sessionID of [...sessions.keys()]) {
+			if (keep && sessionID === keep) {
+				continue;
+			}
+			const closed = await budget.step("end", () => closeSession(sessionID));
+			if (closed.abandoned) {
+				sweep.abandoned.push(closed.abandoned);
+				continue;
+			}
+			if (closed.action === "closed") {
+				sweep.closed.push(sessionID);
+				continue;
+			}
+			sweep.failed.push({ session: sessionID, action: closed.action, reason: closed.reason });
+		}
+		sweep.action = sweep.abandoned.length > 0 ? "partial" : "closed";
+		return sweep;
+	}
+
+	/**
 	 * Store what the person typed, byte for byte.
 	 *
 	 * The session is registered first, so the prompt joins the session and
@@ -1274,7 +1467,7 @@ function createSession({ sessions, evidence, cwd, cli, env, report }) {
 			report("capture", { session: sessionID, bytes, error: String(error) });
 		}
 	}
-	return { startSession, closeSession, capture };
+	return { startSession, closeSession, capture, refreshSessionState, closeOpenSessions };
 }
 
 // === src/pointer.js ===
@@ -1400,7 +1593,7 @@ function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 	// session's outcomes say, what a session is, and what a session is told
 	// once. The state above is the instance's, and it is all they share.
 	const { observeTool, settle } = createSettle({ evidence });
-	const { startSession, closeSession, capture } = createSession({ sessions, evidence, cwd, cli, env, report });
+	const { startSession, closeSession, capture, refreshSessionState, closeOpenSessions } = createSession({ sessions, evidence, cwd, cli, env, report });
 	const { pointer, compaction } = createPointer({ pointed, cwd, cli, env, report });
 
 	/**
@@ -1426,6 +1619,8 @@ function createCore({ cwd, client, env = process.env, logger, registry } = {}) {
 		capture,
 		startSession,
 		closeSession,
+		refreshSessionState,
+		closeOpenSessions,
 		pointer,
 		settle,
 		observeTool,
@@ -1522,6 +1717,21 @@ function createV2Entry(coreFor) {
 				// No context seat: the pointer simply is not delivered.
 			}
 
+			// The pause seat: the session finished its work and goes idle
+			// (`experimental.idle`, `@opencode/plugin@2.2.5` — the seat the
+			// host's own `goal` plugin uses). This host has no end-of-session
+			// event: `session.deleted` is an explicit removal and
+			// `session.created` is not published in a run (measured on
+			// v2.2.5, 2026-11-03). So the state the next session resumes from
+			// is refreshed here, and the session itself stays open.
+			try {
+				await ctx.session.hook("experimental.idle", async (event) => {
+					await core.refreshSessionState(event?.sessionID);
+				});
+			} catch {
+				// No pause seat: the execution events below still refresh it.
+			}
+
 			// Compaction keeps the live state the transcript was carrying.
 			try {
 				await ctx.session.hook("compaction", async (event) => {
@@ -1581,7 +1791,21 @@ function createV2Entry(coreFor) {
 				const controller = new AbortController();
 				controllers.push(controller);
 				const stream = ctx.event.subscribe({
-					types: ["session.created", "session.deleted"],
+					// The names the host really publishes on v2.2.5, measured
+					// live (2026-11-03): the execution events end a turn, and
+					// they cover the paths the idle seat skips (a failure or an
+					// interruption never reaches idle). `session.created` and
+					// `session.deleted` stay in the list because they are part
+					// of the union — a host that publishes them (an explicit
+					// removal) gets the close it deserves.
+					types: [
+						"session.created",
+						"session.deleted",
+						"session.execution.started",
+						"session.execution.succeeded",
+						"session.execution.failed",
+						"session.execution.interrupted",
+					],
 					signal: controller.signal,
 				});
 				void (async () => {
@@ -1592,6 +1816,24 @@ function createV2Entry(coreFor) {
 								// The host's own end signal: the session is over, so its
 								// state is written before the plugin forgets it.
 								await core.closeSession(sessionID);
+								continue;
+							}
+							if (event?.type === "session.execution.started") {
+								// A new turn of a session that is already tracked is
+								// not a new session. A new session means the
+								// previous conversation is over: the engine's
+								// session is ended, with its state.
+								await core.closeOpenSessions({ keep: sessionID });
+							}
+							if (
+								event?.type === "session.execution.succeeded" ||
+								event?.type === "session.execution.failed" ||
+								event?.type === "session.execution.interrupted"
+							) {
+								// The turn is over: the state the next session
+								// resumes from is written, and the session stays
+								// open — this host never says it ended.
+								await core.refreshSessionState(sessionID);
 								continue;
 							}
 							await core.startSession(sessionID, directoryOfEvent(event) ?? cwd);
@@ -1611,7 +1853,13 @@ function createV2Entry(coreFor) {
 			for (const controller of controllers) {
 				controller.abort();
 			}
-			return core.shutdown();
+			// The host is going away: the sessions this plugin opened are ended
+			// for real, with the state they leave behind. (The host cannot say
+			// whether this is a quit or a reload, and the engine tolerates a
+			// session that was ended early — a prompt on it is still accepted.)
+			const sweep = await core.closeOpenSessions();
+			const shutdown = await core.shutdown();
+			return { ...shutdown, action: sweep.action, closed: sweep.closed, abandoned: sweep.abandoned };
 		};
 	}
 
