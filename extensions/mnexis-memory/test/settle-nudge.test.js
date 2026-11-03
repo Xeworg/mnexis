@@ -72,8 +72,12 @@ function fakeHost(t) {
 	});
 
 	const handlers = new Map();
+	const messageRenderers = new Map();
 	mnexisMemory({
 		registerTool() {},
+		registerMessageRenderer(customType, renderer) {
+			messageRenderers.set(customType, renderer);
+		},
 		on(event, handler) {
 			const list = handlers.get(event) ?? [];
 			list.push(handler);
@@ -81,7 +85,7 @@ function fakeHost(t) {
 		},
 		appendEntry() {},
 	});
-	return { handlers };
+	return { handlers, messageRenderers };
 }
 
 /** The pi context of a session. */
@@ -159,7 +163,9 @@ test("a session that changed files and saved nothing is asked once", async (t) =
 						type: "custom_message",
 						customType: "mnexis-settle-nudge",
 						content: NUDGE,
-						display: false,
+						// UX4: the human can tell the question fired — it used to be
+						// `display: false`, indistinguishable from agent spontaneity.
+						display: true,
 					},
 				],
 				continue: true,
@@ -405,4 +411,45 @@ test("a branch switch clears the evidence it did not inherit", async (t) => {
 		[undefined],
 		"the writes of the branch we left are not the work of this one",
 	);
+});
+
+// --- UX4: the question is visible, and it says it was the extension ---
+
+test("the message renderer is registered for the nudge", (t) => {
+	const { messageRenderers } = fakeHost(t);
+	assert.ok(
+		messageRenderers.has("mnexis-settle-nudge"),
+		`the nudge has its own renderer: ${JSON.stringify([...messageRenderers.keys()])}`,
+	);
+	assert.equal(
+		typeof messageRenderers.get("mnexis-settle-nudge"),
+		"function",
+		"and the renderer is callable",
+	);
+});
+
+test("the nudge collapses to one line and expands to its text", (t) => {
+	const { messageRenderers } = fakeHost(t);
+	const renderer = messageRenderers.get("mnexis-settle-nudge");
+	const theme = { fg: (color, text) => `<${color}>${text}</${color}>` };
+	const message = { customType: "mnexis-settle-nudge", content: NUDGE, display: true };
+
+	const collapsed = renderer(message, { expanded: false }, theme);
+	const collapsedLines = collapsed.render(80);
+	assert.equal(collapsedLines.length, 1, `collapsed, the nudge is one line: ${JSON.stringify(collapsedLines)}`);
+	assert.match(collapsedLines[0], /mnexis/, `it names the engine: ${collapsedLines[0]}`);
+	assert.match(collapsedLines[0], /asked the agent to save/, `it says what happened: ${collapsedLines[0]}`);
+	assert.match(collapsedLines[0], /once per session/, `and how often: ${collapsedLines[0]}`);
+
+	const expanded = renderer(message, { expanded: true }, theme).render(80).join("\n");
+	assert.match(expanded, /This session changed files but saved no memory/, `the question is readable: ${expanded}`);
+	assert.match(expanded, /mnexis_save/, `with its pointer: ${expanded}`);
+});
+
+test("a host without message renderers still registers its tools", () => {
+	// pi before the renderer API: the registration is guarded and nothing
+	// throws while the extension loads.
+	assert.doesNotThrow(() => {
+		mnexisMemory({ registerTool() {}, on() {}, appendEntry() {} });
+	});
 });
